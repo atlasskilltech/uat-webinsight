@@ -227,9 +227,9 @@ off or the server is stopped).
 
 ### After deployment (self-hosted Node host)
 Point the same OS scheduler (or the host's cron) at the deployed `APP_URL`, e.g.
-`https://dashboard.example.com`. The server process must be running. SQLite assumes a
-single instance; if you ever move to a multi-instance / serverless host, replace the
-in-DB lock with a distributed lock or an external queue, and move off SQLite.
+`https://dashboard.example.com`. The server process must be running. The in-DB
+sync lock assumes a single app instance; if you ever move to a multi-instance /
+serverless host, replace it with a distributed lock or an external queue.
 
 ---
 
@@ -248,11 +248,13 @@ in-DB lock with a distributed lock or an external queue, and move off SQLite.
 
 ---
 
-## Switching the database to MySQL (XAMPP) or Postgres
-SQLite is the default. To use MySQL instead:
-1. In `prisma/schema.prisma`, set `datasource.provider = "mysql"`.
-2. In `.env`, set e.g. `DATABASE_URL="mysql://root:@localhost:3306/atlas_dashboard"`
-   and create that database.
-3. Run `npx prisma migrate dev` to create the tables, then `npm run db:seed`.
+## Database (MySQL)
+The app uses MySQL. To set it up:
+1. Create a database (e.g. `atlas_dashboard`) and a user with access to it.
+2. In `.env`, set `DATABASE_URL="mysql://user:password@host:3306/atlas_dashboard"`.
+   URL-encode special characters in the password (e.g. `@` → `%40`).
+3. Run `npx prisma migrate deploy` to create the tables, then `npm run db:seed`
+   for demo data (optional).
 
-The data model is written to be portable, so no code changes are required.
+`datasource.provider` is already `mysql` in `prisma/schema.prisma`; the data
+model is portable, so no code changes are required to point at a new database.

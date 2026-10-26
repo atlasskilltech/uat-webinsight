@@ -1,16 +1,18 @@
 // Atlas Work & Website Intelligence Dashboard — data model
-// Datasource: SQLite (file-backed, zero-config, fully persistent).
-// To switch to MySQL/Postgres: change `provider` + DATABASE_URL, then
-// `npx prisma migrate dev`. Enum-like fields are stored as String and
-// validated in the app layer (see src/lib/enums.ts) so the schema stays
-// portable across engines. Structured data uses Json (TEXT on SQLite).
+// Datasource: MySQL. DATABASE_URL is a mysql:// connection string, e.g.
+//   mysql://user:password@host:3306/dbname
+// Enum-like fields are stored as String and validated in the app layer
+// (see src/lib/enums.ts) so the schema stays portable across engines.
+// Structured data uses Json (native JSON column on MySQL). Free-text and
+// URL columns are annotated `@db.Text` so they are not capped at MySQL's
+// default VARCHAR(191); short/enum-like strings keep the default.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -21,7 +23,7 @@ datasource db {
 model Project {
   id          String   @id @default(cuid())
   name        String
-  description String?
+  description String?  @db.Text
   color       String   @default("#6366f1")
   archived    Boolean  @default(false)
   createdAt   DateTime @default(now())
@@ -33,7 +35,7 @@ model Project {
 model Task {
   id                String    @id @default(cuid())
   title             String
-  description       String?
+  description       String?   @db.Text
   category          String    @default("other") // see TASK_CATEGORIES
   status            String    @default("not_started") // see TASK_STATUSES
   priority          String    @default("medium") // see PRIORITIES
@@ -43,12 +45,12 @@ model Task {
   estimatedMinutes  Int?
   actualMinutes     Int?
   progress          Int       @default(0) // 0-100
-  relatedUrl        String?
-  notes             String?
+  relatedUrl        String?   @db.Text
+  notes             String?   @db.Text
   evidenceLinks     Json? // string[]
-  completionSummary String?
-  blocker           String?
-  nextAction        String?
+  completionSummary String?   @db.Text
+  blocker           String?   @db.Text
+  nextAction        String?   @db.Text
   isDemo            Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -74,9 +76,9 @@ model TaskActivity {
   taskId    String
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   type      String // created | status_change | priority_change | progress | note | completed | edited
-  message   String
-  fromValue String?
-  toValue   String?
+  message   String   @db.Text
+  fromValue String?  @db.Text
+  toValue   String?  @db.Text
   createdAt DateTime @default(now())
 
   @@index([taskId])
@@ -85,7 +87,7 @@ model TaskActivity {
 model WorkLog {
   id        String   @id @default(cuid())
   date      DateTime
-  summary   String
+  summary   String   @db.Text
   category  String   @default("other")
   minutes   Int?
   taskId    String?
@@ -104,9 +106,9 @@ model WebsitePage {
   id        String   @id @default(cuid())
   url       String   @unique
   path      String
-  title     String?
+  title     String?  @db.Text
   section   String? // e.g. school / blog / programme
-  notes     String?
+  notes     String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -178,18 +180,18 @@ model AnalyticsSnapshot {
 
 model PageAudit {
   id                 String   @id @default(cuid())
-  url                String
+  url                String   @db.Text
   pageId             String?
   page               WebsitePage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
   httpStatus         Int?
   indexable          String? // indexable | blocked | unknown
-  robots             String?
-  canonical          String?
-  title              String?
+  robots             String?  @db.Text
+  canonical          String?  @db.Text
+  title              String?  @db.Text
   titleLength        Int?
-  metaDescription    String?
+  metaDescription    String?  @db.Text
   metaDescLength     Int?
-  h1                 String?
+  h1                 String?  @db.Text
   headingStructure   Json? // [{level, text}]
   imagesTotal        Int?
   imagesMissingAlt   Int?
@@ -208,13 +210,13 @@ model PageAudit {
   inp                Float?
   fetchedHtml        Boolean  @default(false)
   psiFetched         Boolean  @default(false)
-  notes              String?
+  notes              String?  @db.Text
   rawJson            Json?
   createdAt          DateTime @default(now())
 
   findings AuditFinding[]
 
-  @@index([url])
+  @@index([url(length: 191)])
   @@index([pageId])
 }
 
@@ -222,15 +224,15 @@ model AuditFinding {
   id                String   @id @default(cuid())
   auditId           String
   audit             PageAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
-  detected          String
-  evidence          String?
-  why               String?
-  confidence        String   @default("medium") // high | medium | low
-  recommendation    String?
-  priority          String   @default("medium")
+  detected          String    @db.Text
+  evidence          String?   @db.Text
+  why               String?   @db.Text
+  confidence        String    @default("medium") // high | medium | low
+  recommendation    String?   @db.Text
+  priority          String    @default("medium")
   owner             String?
-  status            String   @default("open") // open | investigating | hypothesis | confirmed | resolved | dismissed
-  verificationSteps String?
+  status            String    @default("open") // open | investigating | hypothesis | confirmed | resolved | dismissed
+  verificationSteps String?   @db.Text
   isHypothesis      Boolean  @default(false)
   createdAt         DateTime @default(now())
 
@@ -246,18 +248,18 @@ model TechnicalIssue {
   title              String
   urls               Json? // string[]
   category           String   @default("other")
-  evidence           String?
-  source             String?
+  evidence           String?  @db.Text
+  source             String?  @db.Text
   severity           String   @default("medium") // critical | high | medium | low
   priority           String   @default("medium")
-  impact             String?
-  recommendedFix     String?
+  impact             String?  @db.Text
+  recommendedFix     String?  @db.Text
   status             String   @default("open") // open | in_progress | fixed | verified | wont_fix
   dateDiscovered     DateTime @default(now())
   owner              String?
   approvalStatus     String   @default("pending") // pending | approved | rejected | not_required
-  implementationNotes String?
-  verificationResult String?
+  implementationNotes String? @db.Text
+  verificationResult String?  @db.Text
   dateResolved       DateTime?
   pageId             String?
   auditId            String?
@@ -287,7 +289,7 @@ model ServerAsset {
   status    String   @default("active") // active | degraded | down | retired
   sslExpiry DateTime?
   details   Json?
-  notes     String?
+  notes     String?  @db.Text
   isDemo    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -300,11 +302,11 @@ model OperationsLog {
   id                 String   @id @default(cuid())
   occurredAt         DateTime @default(now())
   system             String
-  title              String
+  title              String   @db.Text
   kind               String   @default("task") // task | incident | maintenance | deployment | backup
-  symptoms           String?
-  investigation      String?
-  resolution         String?
+  symptoms           String?  @db.Text
+  investigation      String?  @db.Text
+  resolution         String?  @db.Text
   verificationStatus String   @default("pending") // pending | verified | failed | n/a
   status             String   @default("open") // open | in_progress | resolved | monitoring
   httpStatus         Int?
@@ -325,17 +327,17 @@ model OperationsLog {
 model CompetitorResearch {
   id              String   @id @default(cuid())
   organisation    String
-  website         String?
+  website         String?  @db.Text
   researchDate    DateTime @default(now())
-  sourceUrl       String?
-  observation     String
+  sourceUrl       String?  @db.Text
+  observation     String   @db.Text
   category        String   @default("seo") // seo | content | admissions | conversion | ux | automation | technology | operations
-  evidence        String?
+  evidence        String?  @db.Text
   isAssumption    Boolean  @default(false)
-  relevance       String?
+  relevance       String?  @db.Text
   effort          String   @default("medium") // low | medium | high
-  expectedBenefit String?
-  measurement     String?
+  expectedBenefit String?  @db.Text
+  measurement     String?  @db.Text
   recommendation  String   @default("investigate") // investigate | pilot | adopt | reject
   status          String   @default("new") // new | reviewing | actioned | archived
   followUpDate    DateTime?
@@ -359,7 +361,7 @@ model Report {
   periodEnd          DateTime
   comparePeriodStart DateTime?
   comparePeriodEnd   DateTime?
-  executiveSummary   String?
+  executiveSummary   String?  @db.Text
   status             String   @default("draft") // draft | final
   snapshot           Json? // frozen computed data at generation time
   isDemo             Boolean  @default(false)
@@ -379,7 +381,7 @@ model Integration {
   status     String   @default("not_connected") // not_connected | connected | error
   propertyId String?
   lastSyncAt DateTime?
-  lastError  String?
+  lastError  String?   @db.Text
   config     Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -395,7 +397,7 @@ model ImportBatch {
   periodEnd   DateTime?
   propertyId  String?
   status      String   @default("completed") // completed | failed | partial
-  message     String?
+  message     String?  @db.Text
   isDemo      Boolean  @default(false)
   createdAt   DateTime @default(now())
 
