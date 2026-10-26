@@ -1,0 +1,29 @@
+name: Deploy to EC2 Server of atlasliving(Staging UAT-WebInsights)
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu/uat-webinsight
+            git fetch origin staging
+            git reset --hard origin/staging
+            npm ci --only=production
+            pm2 restart uat-webinsight || pm2 start src/app.js --name uat-webinsight
+            pm2 save
