@@ -1,4 +1,4 @@
-// Central registry of enum-like values. Stored as strings in SQLite and
+// Central registry of enum-like values. Stored as strings in the database and
 // validated here + in Zod schemas so the DB stays portable across engines.
 // Each entry carries a human label and a semantic tone used for badges.
 

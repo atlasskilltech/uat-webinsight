@@ -1,0 +1,478 @@
+-- CreateTable
+CREATE TABLE `Project` (
+    `id` VARCHAR(191) NOT NULL,
+    `name` VARCHAR(191) NOT NULL,
+    `description` TEXT NULL,
+    `color` VARCHAR(191) NOT NULL DEFAULT '#6366f1',
+    `archived` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Task` (
+    `id` VARCHAR(191) NOT NULL,
+    `title` VARCHAR(191) NOT NULL,
+    `description` TEXT NULL,
+    `category` VARCHAR(191) NOT NULL DEFAULT 'other',
+    `status` VARCHAR(191) NOT NULL DEFAULT 'not_started',
+    `priority` VARCHAR(191) NOT NULL DEFAULT 'medium',
+    `startDate` DATETIME(3) NULL,
+    `dueDate` DATETIME(3) NULL,
+    `completedDate` DATETIME(3) NULL,
+    `estimatedMinutes` INTEGER NULL,
+    `actualMinutes` INTEGER NULL,
+    `progress` INTEGER NOT NULL DEFAULT 0,
+    `relatedUrl` TEXT NULL,
+    `notes` TEXT NULL,
+    `evidenceLinks` JSON NULL,
+    `completionSummary` TEXT NULL,
+    `blocker` TEXT NULL,
+    `nextAction` TEXT NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+    `projectId` VARCHAR(191) NULL,
+    `issueId` VARCHAR(191) NULL,
+
+    INDEX `Task_status_idx`(`status`),
+    INDEX `Task_priority_idx`(`priority`),
+    INDEX `Task_category_idx`(`category`),
+    INDEX `Task_dueDate_idx`(`dueDate`),
+    INDEX `Task_projectId_idx`(`projectId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `TaskActivity` (
+    `id` VARCHAR(191) NOT NULL,
+    `taskId` VARCHAR(191) NOT NULL,
+    `type` VARCHAR(191) NOT NULL,
+    `message` TEXT NOT NULL,
+    `fromValue` TEXT NULL,
+    `toValue` TEXT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `TaskActivity_taskId_idx`(`taskId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `WorkLog` (
+    `id` VARCHAR(191) NOT NULL,
+    `date` DATETIME(3) NOT NULL,
+    `summary` TEXT NOT NULL,
+    `category` VARCHAR(191) NOT NULL DEFAULT 'other',
+    `minutes` INTEGER NULL,
+    `taskId` VARCHAR(191) NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `WorkLog_date_idx`(`date`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `WebsitePage` (
+    `id` VARCHAR(191) NOT NULL,
+    `url` VARCHAR(191) NOT NULL,
+    `path` VARCHAR(191) NOT NULL,
+    `title` TEXT NULL,
+    `section` VARCHAR(191) NULL,
+    `notes` TEXT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `WebsitePage_url_key`(`url`),
+    INDEX `WebsitePage_section_idx`(`section`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `SeoSnapshot` (
+    `id` VARCHAR(191) NOT NULL,
+    `propertyId` VARCHAR(191) NOT NULL,
+    `source` VARCHAR(191) NOT NULL DEFAULT 'gsc',
+    `startDate` DATETIME(3) NOT NULL,
+    `endDate` DATETIME(3) NOT NULL,
+    `clicks` INTEGER NOT NULL DEFAULT 0,
+    `impressions` INTEGER NOT NULL DEFAULT 0,
+    `ctr` DOUBLE NOT NULL DEFAULT 0,
+    `position` DOUBLE NOT NULL DEFAULT 0,
+    `query` VARCHAR(191) NULL,
+    `device` VARCHAR(191) NULL,
+    `country` VARCHAR(191) NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `importBatchId` VARCHAR(191) NULL,
+    `importedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `pageId` VARCHAR(191) NULL,
+
+    INDEX `SeoSnapshot_pageId_idx`(`pageId`),
+    INDEX `SeoSnapshot_startDate_endDate_idx`(`startDate`, `endDate`),
+    INDEX `SeoSnapshot_propertyId_idx`(`propertyId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `AnalyticsSnapshot` (
+    `id` VARCHAR(191) NOT NULL,
+    `propertyId` VARCHAR(191) NOT NULL,
+    `source` VARCHAR(191) NOT NULL DEFAULT 'ga4',
+    `startDate` DATETIME(3) NOT NULL,
+    `endDate` DATETIME(3) NOT NULL,
+    `views` INTEGER NOT NULL DEFAULT 0,
+    `activeUsers` INTEGER NOT NULL DEFAULT 0,
+    `sessions` INTEGER NOT NULL DEFAULT 0,
+    `engagedSessions` INTEGER NOT NULL DEFAULT 0,
+    `engagementRate` DOUBLE NOT NULL DEFAULT 0,
+    `avgEngagementSecs` DOUBLE NOT NULL DEFAULT 0,
+    `channel` VARCHAR(191) NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `importBatchId` VARCHAR(191) NULL,
+    `importedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `pageId` VARCHAR(191) NULL,
+
+    INDEX `AnalyticsSnapshot_pageId_idx`(`pageId`),
+    INDEX `AnalyticsSnapshot_startDate_endDate_idx`(`startDate`, `endDate`),
+    INDEX `AnalyticsSnapshot_propertyId_idx`(`propertyId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `PageAudit` (
+    `id` VARCHAR(191) NOT NULL,
+    `url` TEXT NOT NULL,
+    `pageId` VARCHAR(191) NULL,
+    `httpStatus` INTEGER NULL,
+    `indexable` VARCHAR(191) NULL,
+    `robots` TEXT NULL,
+    `canonical` TEXT NULL,
+    `title` TEXT NULL,
+    `titleLength` INTEGER NULL,
+    `metaDescription` TEXT NULL,
+    `metaDescLength` INTEGER NULL,
+    `h1` TEXT NULL,
+    `headingStructure` JSON NULL,
+    `imagesTotal` INTEGER NULL,
+    `imagesMissingAlt` INTEGER NULL,
+    `internalLinks` INTEGER NULL,
+    `externalLinks` INTEGER NULL,
+    `brokenLinks` JSON NULL,
+    `redirects` JSON NULL,
+    `structuredData` JSON NULL,
+    `wordCount` INTEGER NULL,
+    `performanceScore` INTEGER NULL,
+    `accessibilityScore` INTEGER NULL,
+    `seoScore` INTEGER NULL,
+    `mobileScore` INTEGER NULL,
+    `lcp` DOUBLE NULL,
+    `cls` DOUBLE NULL,
+    `inp` DOUBLE NULL,
+    `fetchedHtml` BOOLEAN NOT NULL DEFAULT false,
+    `psiFetched` BOOLEAN NOT NULL DEFAULT false,
+    `notes` TEXT NULL,
+    `rawJson` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `PageAudit_url_idx`(`url`(191)),
+    INDEX `PageAudit_pageId_idx`(`pageId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `AuditFinding` (
+    `id` VARCHAR(191) NOT NULL,
+    `auditId` VARCHAR(191) NOT NULL,
+    `detected` TEXT NOT NULL,
+    `evidence` TEXT NULL,
+    `why` TEXT NULL,
+    `confidence` VARCHAR(191) NOT NULL DEFAULT 'medium',
+    `recommendation` TEXT NULL,
+    `priority` VARCHAR(191) NOT NULL DEFAULT 'medium',
+    `owner` VARCHAR(191) NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'open',
+    `verificationSteps` TEXT NULL,
+    `isHypothesis` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `AuditFinding_auditId_idx`(`auditId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `TechnicalIssue` (
+    `id` VARCHAR(191) NOT NULL,
+    `title` VARCHAR(191) NOT NULL,
+    `urls` JSON NULL,
+    `category` VARCHAR(191) NOT NULL DEFAULT 'other',
+    `evidence` TEXT NULL,
+    `source` TEXT NULL,
+    `severity` VARCHAR(191) NOT NULL DEFAULT 'medium',
+    `priority` VARCHAR(191) NOT NULL DEFAULT 'medium',
+    `impact` TEXT NULL,
+    `recommendedFix` TEXT NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'open',
+    `dateDiscovered` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `owner` VARCHAR(191) NULL,
+    `approvalStatus` VARCHAR(191) NOT NULL DEFAULT 'pending',
+    `implementationNotes` TEXT NULL,
+    `verificationResult` TEXT NULL,
+    `dateResolved` DATETIME(3) NULL,
+    `pageId` VARCHAR(191) NULL,
+    `auditId` VARCHAR(191) NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `TechnicalIssue_status_idx`(`status`),
+    INDEX `TechnicalIssue_severity_idx`(`severity`),
+    INDEX `TechnicalIssue_category_idx`(`category`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `ServerAsset` (
+    `id` VARCHAR(191) NOT NULL,
+    `type` VARCHAR(191) NOT NULL DEFAULT 'application',
+    `name` VARCHAR(191) NOT NULL,
+    `provider` VARCHAR(191) NULL,
+    `plan` VARCHAR(191) NULL,
+    `environment` VARCHAR(191) NULL,
+    `version` VARCHAR(191) NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'active',
+    `sslExpiry` DATETIME(3) NULL,
+    `details` JSON NULL,
+    `notes` TEXT NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `ServerAsset_type_idx`(`type`),
+    INDEX `ServerAsset_status_idx`(`status`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `OperationsLog` (
+    `id` VARCHAR(191) NOT NULL,
+    `occurredAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `system` VARCHAR(191) NOT NULL,
+    `title` TEXT NOT NULL,
+    `kind` VARCHAR(191) NOT NULL DEFAULT 'task',
+    `symptoms` TEXT NULL,
+    `investigation` TEXT NULL,
+    `resolution` TEXT NULL,
+    `verificationStatus` VARCHAR(191) NOT NULL DEFAULT 'pending',
+    `status` VARCHAR(191) NOT NULL DEFAULT 'open',
+    `httpStatus` INTEGER NULL,
+    `approvedBy` VARCHAR(191) NULL,
+    `responsiblePerson` VARCHAR(191) NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `OperationsLog_occurredAt_idx`(`occurredAt`),
+    INDEX `OperationsLog_status_idx`(`status`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `CompetitorResearch` (
+    `id` VARCHAR(191) NOT NULL,
+    `organisation` VARCHAR(191) NOT NULL,
+    `website` TEXT NULL,
+    `researchDate` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `sourceUrl` TEXT NULL,
+    `observation` TEXT NOT NULL,
+    `category` VARCHAR(191) NOT NULL DEFAULT 'seo',
+    `evidence` TEXT NULL,
+    `isAssumption` BOOLEAN NOT NULL DEFAULT false,
+    `relevance` TEXT NULL,
+    `effort` VARCHAR(191) NOT NULL DEFAULT 'medium',
+    `expectedBenefit` TEXT NULL,
+    `measurement` TEXT NULL,
+    `recommendation` VARCHAR(191) NOT NULL DEFAULT 'investigate',
+    `status` VARCHAR(191) NOT NULL DEFAULT 'new',
+    `followUpDate` DATETIME(3) NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `CompetitorResearch_category_idx`(`category`),
+    INDEX `CompetitorResearch_recommendation_idx`(`recommendation`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Report` (
+    `id` VARCHAR(191) NOT NULL,
+    `title` VARCHAR(191) NOT NULL,
+    `type` VARCHAR(191) NOT NULL DEFAULT 'weekly',
+    `periodStart` DATETIME(3) NOT NULL,
+    `periodEnd` DATETIME(3) NOT NULL,
+    `comparePeriodStart` DATETIME(3) NULL,
+    `comparePeriodEnd` DATETIME(3) NULL,
+    `executiveSummary` TEXT NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'draft',
+    `snapshot` JSON NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `Report_periodStart_periodEnd_idx`(`periodStart`, `periodEnd`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Integration` (
+    `id` VARCHAR(191) NOT NULL,
+    `provider` VARCHAR(191) NOT NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'not_connected',
+    `propertyId` VARCHAR(191) NULL,
+    `lastSyncAt` DATETIME(3) NULL,
+    `lastError` TEXT NULL,
+    `config` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `Integration_provider_key`(`provider`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `ImportBatch` (
+    `id` VARCHAR(191) NOT NULL,
+    `source` VARCHAR(191) NOT NULL,
+    `fileName` VARCHAR(191) NULL,
+    `rowCount` INTEGER NOT NULL DEFAULT 0,
+    `skippedRows` INTEGER NOT NULL DEFAULT 0,
+    `periodStart` DATETIME(3) NULL,
+    `periodEnd` DATETIME(3) NULL,
+    `propertyId` VARCHAR(191) NULL,
+    `status` VARCHAR(191) NOT NULL DEFAULT 'completed',
+    `message` TEXT NULL,
+    `isDemo` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `ImportBatch_source_idx`(`source`),
+    INDEX `ImportBatch_createdAt_idx`(`createdAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `User` (
+    `id` VARCHAR(191) NOT NULL,
+    `name` VARCHAR(191) NOT NULL,
+    `email` VARCHAR(191) NOT NULL,
+    `role` VARCHAR(191) NOT NULL DEFAULT 'user',
+    `status` VARCHAR(191) NOT NULL DEFAULT 'active',
+    `passwordHash` VARCHAR(191) NULL,
+    `lastLoginAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `User_email_key`(`email`),
+    INDEX `User_role_idx`(`role`),
+    INDEX `User_status_idx`(`status`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Session` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `tokenHash` VARCHAR(191) NOT NULL,
+    `expiresAt` DATETIME(3) NOT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Session_tokenHash_key`(`tokenHash`),
+    INDEX `Session_userId_idx`(`userId`),
+    INDEX `Session_expiresAt_idx`(`expiresAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `AuthToken` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `type` VARCHAR(191) NOT NULL,
+    `tokenHash` VARCHAR(191) NOT NULL,
+    `expiresAt` DATETIME(3) NOT NULL,
+    `usedAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `AuthToken_tokenHash_key`(`tokenHash`),
+    INDEX `AuthToken_userId_idx`(`userId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `AdminAuditLog` (
+    `id` VARCHAR(191) NOT NULL,
+    `actorId` VARCHAR(191) NULL,
+    `actorEmail` VARCHAR(191) NULL,
+    `action` VARCHAR(191) NOT NULL,
+    `targetUserId` VARCHAR(191) NULL,
+    `targetEmail` VARCHAR(191) NULL,
+    `metadata` JSON NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `AdminAuditLog_createdAt_idx`(`createdAt`),
+    INDEX `AdminAuditLog_actorId_idx`(`actorId`),
+    INDEX `AdminAuditLog_targetUserId_idx`(`targetUserId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `AppSettings` (
+    `id` VARCHAR(191) NOT NULL DEFAULT 'app',
+    `siteUrl` VARCHAR(191) NOT NULL DEFAULT 'https://atlasuniversity.edu.in/',
+    `siteName` VARCHAR(191) NOT NULL DEFAULT 'Atlas University',
+    `ownerName` VARCHAR(191) NOT NULL DEFAULT '',
+    `ownerEmail` VARCHAR(191) NOT NULL DEFAULT '',
+    `timezone` VARCHAR(191) NOT NULL DEFAULT 'Asia/Kolkata',
+    `gscProperty` VARCHAR(191) NOT NULL DEFAULT '',
+    `ga4Property` VARCHAR(191) NOT NULL DEFAULT '',
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- AddForeignKey
+ALTER TABLE `Task` ADD CONSTRAINT `Task_projectId_fkey` FOREIGN KEY (`projectId`) REFERENCES `Project`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Task` ADD CONSTRAINT `Task_issueId_fkey` FOREIGN KEY (`issueId`) REFERENCES `TechnicalIssue`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `TaskActivity` ADD CONSTRAINT `TaskActivity_taskId_fkey` FOREIGN KEY (`taskId`) REFERENCES `Task`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `WorkLog` ADD CONSTRAINT `WorkLog_taskId_fkey` FOREIGN KEY (`taskId`) REFERENCES `Task`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `SeoSnapshot` ADD CONSTRAINT `SeoSnapshot_importBatchId_fkey` FOREIGN KEY (`importBatchId`) REFERENCES `ImportBatch`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `SeoSnapshot` ADD CONSTRAINT `SeoSnapshot_pageId_fkey` FOREIGN KEY (`pageId`) REFERENCES `WebsitePage`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `AnalyticsSnapshot` ADD CONSTRAINT `AnalyticsSnapshot_importBatchId_fkey` FOREIGN KEY (`importBatchId`) REFERENCES `ImportBatch`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `AnalyticsSnapshot` ADD CONSTRAINT `AnalyticsSnapshot_pageId_fkey` FOREIGN KEY (`pageId`) REFERENCES `WebsitePage`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `PageAudit` ADD CONSTRAINT `PageAudit_pageId_fkey` FOREIGN KEY (`pageId`) REFERENCES `WebsitePage`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `AuditFinding` ADD CONSTRAINT `AuditFinding_auditId_fkey` FOREIGN KEY (`auditId`) REFERENCES `PageAudit`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Session` ADD CONSTRAINT `Session_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `AuthToken` ADD CONSTRAINT `AuthToken_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+

@@ -5,7 +5,7 @@ analytics, technical and operational health of **atlasuniversity.edu.in** — pl
 management-ready weekly/monthly reporting.
 
 Built with **Next.js 15 (App Router) · TypeScript · Tailwind CSS v4 · Prisma ·
-SQLite · Recharts**. Light **and** dark theme, responsive, accessible.
+MySQL · Recharts**. Light **and** dark theme, responsive, accessible.
 
 ---
 
@@ -56,9 +56,10 @@ npm run dev
 #    npm run grant-admin           # defaults to the designated admin email
 ```
 
-The app ships with an `.env` pointing at a local SQLite file
-(`prisma/dev.db`) — **no database server required**. Copy `.env.example` to
-`.env` if you need to change anything.
+The app uses **MySQL**. Copy `.env.example` to `.env` and set `DATABASE_URL`
+to your MySQL connection string
+(`mysql://user:password@host:3306/dbname`), create that database, then run
+`npx prisma migrate deploy` to build the tables.
 
 ### Useful scripts
 | Script | Purpose |
@@ -102,11 +103,11 @@ prisma/
 ```
 
 **Key decisions**
-- **SQLite via Prisma** for zero-config, fully persistent local storage. The schema
-  is portable: enum-like fields are stored as strings and validated with Zod, and
-  structured data uses `Json`. To switch to **MySQL** (e.g. XAMPP) or Postgres,
-  change `datasource.provider` + `DATABASE_URL` in `prisma/schema.prisma` and run
-  `npx prisma migrate dev`.
+- **MySQL via Prisma.** The schema is portable: enum-like fields are stored as
+  strings and validated with Zod, and structured data uses `Json` (native JSON
+  columns). Free-text/URL columns are `@db.Text` so they are not capped at
+  MySQL's default `VARCHAR(191)`. Set `DATABASE_URL` and run
+  `npx prisma migrate deploy` to create the tables.
 - **Server Components + Server Actions** for data; **Zod** validates every mutation
   on the server. Client components handle only interactivity (forms, dialogs, charts).
 - **Import provenance**: every metric row records `source`, `propertyId`, period and

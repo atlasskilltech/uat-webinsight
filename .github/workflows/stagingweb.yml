@@ -22,8 +22,26 @@ jobs:
           script: |
             set -e
             cd /home/ubuntu/uat-webinsight
+
+            # Get the latest code for this branch
             git fetch origin staging
             git reset --hard origin/staging
-            npm ci --only=production
-            pm2 restart uat-webinsight || pm2 start src/app.js --name uat-webinsight
+
+            # Install ALL dependencies (the Next.js build needs devDependencies
+            # such as prisma, typescript, tailwindcss — a prod-only install fails)
+            npm ci
+
+            # Prisma: regenerate the client and apply pending MySQL migrations.
+            # The CLI auto-loads DATABASE_URL from the server's .env file.
+            npx prisma generate
+            npx prisma migrate deploy
+
+            # Build the production bundle (.next/) that `next start` serves
+            npm run build
+
+            # Start (or restart) the app under pm2. There is no src/app.js —
+            # this is a Next.js app, started via `npm start` (-> next start),
+            # which listens on PORT from .env.
+            pm2 restart uat-webinsight --update-env || pm2 start npm --name uat-webinsight -- start
+
             pm2 save
