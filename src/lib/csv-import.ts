@@ -1,5 +1,34 @@
 import "server-only";
-import { prisma } from "./prisma";
+import { execute, queryOne } from "./db";
+import { createId } from "./id";
+
+interface SeoRow {
+  propertyId: string;
+  source: string;
+  startDate: Date;
+  endDate: Date;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+  pageId: string | null;
+  isDemo: boolean;
+}
+
+interface AnalyticsRow {
+  propertyId: string;
+  source: string;
+  startDate: Date;
+  endDate: Date;
+  views: number;
+  activeUsers: number;
+  sessions: number;
+  engagedSessions: number;
+  engagementRate: number;
+  avgEngagementSecs: number;
+  pageId: string | null;
+  isDemo: boolean;
+}
 
 // --- Minimal, dependency-free CSV parser (handles quotes + CRLF) ------------
 
@@ -96,7 +125,10 @@ export interface ImportResult {
 
 async function resolvePageId(url: string | undefined): Promise<string | null> {
   if (!url) return null;
-  const page = await prisma.websitePage.findUnique({ where: { url } });
+  const page = await queryOne<{ id: string }>(
+    "SELECT `id` FROM `WebsitePage` WHERE `url` = ?",
+    [url],
+  );
   return page?.id ?? null;
 }
 
@@ -126,7 +158,7 @@ export async function importSeoCsv(
 
   const data = rows.slice(1);
   let skipped = 0;
-  const toCreate: Parameters<typeof prisma.seoSnapshot.create>[0]["data"][] = [];
+  const toCreate: SeoRow[] = [];
 
   for (const r of data) {
     const date = iDate >= 0 ? parseDate(r[iDate]) : null;
@@ -158,28 +190,29 @@ export async function importSeoCsv(
     return { ok: false, rowCount: 0, skippedRows: skipped, message: "No valid rows could be imported (missing dates or metrics)." };
   }
 
-  const batch = await prisma.importBatch.create({
-    data: {
-      source: "gsc",
-      fileName: opts.fileName,
-      rowCount: toCreate.length,
-      skippedRows: skipped,
-      propertyId: opts.propertyId,
-      periodStart: opts.periodStart ?? null,
-      periodEnd: opts.periodEnd ?? null,
-      status: skipped > 0 ? "partial" : "completed",
-      isDemo: false,
-    },
-  });
-  await prisma.seoSnapshot.createMany({
-    data: toCreate.map((d) => ({ ...d, importBatchId: batch.id })),
-  });
+  const batchId = createId();
+  await execute(
+    "INSERT INTO `ImportBatch` (`id`,`source`,`fileName`,`rowCount`,`skippedRows`,`propertyId`,`periodStart`,`periodEnd`,`status`,`isDemo`) " +
+      "VALUES (?,?,?,?,?,?,?,?,?,?)",
+    [
+      batchId, "gsc", opts.fileName ?? null, toCreate.length, skipped, opts.propertyId,
+      opts.periodStart ?? null, opts.periodEnd ?? null, skipped > 0 ? "partial" : "completed", false,
+    ],
+  );
+  const values = toCreate.map((d) => [
+    createId(), d.propertyId, d.source, d.startDate, d.endDate,
+    d.clicks, d.impressions, d.ctr, d.position, d.pageId, d.isDemo, batchId,
+  ]);
+  await execute(
+    "INSERT INTO `SeoSnapshot` (`id`,`propertyId`,`source`,`startDate`,`endDate`,`clicks`,`impressions`,`ctr`,`position`,`pageId`,`isDemo`,`importBatchId`) VALUES ?",
+    [values],
+  );
   return {
     ok: true,
     rowCount: toCreate.length,
     skippedRows: skipped,
     message: `Imported ${toCreate.length} Search Console rows${skipped ? `, skipped ${skipped}` : ""}.`,
-    batchId: batch.id,
+    batchId,
   };
 }
 
@@ -211,7 +244,7 @@ export async function importAnalyticsCsv(
 
   const data = rows.slice(1);
   let skipped = 0;
-  const toCreate: Parameters<typeof prisma.analyticsSnapshot.create>[0]["data"][] = [];
+  const toCreate: AnalyticsRow[] = [];
 
   for (const r of data) {
     const date = iDate >= 0 ? parseDate(r[iDate]) : null;
@@ -245,27 +278,29 @@ export async function importAnalyticsCsv(
     return { ok: false, rowCount: 0, skippedRows: skipped, message: "No valid rows could be imported (missing dates or metrics)." };
   }
 
-  const batch = await prisma.importBatch.create({
-    data: {
-      source: "ga4",
-      fileName: opts.fileName,
-      rowCount: toCreate.length,
-      skippedRows: skipped,
-      propertyId: opts.propertyId,
-      periodStart: opts.periodStart ?? null,
-      periodEnd: opts.periodEnd ?? null,
-      status: skipped > 0 ? "partial" : "completed",
-      isDemo: false,
-    },
-  });
-  await prisma.analyticsSnapshot.createMany({
-    data: toCreate.map((d) => ({ ...d, importBatchId: batch.id })),
-  });
+  const batchId = createId();
+  await execute(
+    "INSERT INTO `ImportBatch` (`id`,`source`,`fileName`,`rowCount`,`skippedRows`,`propertyId`,`periodStart`,`periodEnd`,`status`,`isDemo`) " +
+      "VALUES (?,?,?,?,?,?,?,?,?,?)",
+    [
+      batchId, "ga4", opts.fileName ?? null, toCreate.length, skipped, opts.propertyId,
+      opts.periodStart ?? null, opts.periodEnd ?? null, skipped > 0 ? "partial" : "completed", false,
+    ],
+  );
+  const values = toCreate.map((d) => [
+    createId(), d.propertyId, d.source, d.startDate, d.endDate,
+    d.views, d.activeUsers, d.sessions, d.engagedSessions, d.engagementRate,
+    d.avgEngagementSecs, d.pageId, d.isDemo, batchId,
+  ]);
+  await execute(
+    "INSERT INTO `AnalyticsSnapshot` (`id`,`propertyId`,`source`,`startDate`,`endDate`,`views`,`activeUsers`,`sessions`,`engagedSessions`,`engagementRate`,`avgEngagementSecs`,`pageId`,`isDemo`,`importBatchId`) VALUES ?",
+    [values],
+  );
   return {
     ok: true,
     rowCount: toCreate.length,
     skippedRows: skipped,
     message: `Imported ${toCreate.length} Analytics rows${skipped ? `, skipped ${skipped}` : ""}.`,
-    batchId: batch.id,
+    batchId,
   };
 }

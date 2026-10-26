@@ -1,9 +1,10 @@
 import "server-only";
-import { prisma } from "./prisma";
+import { query, queryOne } from "./db";
 import { type DateRange, previousPeriod, toISODate } from "./dates";
 import { percentChange, safeDivide } from "./utils";
 import { eachDayLabels } from "./series";
 import { type DataScope, demoFilter, metricsScope } from "./data-scope";
+import type { WebsitePage } from "./models";
 
 export interface SeoSummary {
   clicks: number;
@@ -31,15 +32,11 @@ export async function getSeoSummary(
   opts: { pageId?: string | null; scope?: DataScope } = {},
 ): Promise<SeoSummary> {
   const scope = opts.scope ?? (await metricsScope());
-  const rows = await prisma.seoSnapshot.findMany({
-    where: {
-      startDate: { gte: range.start, lte: range.end },
-      pageId: opts.pageId ?? null,
-      query: null,
-      isDemo: demoFilter(scope),
-    },
-    select: { clicks: true, impressions: true, position: true, isDemo: true },
-  });
+  const rows = await query<{ clicks: number; impressions: number; position: number; isDemo: boolean }>(
+    "SELECT `clicks`, `impressions`, `position`, `isDemo` FROM `SeoSnapshot` " +
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `isDemo` = ?",
+    [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+  );
   if (rows.length === 0) {
     return { clicks: 0, impressions: 0, ctr: 0, position: 0, hasData: false, isDemo: false };
   }
@@ -63,18 +60,14 @@ export async function getAnalyticsSummary(
   opts: { pageId?: string | null; scope?: DataScope } = {},
 ): Promise<AnalyticsSummary> {
   const scope = opts.scope ?? (await metricsScope());
-  const rows = await prisma.analyticsSnapshot.findMany({
-    where: {
-      startDate: { gte: range.start, lte: range.end },
-      pageId: opts.pageId ?? null,
-      channel: null,
-      isDemo: demoFilter(scope),
-    },
-    select: {
-      views: true, activeUsers: true, sessions: true, engagedSessions: true,
-      avgEngagementSecs: true, isDemo: true,
-    },
-  });
+  const rows = await query<{
+    views: number; activeUsers: number; sessions: number; engagedSessions: number;
+    avgEngagementSecs: number; isDemo: boolean;
+  }>(
+    "SELECT `views`, `activeUsers`, `sessions`, `engagedSessions`, `avgEngagementSecs`, `isDemo` FROM `AnalyticsSnapshot` " +
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `channel` IS NULL AND `isDemo` = ?",
+    [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+  );
   if (rows.length === 0) {
     return {
       views: 0, activeUsers: 0, sessions: 0, engagedSessions: 0,
@@ -153,16 +146,18 @@ export async function getTrend(
 ): Promise<TrendPoint[]> {
   const scope = opts.scope ?? (await metricsScope());
   const [seo, ga] = await Promise.all([
-    prisma.seoSnapshot.findMany({
-      where: { startDate: { gte: range.start, lte: range.end }, pageId: opts.pageId ?? null, query: null, isDemo: demoFilter(scope) },
-      select: { startDate: true, clicks: true, impressions: true },
-      orderBy: { startDate: "asc" },
-    }),
-    prisma.analyticsSnapshot.findMany({
-      where: { startDate: { gte: range.start, lte: range.end }, pageId: opts.pageId ?? null, channel: null, isDemo: demoFilter(scope) },
-      select: { startDate: true, views: true, activeUsers: true },
-      orderBy: { startDate: "asc" },
-    }),
+    query<{ startDate: Date; clicks: number; impressions: number }>(
+      "SELECT `startDate`, `clicks`, `impressions` FROM `SeoSnapshot` " +
+        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `isDemo` = ? " +
+        "ORDER BY `startDate` ASC",
+      [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+    ),
+    query<{ startDate: Date; views: number; activeUsers: number }>(
+      "SELECT `startDate`, `views`, `activeUsers` FROM `AnalyticsSnapshot` " +
+        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `channel` IS NULL AND `isDemo` = ? " +
+        "ORDER BY `startDate` ASC",
+      [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+    ),
   ]);
 
   const map = new Map<string, TrendPoint>();
@@ -191,26 +186,27 @@ export async function getTrend(
 /** Top landing pages by clicks for a range (site-wide page rows). */
 export async function getTopPages(range: DateRange, limit = 8, opts: { scope?: DataScope } = {}) {
   const scope = opts.scope ?? (await metricsScope());
-  const rows = await prisma.seoSnapshot.groupBy({
-    by: ["pageId"],
-    where: {
-      startDate: { gte: range.start, lte: range.end },
-      pageId: { not: null },
-      query: null,
-      isDemo: demoFilter(scope),
-    },
-    _sum: { clicks: true, impressions: true },
-    orderBy: { _sum: { clicks: "desc" } },
-    take: limit,
-  });
-  const pageIds = rows.map((r) => r.pageId!).filter(Boolean);
-  const pages = await prisma.websitePage.findMany({ where: { id: { in: pageIds } } });
-  const pageMap = new Map(pages.map((p) => [p.id, p]));
+  const rows = await query<{ pageId: string; clicks: string | number; impressions: string | number }>(
+    "SELECT `pageId`, SUM(`clicks`) AS `clicks`, SUM(`impressions`) AS `impressions` FROM `SeoSnapshot` " +
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` IS NOT NULL AND `query` IS NULL AND `isDemo` = ? " +
+      "GROUP BY `pageId` ORDER BY SUM(`clicks`) DESC LIMIT ?",
+    [range.start, range.end, demoFilter(scope), limit],
+  );
+  const pageIds = rows.map((r) => r.pageId).filter(Boolean);
+  let pageMap = new Map<string, WebsitePage>();
+  if (pageIds.length > 0) {
+    const placeholders = pageIds.map(() => "?").join(", ");
+    const pages = await query<WebsitePage>(
+      `SELECT * FROM \`WebsitePage\` WHERE \`id\` IN (${placeholders})`,
+      pageIds,
+    );
+    pageMap = new Map(pages.map((p) => [p.id, p]));
+  }
   return rows.map((r) => {
-    const clicks = r._sum.clicks ?? 0;
-    const impressions = r._sum.impressions ?? 0;
+    const clicks = Number(r.clicks ?? 0);
+    const impressions = Number(r.impressions ?? 0);
     return {
-      page: pageMap.get(r.pageId!),
+      page: pageMap.get(r.pageId),
       clicks,
       impressions,
       ctr: safeDivide(clicks, impressions) ?? 0,
@@ -220,7 +216,7 @@ export async function getTopPages(range: DateRange, limit = 8, opts: { scope?: D
 
 /** Whether any non-demo SEO/GA data exists (for honest "connected" messaging). */
 export async function hasRealMetrics(): Promise<boolean> {
-  const real = await prisma.seoSnapshot.count({ where: { isDemo: false } });
-  const realGa = await prisma.analyticsSnapshot.count({ where: { isDemo: false } });
-  return real + realGa > 0;
+  const seo = await queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `SeoSnapshot` WHERE `isDemo` = ?", [false]);
+  const ga = await queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `AnalyticsSnapshot` WHERE `isDemo` = ?", [false]);
+  return Number(seo?.c ?? 0) + Number(ga?.c ?? 0) > 0;
 }

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SearchCheck, ChevronRight, FileSearch } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { PageAudit } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,11 +21,19 @@ export default async function InspectorPage({
   searchParams: Promise<{ url?: string }>;
 }) {
   const { url } = await searchParams;
-  const audits = await prisma.pageAudit.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 30,
-    include: { _count: { select: { findings: true } } },
-  });
+  const auditRows = await query<PageAudit>(
+    "SELECT * FROM `PageAudit` ORDER BY `createdAt` DESC LIMIT ?",
+    [30],
+  );
+  const auditIds = auditRows.map((a) => a.id);
+  const countRows = auditIds.length
+    ? await query<{ auditId: string; c: number }>(
+        "SELECT `auditId`, COUNT(*) AS c FROM `AuditFinding` WHERE `auditId` IN (?) GROUP BY `auditId`",
+        [auditIds],
+      )
+    : [];
+  const countMap = new Map(countRows.map((r) => [r.auditId, Number(r.c)]));
+  const audits = auditRows.map((a) => ({ ...a, _count: { findings: countMap.get(a.id) ?? 0 } }));
 
   return (
     <div>

@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
+import { queryOne, execute, transaction, json } from "@/lib/db";
+import { createId } from "@/lib/id";
+import type { WebsitePage, AuditFinding, PageAudit } from "@/lib/models";
 import { crawlPage } from "@/lib/crawler";
 import { fetchPageSpeed } from "@/lib/google";
 import { runDiagnostics } from "@/lib/diagnostics";
@@ -23,7 +25,7 @@ export async function runAudit(_prev: FormState, formData: FormData): Promise<Fo
     const crawl = await crawlPage(url);
 
     // Match a known page to pull its search/visitor metrics.
-    const page = await prisma.websitePage.findUnique({ where: { url } });
+    const page = await queryOne<WebsitePage>("SELECT * FROM `WebsitePage` WHERE `url`=?", [url]);
     const range = lastNDays(28);
     const [seoCmp, analytics] = page
       ? await Promise.all([
@@ -45,56 +47,70 @@ export async function runAudit(_prev: FormState, formData: FormData): Promise<Fo
 
     const notes = !crawl.ok ? crawl.error : crawl.error ? crawl.error : null;
 
-    const audit = await prisma.pageAudit.create({
-      data: {
-        url,
-        pageId: page?.id ?? null,
-        httpStatus: crawl.httpStatus ?? null,
-        indexable: crawl.indexable ?? "unknown",
-        robots: crawl.robots ?? null,
-        canonical: crawl.canonical ?? null,
-        title: crawl.title ?? null,
-        titleLength: crawl.titleLength ?? null,
-        metaDescription: crawl.metaDescription ?? null,
-        metaDescLength: crawl.metaDescLength ?? null,
-        h1: crawl.h1 ?? null,
-        headingStructure: crawl.headingStructure ?? undefined,
-        imagesTotal: crawl.imagesTotal ?? null,
-        imagesMissingAlt: crawl.imagesMissingAlt ?? null,
-        internalLinks: crawl.internalLinks ?? null,
-        externalLinks: crawl.externalLinks ?? null,
-        structuredData: crawl.structuredData ?? undefined,
-        wordCount: crawl.wordCount ?? null,
-        performanceScore: psi?.performanceScore ?? null,
-        accessibilityScore: psi?.accessibilityScore ?? null,
-        seoScore: psi?.seoScore ?? null,
-        lcp: psi?.lcp ?? null,
-        cls: psi?.cls ?? null,
-        inp: psi?.inp ?? null,
-        fetchedHtml: crawl.ok && !!crawl.title,
-        psiFetched: !!psi?.fetched,
-        notes,
-        findings: {
-          create: findings.map((f) => ({
-            detected: f.detected,
-            evidence: f.evidence,
-            why: f.why,
-            confidence: f.confidence,
-            recommendation: f.recommendation,
-            priority: f.priority,
-            owner: f.owner,
-            status: f.status,
-            verificationSteps: f.verificationSteps,
-            isHypothesis: f.isHypothesis,
-          })),
-        },
-      },
+    const auditId = await transaction(async (conn) => {
+      const id = createId();
+      await conn.query(
+        "INSERT INTO `PageAudit` (`id`,`url`,`pageId`,`httpStatus`,`indexable`,`robots`,`canonical`,`title`,`titleLength`,`metaDescription`,`metaDescLength`,`h1`,`headingStructure`,`imagesTotal`,`imagesMissingAlt`,`internalLinks`,`externalLinks`,`structuredData`,`wordCount`,`performanceScore`,`accessibilityScore`,`seoScore`,`lcp`,`cls`,`inp`,`fetchedHtml`,`psiFetched`,`notes`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          id,
+          url,
+          page?.id ?? null,
+          crawl.httpStatus ?? null,
+          crawl.indexable ?? "unknown",
+          crawl.robots ?? null,
+          crawl.canonical ?? null,
+          crawl.title ?? null,
+          crawl.titleLength ?? null,
+          crawl.metaDescription ?? null,
+          crawl.metaDescLength ?? null,
+          crawl.h1 ?? null,
+          json(crawl.headingStructure ?? null),
+          crawl.imagesTotal ?? null,
+          crawl.imagesMissingAlt ?? null,
+          crawl.internalLinks ?? null,
+          crawl.externalLinks ?? null,
+          json(crawl.structuredData ?? null),
+          crawl.wordCount ?? null,
+          psi?.performanceScore ?? null,
+          psi?.accessibilityScore ?? null,
+          psi?.seoScore ?? null,
+          psi?.lcp ?? null,
+          psi?.cls ?? null,
+          psi?.inp ?? null,
+          crawl.ok && !!crawl.title,
+          !!psi?.fetched,
+          notes,
+        ],
+      );
+
+      if (findings.length > 0) {
+        const rows = findings.map((f) => [
+          createId(),
+          id,
+          f.detected,
+          f.evidence ?? null,
+          f.why ?? null,
+          f.confidence,
+          f.recommendation ?? null,
+          f.priority,
+          f.owner ?? null,
+          f.status,
+          f.verificationSteps ?? null,
+          f.isHypothesis,
+        ]);
+        await conn.query(
+          "INSERT INTO `AuditFinding` (`id`,`auditId`,`detected`,`evidence`,`why`,`confidence`,`recommendation`,`priority`,`owner`,`status`,`verificationSteps`,`isHypothesis`) VALUES ?",
+          [rows],
+        );
+      }
+
+      return id;
     });
 
     revalidatePath("/inspector");
     return successState(
       crawl.ok ? `Audit complete — ${findings.length} finding(s).` : `Audited with limited data: ${crawl.error}`,
-      audit.id,
+      auditId,
     );
   } catch {
     return errorState("The audit failed unexpectedly. Please try again.");
@@ -102,35 +118,36 @@ export async function runAudit(_prev: FormState, formData: FormData): Promise<Fo
 }
 
 export async function deleteAudit(id: string): Promise<void> {
-  await prisma.pageAudit.delete({ where: { id } });
+  await execute("DELETE FROM `PageAudit` WHERE `id`=?", [id]);
   revalidatePath("/inspector");
 }
 
 /** Promote a diagnostic finding into the Technical SEO Issues register. */
 export async function createIssueFromFinding(findingId: string): Promise<FormState> {
-  const finding = await prisma.auditFinding.findUnique({
-    where: { id: findingId },
-    include: { audit: true },
-  });
+  const finding = await queryOne<AuditFinding>("SELECT * FROM `AuditFinding` WHERE `id`=?", [findingId]);
   if (!finding) return errorState("Finding not found.");
+  const audit = await queryOne<PageAudit>("SELECT * FROM `PageAudit` WHERE `id`=?", [finding.auditId]);
+  if (!audit) return errorState("Finding not found.");
   try {
-    await prisma.technicalIssue.create({
-      data: {
-        title: finding.detected,
-        urls: [finding.audit.url],
-        category: "other",
-        severity: finding.priority === "critical" ? "critical" : finding.priority === "high" ? "high" : finding.priority === "low" ? "low" : "medium",
-        priority: finding.priority,
-        evidence: finding.evidence,
-        source: "Page Inspector",
-        impact: finding.why,
-        recommendedFix: finding.recommendation,
-        status: "open",
-        approvalStatus: "pending",
-        auditId: finding.auditId,
-        pageId: finding.audit.pageId,
-      },
-    });
+    await execute(
+      "INSERT INTO `TechnicalIssue` (`id`,`title`,`urls`,`category`,`severity`,`priority`,`evidence`,`source`,`impact`,`recommendedFix`,`status`,`approvalStatus`,`auditId`,`pageId`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [
+        createId(),
+        finding.detected,
+        json([audit.url]),
+        "other",
+        finding.priority === "critical" ? "critical" : finding.priority === "high" ? "high" : finding.priority === "low" ? "low" : "medium",
+        finding.priority,
+        finding.evidence,
+        "Page Inspector",
+        finding.why,
+        finding.recommendation,
+        "open",
+        "pending",
+        finding.auditId,
+        audit.pageId,
+      ],
+    );
     revalidatePath("/issues");
     return successState("Issue created in the register.");
   } catch {

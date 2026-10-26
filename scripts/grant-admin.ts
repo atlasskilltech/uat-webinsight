@@ -12,10 +12,14 @@
  * existing user to active admin, and records an audit entry. It never deletes
  * or demotes anyone else.
  */
-import { PrismaClient } from "@prisma/client";
+import { loadEnvConfig } from "@next/env";
 import { BOOTSTRAP_ADMIN_EMAIL } from "../src/lib/auth/constants";
+import { execute, json, queryOne, getPool } from "../src/lib/db";
+import { createId } from "../src/lib/id";
 
-const prisma = new PrismaClient();
+// Load .env so DB_* / DATABASE_URL are available before the pool is created.
+// (The pool is created lazily on first query, after this runs.)
+loadEnvConfig(process.cwd());
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -30,32 +34,38 @@ async function main() {
     return;
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  const existing = await queryOne<{ id: string }>(
+    "SELECT `id` FROM `User` WHERE `email` = ?",
+    [email],
+  );
   let userId: string;
   if (existing) {
-    const updated = await prisma.user.update({
-      where: { email },
-      data: { role: "admin", status: "active" },
-    });
-    userId = updated.id;
+    await execute(
+      "UPDATE `User` SET `role`='admin', `status`='active' WHERE `email` = ?",
+      [email],
+    );
+    userId = existing.id;
     console.log(`Promoted existing user to active admin: ${email}`);
   } else {
-    const created = await prisma.user.create({
-      data: { email, name, role: "admin", status: "active" },
-    });
-    userId = created.id;
+    userId = createId();
+    await execute(
+      "INSERT INTO `User` (`id`,`email`,`name`,`role`,`status`) VALUES (?,?,?,'admin','active')",
+      [userId, email, name],
+    );
     console.log(`Created active admin: ${email}`);
   }
 
-  await prisma.adminAuditLog.create({
-    data: {
-      actorEmail: email,
-      action: "user.role_changed",
-      targetUserId: userId,
-      targetEmail: email,
-      metadata: { to: "admin", status: "active", via: "cli-grant-admin" },
-    },
-  });
+  await execute(
+    "INSERT INTO `AdminAuditLog` (`id`,`actorEmail`,`action`,`targetUserId`,`targetEmail`,`metadata`) VALUES (?,?,?,?,?,?)",
+    [
+      createId(),
+      email,
+      "user.role_changed",
+      userId,
+      email,
+      json({ to: "admin", status: "active", via: "cli-grant-admin" }),
+    ],
+  );
 
   console.log("Done. Sign in at /login with Google using this email.");
 }
@@ -65,4 +75,4 @@ main()
     console.error("grant-admin failed:", e instanceof Error ? e.message : e);
     process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  .finally(() => getPool().end());

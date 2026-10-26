@@ -28,13 +28,12 @@ jobs:
             git reset --hard origin/staging
 
             # Install ALL dependencies (the Next.js build needs devDependencies
-            # such as prisma, typescript, tailwindcss — a prod-only install fails)
+            # such as typescript and tailwindcss — a prod-only install fails)
             npm ci
 
-            # Prisma: regenerate the client and apply pending MySQL migrations.
-            # The CLI auto-loads DATABASE_URL from the server's .env file.
-            npx prisma generate
-            npx prisma migrate deploy
+            # Ensure the MySQL schema exists (CREATE TABLE IF NOT EXISTS — safe
+            # to run every deploy). Reads DB_* / DATABASE_URL from the .env file.
+            npm run db:init
 
             # Build the production bundle (.next/) that `next start` serves
             npm run build

@@ -249,12 +249,12 @@ serverless host, replace it with a distributed lock or an external queue.
 ---
 
 ## Database (MySQL)
-The app uses MySQL. To set it up:
+The app uses MySQL via the `mysql2` driver (no ORM). To set it up:
 1. Create a database (e.g. `atlas_dashboard`) and a user with access to it.
-2. In `.env`, set `DATABASE_URL="mysql://user:password@host:3306/atlas_dashboard"`.
-   URL-encode special characters in the password (e.g. `@` → `%40`).
-3. Run `npx prisma migrate deploy` to create the tables, then `npm run db:seed`
-   for demo data (optional).
+2. In `.env`, set the connection — either the individual parts:
+   `DB_HOST`, `DB_PORT` (default 3306), `DB_USER`, `DB_PASSWORD`, `DB_NAME`,
+   or a single `DATABASE_URL="mysql://user:password@host:3306/atlas_dashboard"`.
+3. Run `npm run db:init` to create the tables (from `db/schema.sql`).
 
-`datasource.provider` is already `mysql` in `prisma/schema.prisma`; the data
-model is portable, so no code changes are required to point at a new database.
+The schema is defined in `db/schema.sql`; row types are in `src/lib/models.ts`.
+To point at a different database, change the `DB_*` / `DATABASE_URL` values.

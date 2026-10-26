@@ -1,5 +1,7 @@
 import "server-only";
-import { prisma } from "./prisma";
+import { execute, query, queryOne } from "./db";
+import { createId } from "./id";
+import type { Integration } from "./models";
 
 export type Provider = "gsc" | "ga4" | "psi";
 
@@ -34,16 +36,21 @@ function configuredFor(provider: Provider): boolean {
   return googleConfigured();
 }
 
+type SyncConfig = {
+  sync?: { inProgress?: boolean; nextRunAt?: string | null; lastResult?: string | null };
+} | null;
+
 export async function getIntegrations(): Promise<IntegrationView[]> {
   const providers: Provider[] = ["gsc", "ga4", "psi"];
-  const rows = await prisma.integration.findMany({
-    where: { provider: { in: providers } },
-  });
+  const rows = await query<Integration>(
+    "SELECT * FROM `Integration` WHERE `provider` IN (?, ?, ?)",
+    providers,
+  );
   const byProvider = new Map(rows.map((r) => [r.provider, r]));
   return providers.map((p) => {
     const row = byProvider.get(p);
     // Read only the non-sensitive sync metadata — tokens never leave the server.
-    const sync = (row?.config as { sync?: { inProgress?: boolean; nextRunAt?: string | null; lastResult?: string | null } } | null)?.sync ?? {};
+    const sync = (row?.config as SyncConfig)?.sync ?? {};
     return {
       provider: p,
       status: (row?.status as IntegrationView["status"]) ?? "not_connected",
@@ -64,31 +71,45 @@ export async function getIntegration(provider: Provider): Promise<IntegrationVie
 }
 
 export async function isConnected(provider: Provider): Promise<boolean> {
-  const row = await prisma.integration.findUnique({ where: { provider } });
+  const row = await queryOne<Integration>(
+    "SELECT `status` FROM `Integration` WHERE `provider` = ?",
+    [provider],
+  );
   return row?.status === "connected";
 }
 
 /** Persist a successful sync timestamp. */
 export async function recordSync(provider: Provider, propertyId?: string) {
-  await prisma.integration.upsert({
-    where: { provider },
-    update: { status: "connected", lastSyncAt: new Date(), lastError: null, ...(propertyId ? { propertyId } : {}) },
-    create: { provider, status: "connected", lastSyncAt: new Date(), propertyId: propertyId ?? null },
-  });
+  if (propertyId) {
+    await execute(
+      "INSERT INTO `Integration` (`id`,`provider`,`status`,`lastSyncAt`,`lastError`,`propertyId`) " +
+        "VALUES (?,?,'connected',?,NULL,?) " +
+        "ON DUPLICATE KEY UPDATE `status`='connected', `lastSyncAt`=VALUES(`lastSyncAt`), `lastError`=NULL, `propertyId`=VALUES(`propertyId`)",
+      [createId(), provider, new Date(), propertyId],
+    );
+  } else {
+    await execute(
+      "INSERT INTO `Integration` (`id`,`provider`,`status`,`lastSyncAt`,`lastError`) " +
+        "VALUES (?,?,'connected',?,NULL) " +
+        "ON DUPLICATE KEY UPDATE `status`='connected', `lastSyncAt`=VALUES(`lastSyncAt`), `lastError`=NULL",
+      [createId(), provider, new Date()],
+    );
+  }
 }
 
 export async function recordError(provider: Provider, message: string) {
-  await prisma.integration.upsert({
-    where: { provider },
-    update: { status: "error", lastError: message },
-    create: { provider, status: "error", lastError: message },
-  });
+  await execute(
+    "INSERT INTO `Integration` (`id`,`provider`,`status`,`lastError`) VALUES (?,?,'error',?) " +
+      "ON DUPLICATE KEY UPDATE `status`='error', `lastError`=VALUES(`lastError`)",
+    [createId(), provider, message],
+  );
 }
 
 export async function disconnect(provider: Provider) {
-  await prisma.integration.upsert({
-    where: { provider },
-    update: { status: "not_connected", config: undefined, lastError: null },
-    create: { provider, status: "not_connected" },
-  });
+  // Clear config so stored OAuth tokens are removed on disconnect.
+  await execute(
+    "INSERT INTO `Integration` (`id`,`provider`,`status`,`config`,`lastError`) VALUES (?,?,'not_connected',NULL,NULL) " +
+      "ON DUPLICATE KEY UPDATE `status`='not_connected', `config`=NULL, `lastError`=NULL",
+    [createId(), provider],
+  );
 }

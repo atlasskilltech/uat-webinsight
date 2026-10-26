@@ -42,9 +42,8 @@ Nine modules, all backed by a real persistent database:
 # 1. Install dependencies
 npm install
 
-# 2. Create the database, generate the client, and load demo data
-npm run setup        # = prisma generate + migrate deploy + seed
-#   (or, for development:  npx prisma migrate dev  &&  npm run db:seed)
+# 2. Create the database tables (from db/schema.sql)
+npm run db:init      # = npm run setup
 
 # 3. Run the app
 npm run dev
@@ -56,10 +55,10 @@ npm run dev
 #    npm run grant-admin           # defaults to the designated admin email
 ```
 
-The app uses **MySQL**. Copy `.env.example` to `.env` and set `DATABASE_URL`
-to your MySQL connection string
-(`mysql://user:password@host:3306/dbname`), create that database, then run
-`npx prisma migrate deploy` to build the tables.
+The app uses **MySQL** via the `mysql2` driver (no ORM). Copy `.env.example`
+to `.env` and set either the individual `DB_HOST`/`DB_PORT`/`DB_USER`/
+`DB_PASSWORD`/`DB_NAME` variables or a single `DATABASE_URL`, create that
+database, then run `npm run db:init` to build the tables (from `db/schema.sql`).
 
 ### Useful scripts
 | Script | Purpose |
@@ -67,10 +66,8 @@ to your MySQL connection string
 | `npm run dev` | Start the dev server. |
 | `npm run build` / `npm start` | Production build / serve. |
 | `npm run typecheck` | `tsc --noEmit`. |
-| `npm run db:migrate` | Create/apply a migration (dev). |
-| `npm run db:seed` | Load clearly-labelled demo data (replaces demo rows only). |
-| `npm run db:reset` | Drop & recreate the DB, then seed. |
-| `npm run db:studio` | Open Prisma Studio to browse the data. |
+| `npm run db:init` | Create the MySQL tables from `db/schema.sql` (idempotent). |
+| `npm run grant-admin` | Create/promote the designated admin user. |
 
 ---
 
@@ -93,21 +90,23 @@ src/
     charts/                  Recharts wrappers (themed)
     shell/                   Sidebar, topbar, command palette, app shell
   lib/
-    prisma.ts  enums.ts  validation.ts  form-state.ts
+    db.ts  db-config.ts  models.ts  id.ts    MySQL access + row types
+    enums.ts  validation.ts  form-state.ts
     metrics.ts  report-data.ts          Aggregation + report assembly
     crawler.ts  diagnostics.ts          Page Inspector engine
     google.ts  integrations.ts  csv-import.ts  csv-export.ts
     dates.ts  series.ts  utils.ts  glossary.ts  settings.ts
-prisma/
-  schema.prisma  migrations/  seed.ts
+db/
+  schema.sql                            MySQL schema (run via npm run db:init)
 ```
 
 **Key decisions**
-- **MySQL via Prisma.** The schema is portable: enum-like fields are stored as
-  strings and validated with Zod, and structured data uses `Json` (native JSON
-  columns). Free-text/URL columns are `@db.Text` so they are not capped at
-  MySQL's default `VARCHAR(191)`. Set `DATABASE_URL` and run
-  `npx prisma migrate deploy` to create the tables.
+- **MySQL via the `mysql2` driver (no ORM).** The schema lives in
+  `db/schema.sql`; row types are in `src/lib/models.ts` and all queries go
+  through the small helpers in `src/lib/db.ts` (`query`, `queryOne`,
+  `execute`, `transaction`). Enum-like fields are stored as strings and
+  validated with Zod; structured data uses native `JSON` columns. Run
+  `npm run db:init` to create the tables.
 - **Server Components + Server Actions** for data; **Zod** validates every mutation
   on the server. Client components handle only interactivity (forms, dialogs, charts).
 - **Import provenance**: every metric row records `source`, `propertyId`, period and

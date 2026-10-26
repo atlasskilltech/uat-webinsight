@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
+import { execute, queryOne, json } from "@/lib/db";
+import { createId } from "@/lib/id";
+import type { TechnicalIssue } from "@/lib/models";
 import { issueSchema, splitUrls } from "@/lib/validation";
 import {
   parseForm,
@@ -15,6 +17,37 @@ function revalidateIssues() {
   revalidatePath("/");
 }
 
+/** Build an INSERT for the given record, omitting undefined fields so the
+ * database defaults apply (mirrors Prisma's create omission semantics). */
+function buildInsert(table: string, record: Record<string, unknown>) {
+  const cols: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) continue;
+    cols.push(`\`${key}\``);
+    params.push(value);
+  }
+  const sql = `INSERT INTO \`${table}\` (${cols.join(", ")}) VALUES (${cols
+    .map(() => "?")
+    .join(", ")})`;
+  return { sql, params };
+}
+
+/** Build an UPDATE ... WHERE id = ? for the provided fields only (undefined
+ * fields are left unchanged, mirroring Prisma's update semantics). */
+function buildUpdate(table: string, record: Record<string, unknown>, id: string) {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) continue;
+    sets.push(`\`${key}\` = ?`);
+    params.push(value);
+  }
+  params.push(id);
+  const sql = `UPDATE \`${table}\` SET ${sets.join(", ")} WHERE \`id\` = ?`;
+  return { sql, params };
+}
+
 const RESOLVED_STATUSES = new Set(["verified", "fixed"]);
 
 export async function createIssue(
@@ -26,18 +59,20 @@ export async function createIssue(
   const { urls, ...data } = parsed.data;
 
   try {
-    const issue = await prisma.technicalIssue.create({
-      data: {
-        ...data,
-        urls: splitUrls(urls),
-        dateResolved:
-          RESOLVED_STATUSES.has(data.status) && !data.dateResolved
-            ? new Date()
-            : data.dateResolved,
-      },
-    });
+    const id = createId();
+    const record: Record<string, unknown> = {
+      id,
+      ...data,
+      urls: json(splitUrls(urls)),
+      dateResolved:
+        RESOLVED_STATUSES.has(data.status) && !data.dateResolved
+          ? new Date()
+          : data.dateResolved,
+    };
+    const { sql, params } = buildInsert("TechnicalIssue", record);
+    await execute(sql, params);
     revalidateIssues();
-    return successState("Issue recorded.", issue.id);
+    return successState("Issue recorded.", id);
   } catch {
     return errorState("Could not record the issue. Please try again.");
   }
@@ -54,7 +89,10 @@ export async function updateIssue(
   const { urls, ...data } = parsed.data;
 
   try {
-    const before = await prisma.technicalIssue.findUnique({ where: { id } });
+    const before = await queryOne<TechnicalIssue>(
+      "SELECT * FROM `TechnicalIssue` WHERE `id` = ?",
+      [id],
+    );
     if (!before) return errorState("Issue not found.");
 
     const becomingResolved =
@@ -63,14 +101,13 @@ export async function updateIssue(
       ? data.dateResolved ?? before.dateResolved ?? (becomingResolved ? new Date() : null)
       : null;
 
-    await prisma.technicalIssue.update({
-      where: { id },
-      data: {
-        ...data,
-        urls: splitUrls(urls),
-        dateResolved,
-      },
-    });
+    const record: Record<string, unknown> = {
+      ...data,
+      urls: json(splitUrls(urls)),
+      dateResolved,
+    };
+    const { sql, params } = buildUpdate("TechnicalIssue", record, id);
+    await execute(sql, params);
     revalidateIssues();
     return successState("Issue updated.", id);
   } catch {
@@ -80,23 +117,27 @@ export async function updateIssue(
 
 /** Quick status change from the register. */
 export async function setIssueStatus(id: string, status: string): Promise<void> {
-  const before = await prisma.technicalIssue.findUnique({ where: { id } });
+  const before = await queryOne<TechnicalIssue>(
+    "SELECT * FROM `TechnicalIssue` WHERE `id` = ?",
+    [id],
+  );
   if (!before) return;
   const becomingResolved =
     RESOLVED_STATUSES.has(status) && !RESOLVED_STATUSES.has(before.status);
-  await prisma.technicalIssue.update({
-    where: { id },
-    data: {
+  await execute(
+    "UPDATE `TechnicalIssue` SET `status` = ?, `dateResolved` = ? WHERE `id` = ?",
+    [
       status,
-      dateResolved: RESOLVED_STATUSES.has(status)
+      RESOLVED_STATUSES.has(status)
         ? before.dateResolved ?? (becomingResolved ? new Date() : null)
         : null,
-    },
-  });
+      id,
+    ],
+  );
   revalidateIssues();
 }
 
 export async function deleteIssue(id: string): Promise<void> {
-  await prisma.technicalIssue.delete({ where: { id } });
+  await execute("DELETE FROM `TechnicalIssue` WHERE `id` = ?", [id]);
   revalidateIssues();
 }

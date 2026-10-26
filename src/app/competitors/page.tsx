@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { CompetitorResearch } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { RECOMMENDATIONS, labelOf } from "@/lib/enums";
 import { CompetitorsClient, type ResearchRow } from "./competitors-client";
@@ -22,9 +23,9 @@ export default async function CompetitorsPage({
   searchParams: Promise<{ new?: string }>;
 }) {
   const sp = await searchParams;
-  const rows = await prisma.competitorResearch.findMany({
-    orderBy: { researchDate: "desc" },
-  });
+  const rows = await query<CompetitorResearch>(
+    "SELECT * FROM `CompetitorResearch` ORDER BY `researchDate` DESC",
+  );
 
   const entries: ResearchRow[] = rows.map((r) => ({
     id: r.id,

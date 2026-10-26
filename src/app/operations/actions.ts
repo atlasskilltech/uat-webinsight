@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
+import { execute } from "@/lib/db";
+import { createId } from "@/lib/id";
 import { serverAssetSchema, opsLogSchema } from "@/lib/validation";
 import {
   parseForm,
@@ -15,6 +16,37 @@ function revalidateOps() {
   revalidatePath("/");
 }
 
+/** Build an INSERT for the given record, omitting undefined fields so the
+ * database defaults apply (mirrors Prisma's create omission semantics). */
+function buildInsert(table: string, record: Record<string, unknown>) {
+  const cols: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) continue;
+    cols.push(`\`${key}\``);
+    params.push(value);
+  }
+  const sql = `INSERT INTO \`${table}\` (${cols.join(", ")}) VALUES (${cols
+    .map(() => "?")
+    .join(", ")})`;
+  return { sql, params };
+}
+
+/** Build an UPDATE ... WHERE id = ? for the provided fields only (undefined
+ * fields are left unchanged, mirroring Prisma's update semantics). */
+function buildUpdate(table: string, record: Record<string, unknown>, id: string) {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) continue;
+    sets.push(`\`${key}\` = ?`);
+    params.push(value);
+  }
+  params.push(id);
+  const sql = `UPDATE \`${table}\` SET ${sets.join(", ")} WHERE \`id\` = ?`;
+  return { sql, params };
+}
+
 // --- Server assets ----------------------------------------------------------
 
 export async function createServerAsset(
@@ -24,9 +56,11 @@ export async function createServerAsset(
   const parsed = parseForm(serverAssetSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
-    const asset = await prisma.serverAsset.create({ data: parsed.data });
+    const id = createId();
+    const { sql, params } = buildInsert("ServerAsset", { id, ...parsed.data });
+    await execute(sql, params);
     revalidateOps();
-    return successState("Asset added.", asset.id);
+    return successState("Asset added.", id);
   } catch {
     return errorState("Could not add the asset. Please try again.");
   }
@@ -41,7 +75,8 @@ export async function updateServerAsset(
   const parsed = parseForm(serverAssetSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
-    await prisma.serverAsset.update({ where: { id }, data: parsed.data });
+    const { sql, params } = buildUpdate("ServerAsset", { ...parsed.data }, id);
+    await execute(sql, params);
     revalidateOps();
     return successState("Asset updated.", id);
   } catch {
@@ -50,7 +85,7 @@ export async function updateServerAsset(
 }
 
 export async function deleteServerAsset(id: string): Promise<void> {
-  await prisma.serverAsset.delete({ where: { id } });
+  await execute("DELETE FROM `ServerAsset` WHERE `id` = ?", [id]);
   revalidateOps();
 }
 
@@ -63,9 +98,11 @@ export async function createOpsLog(
   const parsed = parseForm(opsLogSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
-    const log = await prisma.operationsLog.create({ data: parsed.data });
+    const id = createId();
+    const { sql, params } = buildInsert("OperationsLog", { id, ...parsed.data });
+    await execute(sql, params);
     revalidateOps();
-    return successState("Log entry recorded.", log.id);
+    return successState("Log entry recorded.", id);
   } catch {
     return errorState("Could not record the log entry. Please try again.");
   }
@@ -80,7 +117,8 @@ export async function updateOpsLog(
   const parsed = parseForm(opsLogSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
-    await prisma.operationsLog.update({ where: { id }, data: parsed.data });
+    const { sql, params } = buildUpdate("OperationsLog", { ...parsed.data }, id);
+    await execute(sql, params);
     revalidateOps();
     return successState("Log entry updated.", id);
   } catch {
@@ -89,6 +127,6 @@ export async function updateOpsLog(
 }
 
 export async function deleteOpsLog(id: string): Promise<void> {
-  await prisma.operationsLog.delete({ where: { id } });
+  await execute("DELETE FROM `OperationsLog` WHERE `id` = ?", [id]);
   revalidateOps();
 }

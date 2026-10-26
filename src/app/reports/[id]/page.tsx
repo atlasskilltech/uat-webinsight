@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { queryOne } from "@/lib/db";
+import type { Report } from "@/lib/models";
 import { getSettings } from "@/lib/settings";
 import { ReportToolbar } from "./report-toolbar";
 import { Badge, StatusBadge } from "@/components/ui/badge";
@@ -39,7 +40,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 export default async function ReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [report, settings] = await Promise.all([
-    prisma.report.findUnique({ where: { id } }),
+    queryOne<Report>("SELECT * FROM `Report` WHERE `id`=?", [id]),
     getSettings(),
   ]);
   if (!report) notFound();

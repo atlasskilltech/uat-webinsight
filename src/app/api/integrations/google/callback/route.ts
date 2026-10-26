@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { execute, json } from "@/lib/db";
+import { createId } from "@/lib/id";
 import { exchangeCode } from "@/lib/google";
 import { recordError } from "@/lib/integrations";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -37,13 +37,13 @@ export async function GET(request: Request) {
 
   try {
     const tokens = await exchangeCode(code);
-    const config = { tokens } as unknown as Prisma.InputJsonValue;
+    const configJson = json({ tokens });
     for (const provider of ["gsc", "ga4"]) {
-      await prisma.integration.upsert({
-        where: { provider },
-        update: { status: "connected", config, lastError: null },
-        create: { provider, status: "connected", config },
-      });
+      await execute(
+        "INSERT INTO `Integration` (`id`,`provider`,`status`,`config`,`lastError`) VALUES (?,?, 'connected', ?, NULL) " +
+          "ON DUPLICATE KEY UPDATE `status`='connected', `config`=VALUES(`config`), `lastError`=NULL",
+        [createId(), provider, configJson],
+      );
     }
     return NextResponse.redirect(`${origin}/settings?connected=google`);
   } catch (e) {

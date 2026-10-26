@@ -1,4 +1,4 @@
-import type { User } from "@prisma/client";
+import type { User } from "@/lib/models";
 
 export type Role = "admin" | "user";
 export type UserStatus = "active" | "inactive";

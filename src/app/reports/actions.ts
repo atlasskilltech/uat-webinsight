@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
+import { queryOne, execute, json } from "@/lib/db";
+import { createId } from "@/lib/id";
+import type { Report } from "@/lib/models";
 import { reportSchema } from "@/lib/validation";
 import { parseForm, successState, errorState, type FormState } from "@/lib/form-state";
 import { buildReportData } from "@/lib/report-data";
@@ -17,21 +19,24 @@ export async function createReport(_prev: FormState, formData: FormData): Promis
     const range = { start: d.periodStart, end: d.periodEnd };
     const snapshot = await buildReportData(range);
     const prev = previousPeriod(range);
-    const report = await prisma.report.create({
-      data: {
-        title: d.title,
-        type: d.type,
-        periodStart: d.periodStart,
-        periodEnd: d.periodEnd,
-        comparePeriodStart: prev.start,
-        comparePeriodEnd: prev.end,
-        executiveSummary: d.executiveSummary ?? "",
-        status: d.status,
-        snapshot: snapshot as object,
-      },
-    });
+    const id = createId();
+    await execute(
+      "INSERT INTO `Report` (`id`,`title`,`type`,`periodStart`,`periodEnd`,`comparePeriodStart`,`comparePeriodEnd`,`executiveSummary`,`status`,`snapshot`) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [
+        id,
+        d.title,
+        d.type,
+        d.periodStart,
+        d.periodEnd,
+        prev.start,
+        prev.end,
+        d.executiveSummary ?? "",
+        d.status,
+        json(snapshot),
+      ],
+    );
     revalidatePath("/reports");
-    return successState("Report generated.", report.id);
+    return successState("Report generated.", id);
   } catch {
     return errorState("Could not generate the report.");
   }
@@ -44,10 +49,17 @@ export async function updateReport(_prev: FormState, formData: FormData): Promis
   const executiveSummary = String(formData.get("executiveSummary") ?? "");
   const status = String(formData.get("status") ?? "draft");
   try {
-    await prisma.report.update({
-      where: { id },
-      data: { title: title || undefined, executiveSummary, status },
-    });
+    if (title) {
+      await execute(
+        "UPDATE `Report` SET `title`=?,`executiveSummary`=?,`status`=? WHERE `id`=?",
+        [title, executiveSummary, status, id],
+      );
+    } else {
+      await execute(
+        "UPDATE `Report` SET `executiveSummary`=?,`status`=? WHERE `id`=?",
+        [executiveSummary, status, id],
+      );
+    }
     revalidatePath(`/reports/${id}`);
     revalidatePath("/reports");
     return successState("Report saved.");
@@ -58,11 +70,11 @@ export async function updateReport(_prev: FormState, formData: FormData): Promis
 
 /** Rebuild the frozen snapshot from the stored period (refresh figures). */
 export async function regenerateReport(id: string): Promise<FormState> {
-  const report = await prisma.report.findUnique({ where: { id } });
+  const report = await queryOne<Report>("SELECT * FROM `Report` WHERE `id`=?", [id]);
   if (!report) return errorState("Report not found.");
   try {
     const snapshot = await buildReportData({ start: report.periodStart, end: report.periodEnd });
-    await prisma.report.update({ where: { id }, data: { snapshot: snapshot as object } });
+    await execute("UPDATE `Report` SET `snapshot`=? WHERE `id`=?", [json(snapshot), id]);
     revalidatePath(`/reports/${id}`);
     return successState("Figures refreshed from current data.");
   } catch {
@@ -71,6 +83,6 @@ export async function regenerateReport(id: string): Promise<FormState> {
 }
 
 export async function deleteReport(id: string): Promise<void> {
-  await prisma.report.delete({ where: { id } });
+  await execute("DELETE FROM `Report` WHERE `id`=?", [id]);
   revalidatePath("/reports");
 }

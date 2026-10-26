@@ -5,7 +5,8 @@ import {
   ExternalLink, ArrowLeft, MousePointerClick, Eye, Percent, TrendingUp,
   Users, Activity, CheckCircle2, FlaskConical, AlertTriangle,
 } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { queryOne, query } from "@/lib/db";
+import type { PageAudit, AuditFinding } from "@/lib/models";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { StatCard } from "@/components/ui/stat-card";
@@ -33,11 +34,13 @@ function KV({ label, children, hint }: { label: string; children: React.ReactNod
 
 export default async function AuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const audit = await prisma.pageAudit.findUnique({
-    where: { id },
-    include: { findings: { orderBy: [{ isHypothesis: "asc" }, { priority: "asc" }] }, page: true },
-  });
-  if (!audit) notFound();
+  const auditRow = await queryOne<PageAudit>("SELECT * FROM `PageAudit` WHERE `id`=?", [id]);
+  if (!auditRow) notFound();
+  const findings = await query<AuditFinding>(
+    "SELECT * FROM `AuditFinding` WHERE `auditId`=? ORDER BY `isHypothesis` ASC, `priority` ASC",
+    [id],
+  );
+  const audit = { ...auditRow, findings };
 
   const range = lastNDays(28);
   const [seo, ga] = audit.pageId

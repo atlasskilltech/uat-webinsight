@@ -4,7 +4,8 @@ import {
   TriangleAlert, FileText, Plus, SearchCheck, ListChecks, ArrowRight,
   CalendarClock, Activity,
 } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { query, queryOne } from "@/lib/db";
+import type { Task, TaskActivity, TechnicalIssue, Report } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -55,16 +56,45 @@ export default async function DashboardPage() {
     getSeoWithComparison(range),
     getAnalyticsWithComparison(range),
     getTrend(range),
-    prisma.task.count({ where: { status: "completed", completedDate: { gte: week.start, lte: week.end }, isDemo: taskDemo } }),
-    prisma.task.count({ where: { status: "in_progress", isDemo: taskDemo } }),
-    prisma.task.count({ where: { status: { not: "completed" }, dueDate: { lt: today }, isDemo: taskDemo } }),
-    prisma.technicalIssue.count({ where: { status: { in: ["open", "in_progress"] }, isDemo: issueDemo } }),
-    prisma.technicalIssue.count({ where: { status: { in: ["open", "in_progress"] }, severity: "critical", isDemo: issueDemo } }),
-    prisma.technicalIssue.findMany({ where: { status: { in: ["open", "in_progress"] }, severity: { in: ["critical", "high"] }, isDemo: issueDemo }, orderBy: { severity: "asc" }, take: 5 }),
-    prisma.task.findMany({ where: { status: { not: "completed" }, dueDate: { gte: today }, isDemo: taskDemo }, orderBy: { dueDate: "asc" }, take: 5 }),
-    prisma.taskActivity.findMany({ where: { task: { isDemo: taskDemo } }, orderBy: { createdAt: "desc" }, take: 6, include: { task: { select: { title: true, id: true } } } }),
-    prisma.report.findMany({ orderBy: { createdAt: "desc" }, take: 3 }),
-    prisma.task.findMany({ where: { status: "completed", completedDate: { not: null }, isDemo: taskDemo }, select: { completedDate: true }, orderBy: { completedDate: "desc" }, take: 200 }),
+    queryOne<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM `Task` WHERE `status` = ? AND `completedDate` >= ? AND `completedDate` <= ? AND `isDemo` = ?",
+      ["completed", week.start, week.end, taskDemo],
+    ).then((r) => Number(r?.c ?? 0)),
+    queryOne<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM `Task` WHERE `status` = ? AND `isDemo` = ?",
+      ["in_progress", taskDemo],
+    ).then((r) => Number(r?.c ?? 0)),
+    queryOne<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM `Task` WHERE `status` <> ? AND `dueDate` < ? AND `isDemo` = ?",
+      ["completed", today, taskDemo],
+    ).then((r) => Number(r?.c ?? 0)),
+    queryOne<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM `TechnicalIssue` WHERE `status` IN (?, ?) AND `isDemo` = ?",
+      ["open", "in_progress", issueDemo],
+    ).then((r) => Number(r?.c ?? 0)),
+    queryOne<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM `TechnicalIssue` WHERE `status` IN (?, ?) AND `severity` = ? AND `isDemo` = ?",
+      ["open", "in_progress", "critical", issueDemo],
+    ).then((r) => Number(r?.c ?? 0)),
+    query<TechnicalIssue>(
+      "SELECT * FROM `TechnicalIssue` WHERE `status` IN (?, ?) AND `severity` IN (?, ?) AND `isDemo` = ? ORDER BY `severity` ASC LIMIT ?",
+      ["open", "in_progress", "critical", "high", issueDemo, 5],
+    ),
+    query<Task>(
+      "SELECT * FROM `Task` WHERE `status` <> ? AND `dueDate` >= ? AND `isDemo` = ? ORDER BY `dueDate` ASC LIMIT ?",
+      ["completed", today, taskDemo, 5],
+    ),
+    query<TaskActivity & { taskTitle: string | null }>(
+      "SELECT `ta`.*, `t`.`title` AS `taskTitle` FROM `TaskActivity` `ta` " +
+        "JOIN `Task` `t` ON `t`.`id` = `ta`.`taskId` " +
+        "WHERE `t`.`isDemo` = ? ORDER BY `ta`.`createdAt` DESC LIMIT ?",
+      [taskDemo, 6],
+    ).then((rows) => rows.map((r) => ({ ...r, task: { title: r.taskTitle, id: r.taskId } }))),
+    query<Report>("SELECT * FROM `Report` ORDER BY `createdAt` DESC LIMIT ?", [3]),
+    query<{ completedDate: Date }>(
+      "SELECT `completedDate` FROM `Task` WHERE `status` = ? AND `completedDate` IS NOT NULL AND `isDemo` = ? ORDER BY `completedDate` DESC LIMIT ?",
+      ["completed", taskDemo, 200],
+    ),
   ]);
 
   const hasData = seo.current.hasData || ga.current.hasData;
