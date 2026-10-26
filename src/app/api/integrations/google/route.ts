@@ -3,10 +3,11 @@ import { cookies } from "next/headers";
 import { googleConfigured } from "@/lib/integrations";
 import { getAuthUrl } from "@/lib/google";
 import { getCurrentUser } from "@/lib/auth/session";
+import { baseUrl } from "@/lib/base-url";
 
 /** Begin the Google OAuth consent flow (Search Console + Analytics). Admin-only. */
 export async function GET(request: Request) {
-  const origin = new URL(request.url).origin;
+  const origin = baseUrl(request);
   const user = await getCurrentUser();
   if (!user) return NextResponse.redirect(`${origin}/login`);
   if (user.role !== "admin") return new NextResponse("Forbidden — admin access required.", { status: 403 });
