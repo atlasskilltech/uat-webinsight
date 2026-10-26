@@ -13,9 +13,14 @@
  * or demotes anyone else.
  */
 import { PrismaClient } from "@prisma/client";
+import { loadEnvConfig } from "@next/env";
 import { BOOTSTRAP_ADMIN_EMAIL } from "../src/lib/auth/constants";
+import { resolveDatabaseUrl } from "../src/lib/db-url";
 
-const prisma = new PrismaClient();
+// Load .env so DATABASE_URL / DB_* are available when run directly via tsx.
+loadEnvConfig(process.cwd());
+
+const prisma = new PrismaClient({ datasourceUrl: resolveDatabaseUrl() });
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);

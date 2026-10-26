@@ -16,10 +16,8 @@
     "db:studio": "prisma studio",
     "setup": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
+    "@next/env": "15.5.28",
     "@prisma/client": "^6.19.3",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

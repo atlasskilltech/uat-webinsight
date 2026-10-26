@@ -6,8 +6,13 @@
  * real metrics. Run with `npm run db:seed`. Re-running replaces demo data only.
  */
 import { PrismaClient } from "@prisma/client";
+import { loadEnvConfig } from "@next/env";
+import { resolveDatabaseUrl } from "../src/lib/db-url";
 
-const prisma = new PrismaClient();
+// Load .env so DATABASE_URL / DB_* are available when run directly via tsx.
+loadEnvConfig(process.cwd());
+
+const prisma = new PrismaClient({ datasourceUrl: resolveDatabaseUrl() });
 
 // Deterministic pseudo-random so seeded trends look the same each run.
 function makeRng(seed: number) {
