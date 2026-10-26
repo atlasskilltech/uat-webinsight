@@ -35,6 +35,12 @@ export function getPool(): mysql.Pool {
         const v = field.string();
         return v === null ? null : v === "1";
       }
+      // JSON -> parsed object. A custom typeCast disables mysql2's built-in
+      // JSON parsing, so we must parse it ourselves here.
+      if (field.type === "JSON") {
+        const v = field.string();
+        return v === null ? null : JSON.parse(v);
+      }
       return next();
     },
   });
