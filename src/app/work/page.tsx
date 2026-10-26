@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { CheckCircle2, Clock, AlertTriangle, CircleDashed, FlaskConical } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { Task, Project, WorkLog } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { WorkClient, type WorkTask, type WorkLogRow } from "./work-client";
 import { thisWeek } from "@/lib/dates";
@@ -39,39 +40,44 @@ export default async function WorkPage({
   searchParams: Promise<{ new?: string; log?: string; tab?: string }>;
 }) {
   const sp = await searchParams;
-  const [tasksRaw, projects, logsRaw] = await Promise.all([
-    prisma.task.findMany({
-      include: { project: true },
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.project.findMany({ where: { archived: false }, orderBy: { name: "asc" } }),
-    prisma.workLog.findMany({ orderBy: { date: "desc" }, take: 100 }),
+  const [tasksRaw, allProjects, logsRaw] = await Promise.all([
+    query<Task>("SELECT * FROM `Task` ORDER BY `updatedAt` DESC"),
+    // All projects (ordered); the Task -> project relation resolves against the
+    // full set, while the dropdown below uses only the non-archived ones.
+    query<Project>("SELECT * FROM `Project` ORDER BY `name` ASC"),
+    query<WorkLog>("SELECT * FROM `WorkLog` ORDER BY `date` DESC LIMIT ?", [100]),
   ]);
 
-  const tasks: WorkTask[] = tasksRaw.map((t) => ({
-    id: t.id,
-    title: t.title,
-    description: t.description,
-    status: t.status,
-    priority: t.priority,
-    category: t.category,
-    progress: t.progress,
-    projectId: t.projectId,
-    projectName: t.project?.name,
-    projectColor: t.project?.color,
-    startDate: t.startDate,
-    dueDate: t.dueDate,
-    completedDate: t.completedDate,
-    estimatedMinutes: t.estimatedMinutes,
-    actualMinutes: t.actualMinutes,
-    relatedUrl: t.relatedUrl,
-    blocker: t.blocker,
-    nextAction: t.nextAction,
-    notes: t.notes,
-    completionSummary: t.completionSummary,
-    isDemo: t.isDemo,
-    updatedAt: t.updatedAt,
-  }));
+  const projectMap = new Map(allProjects.map((p) => [p.id, p]));
+  const projects = allProjects.filter((p) => !p.archived);
+
+  const tasks: WorkTask[] = tasksRaw.map((t) => {
+    const project = t.projectId ? projectMap.get(t.projectId) : undefined;
+    return {
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      status: t.status,
+      priority: t.priority,
+      category: t.category,
+      progress: t.progress,
+      projectId: t.projectId,
+      projectName: project?.name,
+      projectColor: project?.color,
+      startDate: t.startDate,
+      dueDate: t.dueDate,
+      completedDate: t.completedDate,
+      estimatedMinutes: t.estimatedMinutes,
+      actualMinutes: t.actualMinutes,
+      relatedUrl: t.relatedUrl,
+      blocker: t.blocker,
+      nextAction: t.nextAction,
+      notes: t.notes,
+      completionSummary: t.completionSummary,
+      isDemo: t.isDemo,
+      updatedAt: t.updatedAt,
+    };
+  });
 
   const logs: WorkLogRow[] = logsRaw.map((l) => ({
     id: l.id,

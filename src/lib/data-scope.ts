@@ -1,5 +1,5 @@
 import "server-only";
-import { prisma } from "./prisma";
+import { queryOne } from "./db";
 
 /**
  * A "data scope" decides whether a view shows REAL records or DEMO (seeded)
@@ -20,41 +20,50 @@ function scopeFromRealCount(realCount: number): DataScope {
 }
 
 /**
- * The value to use in a Prisma `isDemo:` filter for a given scope.
- *   real -> isDemo: false  (return only real rows)
- *   demo -> isDemo: true   (return only seeded demo rows)
- * Using this in a `where` clause guarantees a single query can never return
+ * The value to use in an `isDemo =` filter for a given scope.
+ *   real -> isDemo = false  (return only real rows)
+ *   demo -> isDemo = true   (return only seeded demo rows)
+ * Using this in a WHERE clause guarantees a single query can never return
  * demo and real rows together.
  */
 export function demoFilter(scope: DataScope): boolean {
   return scope === "demo";
 }
 
+/** Count non-demo (real) rows in a table. Table name is a trusted literal. */
+async function countReal(table: string): Promise<number> {
+  const row = await queryOne<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM \`${table}\` WHERE isDemo = ?`,
+    [false],
+  );
+  return Number(row?.c ?? 0);
+}
+
 /** SEO + GA4 are treated as one domain: real if either has any real row. */
 export async function metricsScope(): Promise<DataScope> {
   const [seo, ga] = await Promise.all([
-    prisma.seoSnapshot.count({ where: { isDemo: false } }),
-    prisma.analyticsSnapshot.count({ where: { isDemo: false } }),
+    countReal("SeoSnapshot"),
+    countReal("AnalyticsSnapshot"),
   ]);
   return scopeFromRealCount(seo + ga);
 }
 
 export async function taskScope(): Promise<DataScope> {
-  return scopeFromRealCount(await prisma.task.count({ where: { isDemo: false } }));
+  return scopeFromRealCount(await countReal("Task"));
 }
 
 export async function workLogScope(): Promise<DataScope> {
-  return scopeFromRealCount(await prisma.workLog.count({ where: { isDemo: false } }));
+  return scopeFromRealCount(await countReal("WorkLog"));
 }
 
 export async function issueScope(): Promise<DataScope> {
-  return scopeFromRealCount(await prisma.technicalIssue.count({ where: { isDemo: false } }));
+  return scopeFromRealCount(await countReal("TechnicalIssue"));
 }
 
 export async function operationsScope(): Promise<DataScope> {
-  return scopeFromRealCount(await prisma.operationsLog.count({ where: { isDemo: false } }));
+  return scopeFromRealCount(await countReal("OperationsLog"));
 }
 
 export async function competitorScope(): Promise<DataScope> {
-  return scopeFromRealCount(await prisma.competitorResearch.count({ where: { isDemo: false } }));
+  return scopeFromRealCount(await countReal("CompetitorResearch"));
 }

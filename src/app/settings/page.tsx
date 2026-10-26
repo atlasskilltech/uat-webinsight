@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { prisma } from "@/lib/prisma";
+import { query, queryOne } from "@/lib/db";
+import type { ImportBatch } from "@/lib/models";
 import { getSettings } from "@/lib/settings";
 import { getIntegrations } from "@/lib/integrations";
 import { redirect } from "next/navigation";
@@ -36,12 +37,14 @@ export default async function SettingsPage() {
   const [settings, integrations, batches, demoCount, realCount] = await Promise.all([
     getSettings(),
     getIntegrations(),
-    prisma.importBatch.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
-    prisma.seoSnapshot.count({ where: { isDemo: true } }).then(async (s) =>
-      s + (await prisma.analyticsSnapshot.count({ where: { isDemo: true } })),
+    query<ImportBatch>("SELECT * FROM `ImportBatch` ORDER BY `createdAt` DESC LIMIT 25"),
+    queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `SeoSnapshot` WHERE `isDemo` = ?", [true]).then(async (s) =>
+      Number(s?.c ?? 0) +
+      Number((await queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `AnalyticsSnapshot` WHERE `isDemo` = ?", [true]))?.c ?? 0),
     ),
-    prisma.seoSnapshot.count({ where: { isDemo: false } }).then(async (s) =>
-      s + (await prisma.analyticsSnapshot.count({ where: { isDemo: false } })),
+    queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `SeoSnapshot` WHERE `isDemo` = ?", [false]).then(async (s) =>
+      Number(s?.c ?? 0) +
+      Number((await queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `AnalyticsSnapshot` WHERE `isDemo` = ?", [false]))?.c ?? 0),
     ),
   ]);
 

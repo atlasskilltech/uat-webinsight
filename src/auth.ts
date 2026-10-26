@@ -1,8 +1,10 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { prisma } from "@/lib/prisma";
+import { execute, queryOne } from "@/lib/db";
+import { createId } from "@/lib/id";
 import { logAudit } from "@/lib/auth/audit";
 import { BOOTSTRAP_ADMIN_EMAIL } from "@/lib/auth/constants";
+import type { User } from "@/lib/models";
 
 /**
  * Auth.js (NextAuth v5) configuration for DASHBOARD login via Google Sign-In.
@@ -36,23 +38,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const verified = (profile as { email_verified?: boolean } | undefined)?.email_verified === true;
       if (!email || !verified) return false;
 
-      const existing = await prisma.user.findUnique({ where: { email } });
+      const existing = await queryOne<User>("SELECT * FROM `User` WHERE `email` = ?", [email]);
       if (existing) {
         if (existing.status !== "active") return false; // deactivated → denied
-        await prisma.user.update({ where: { id: existing.id }, data: { lastLoginAt: new Date() } });
+        await execute("UPDATE `User` SET `lastLoginAt` = ? WHERE `id` = ?", [new Date(), existing.id]);
         await logAudit({ actorId: existing.id, actorEmail: email, action: "login.success", targetUserId: existing.id, targetEmail: email });
         return true;
       }
 
       // One-time bootstrap: only the designated email, only while no admin exists.
       if (email === BOOTSTRAP_ADMIN_EMAIL) {
-        const adminExists = await prisma.user.findFirst({ where: { role: "admin", status: "active" } });
+        const adminExists = await queryOne<{ id: string }>(
+          "SELECT `id` FROM `User` WHERE `role`='admin' AND `status`='active' LIMIT 1",
+        );
         if (!adminExists) {
-          const created = await prisma.user.create({
-            data: { email, name: profile?.name ?? "Administrator", role: "admin", status: "active", lastLoginAt: new Date() },
-          });
-          await logAudit({ actorId: created.id, actorEmail: email, action: "user.created", targetUserId: created.id, targetEmail: email, metadata: { via: "google-bootstrap", role: "admin" } });
-          await logAudit({ actorId: created.id, actorEmail: email, action: "login.success", targetUserId: created.id, targetEmail: email });
+          const id = createId();
+          await execute(
+            "INSERT INTO `User` (`id`,`email`,`name`,`role`,`status`,`lastLoginAt`) VALUES (?,?,?,?,?,?)",
+            [id, email, profile?.name ?? "Administrator", "admin", "active", new Date()],
+          );
+          await logAudit({ actorId: id, actorEmail: email, action: "user.created", targetUserId: id, targetEmail: email, metadata: { via: "google-bootstrap", role: "admin" } });
+          await logAudit({ actorId: id, actorEmail: email, action: "login.success", targetUserId: id, targetEmail: email });
           return true;
         }
       }
@@ -66,7 +72,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token }) {
       const email = token.email?.toLowerCase();
       if (email) {
-        const dbUser = await prisma.user.findUnique({ where: { email } });
+        const dbUser = await queryOne<User>("SELECT * FROM `User` WHERE `email` = ?", [email]);
         if (dbUser) {
           token.userId = dbUser.id;
           token.role = dbUser.role;

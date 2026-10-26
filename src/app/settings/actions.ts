@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
+import { execute, transaction } from "@/lib/db";
+import { createId } from "@/lib/id";
 import { settingsSchema } from "@/lib/validation";
 import {
   parseForm,
@@ -31,25 +32,34 @@ export async function saveSettings(_prev: FormState, formData: FormData): Promis
   if (!parsed.success) return parsed.state;
   const d = parsed.data;
   try {
-    await prisma.appSettings.upsert({
-      where: { id: "app" },
-      update: d,
-      create: { id: "app", ...d },
-    });
+    // Upsert the AppSettings singleton (id = 'app'). Only the fields that were
+    // actually supplied are written, mirroring Prisma's skip-undefined behavior:
+    // a blank optional form field (undefined) leaves the existing value intact.
+    const entries = Object.entries(d).filter(([, v]) => v !== undefined);
+    const cols = entries.map(([k]) => k);
+    const vals = entries.map(([, v]) => v);
+    const insertCols = ["id", ...cols].map((c) => `\`${c}\``).join(", ");
+    const placeholders = ["id", ...cols].map(() => "?").join(", ");
+    const updateClause = cols.map((k) => `\`${k}\` = VALUES(\`${k}\`)`).join(", ");
+    await execute(
+      `INSERT INTO \`AppSettings\` (${insertCols}) VALUES (${placeholders}) ` +
+        `ON DUPLICATE KEY UPDATE ${updateClause}`,
+      ["app", ...vals],
+    );
     // Keep integration property ids in sync with settings.
     if (d.gscProperty) {
-      await prisma.integration.upsert({
-        where: { provider: "gsc" },
-        update: { propertyId: d.gscProperty },
-        create: { provider: "gsc", propertyId: d.gscProperty, status: "not_connected" },
-      });
+      await execute(
+        "INSERT INTO `Integration` (`id`,`provider`,`propertyId`,`status`) VALUES (?,?,?,'not_connected') " +
+          "ON DUPLICATE KEY UPDATE `propertyId` = VALUES(`propertyId`)",
+        [createId(), "gsc", d.gscProperty],
+      );
     }
     if (d.ga4Property) {
-      await prisma.integration.upsert({
-        where: { provider: "ga4" },
-        update: { propertyId: d.ga4Property },
-        create: { provider: "ga4", propertyId: d.ga4Property, status: "not_connected" },
-      });
+      await execute(
+        "INSERT INTO `Integration` (`id`,`provider`,`propertyId`,`status`) VALUES (?,?,?,'not_connected') " +
+          "ON DUPLICATE KEY UPDATE `propertyId` = VALUES(`propertyId`)",
+        [createId(), "ga4", d.ga4Property],
+      );
     }
     revalidatePath("/settings");
     revalidatePath("/");
@@ -107,18 +117,23 @@ export async function disconnectProvider(provider: Provider): Promise<void> {
 /** Remove all seeded demo data so only real imported/entered data remains. */
 export async function clearDemoData(): Promise<void> {
   await requireAdmin();
-  await prisma.$transaction([
-    prisma.seoSnapshot.deleteMany({ where: { isDemo: true } }),
-    prisma.analyticsSnapshot.deleteMany({ where: { isDemo: true } }),
-    prisma.importBatch.deleteMany({ where: { isDemo: true } }),
-    prisma.workLog.deleteMany({ where: { isDemo: true } }),
-    prisma.task.deleteMany({ where: { isDemo: true } }),
-    prisma.technicalIssue.deleteMany({ where: { isDemo: true } }),
-    prisma.operationsLog.deleteMany({ where: { isDemo: true } }),
-    prisma.serverAsset.deleteMany({ where: { isDemo: true } }),
-    prisma.competitorResearch.deleteMany({ where: { isDemo: true } }),
-    prisma.report.deleteMany({ where: { isDemo: true } }),
-  ]);
+  await transaction(async (conn) => {
+    const tables = [
+      "SeoSnapshot",
+      "AnalyticsSnapshot",
+      "ImportBatch",
+      "WorkLog",
+      "Task",
+      "TechnicalIssue",
+      "OperationsLog",
+      "ServerAsset",
+      "CompetitorResearch",
+      "Report",
+    ];
+    for (const table of tables) {
+      await conn.query(`DELETE FROM \`${table}\` WHERE \`isDemo\` = ?`, [true]);
+    }
+  });
   revalidatePath("/");
   revalidatePath("/settings");
 }

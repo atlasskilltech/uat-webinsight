@@ -1,5 +1,6 @@
 import "server-only";
-import { prisma } from "@/lib/prisma";
+import { execute, queryOne, transaction } from "@/lib/db";
+import { createId } from "@/lib/id";
 import {
   validAccessToken,
   fetchSearchConsole,
@@ -8,6 +9,7 @@ import {
   type GoogleTokens,
 } from "@/lib/google";
 import { recordSync, recordError, type Provider } from "@/lib/integrations";
+import type { Integration } from "@/lib/models";
 
 /**
  * Shared Google sync engine, used by BOTH the manual "Sync 28d" buttons
@@ -59,7 +61,10 @@ function resolveProperty(provider: Provider, dbProperty?: string | null): string
 }
 
 async function readSyncMeta(provider: Provider): Promise<SyncMeta> {
-  const row = await prisma.integration.findUnique({ where: { provider } });
+  const row = await queryOne<Integration>(
+    "SELECT `config` FROM `Integration` WHERE `provider` = ?",
+    [provider],
+  );
   const cfg = row?.config as { sync?: SyncMeta } | null;
   return cfg?.sync ?? {};
 }
@@ -73,40 +78,31 @@ async function readSyncMeta(provider: Provider): Promise<SyncMeta> {
 async function acquireLock(provider: Provider, meta: SyncMeta): Promise<boolean> {
   const next: SyncMeta = { ...meta, inProgress: true, startedAt: Date.now() };
   const staleBefore = Date.now() - STALE_LOCK_MS;
-  const affected = await prisma.$executeRawUnsafe(
-    `UPDATE "Integration"
-        SET config = json_set(COALESCE(config, '{}'), '$.sync', json(?))
-      WHERE provider = ?
-        AND (
-          json_extract(config, '$.sync.inProgress') IS NOT 1
-          OR COALESCE(json_extract(config, '$.sync.startedAt'), 0) < ?
-        )`,
-    JSON.stringify(next),
-    provider,
-    staleBefore,
+  const res = await execute(
+    "UPDATE `Integration` " +
+      "SET `config` = JSON_SET(COALESCE(`config`, '{}'), '$.sync', CAST(? AS JSON)) " +
+      "WHERE `provider` = ? AND ( " +
+      "  COALESCE(`config`->>'$.sync.inProgress', 'false') <> 'true' " +
+      "  OR COALESCE(CAST(`config`->>'$.sync.startedAt' AS UNSIGNED), 0) < ? " +
+      ")",
+    [JSON.stringify(next), provider, staleBefore],
   );
-  return affected === 1;
+  return res.affectedRows === 1;
 }
 
 /** Write the sync metadata sub-object, preserving tokens and other config. */
 async function writeSyncMeta(provider: Provider, meta: SyncMeta): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `UPDATE "Integration"
-        SET config = json_set(COALESCE(config, '{}'), '$.sync', json(?))
-      WHERE provider = ?`,
-    JSON.stringify(meta),
-    provider,
+  await execute(
+    "UPDATE `Integration` SET `config` = JSON_SET(COALESCE(`config`, '{}'), '$.sync', CAST(? AS JSON)) WHERE `provider` = ?",
+    [JSON.stringify(meta), provider],
   );
 }
 
 /** Persist refreshed tokens without disturbing the sync lock metadata. */
 async function persistTokens(provider: Provider, tokens: GoogleTokens): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `UPDATE "Integration"
-        SET config = json_set(COALESCE(config, '{}'), '$.tokens', json(?))
-      WHERE provider = ?`,
-    JSON.stringify(tokens),
-    provider,
+  await execute(
+    "UPDATE `Integration` SET `config` = JSON_SET(COALESCE(`config`, '{}'), '$.tokens', CAST(? AS JSON)) WHERE `provider` = ?",
+    [JSON.stringify(tokens), provider],
   );
 }
 
@@ -138,7 +134,10 @@ export async function runGoogleSync(
     return { provider, ok: false, skipped: true, count: 0, message: "PageSpeed is used per-URL in the Page Inspector, not synced here." };
   }
 
-  const row = await prisma.integration.findUnique({ where: { provider } });
+  const row = await queryOne<Integration>(
+    "SELECT * FROM `Integration` WHERE `provider` = ?",
+    [provider],
+  );
   const config = row?.config as { tokens?: GoogleTokens } | null;
   const property = resolveProperty(provider, row?.propertyId);
 
@@ -180,20 +179,24 @@ export async function runGoogleSync(
       );
       count = rows.length;
       if (count > 0) {
-        await prisma.$transaction(async (tx) => {
-          const batch = await tx.importBatch.create({
-            data: { source: "gsc", propertyId: property, periodStart: start, periodEnd: end, isDemo: false, status: "completed", message: `Auto sync (${opts.trigger})` },
+        await transaction(async (conn) => {
+          const batchId = createId();
+          await conn.query(
+            "INSERT INTO `ImportBatch` (`id`,`source`,`propertyId`,`periodStart`,`periodEnd`,`isDemo`,`status`,`message`,`rowCount`) VALUES (?,?,?,?,?,?,?,?,?)",
+            [batchId, "gsc", property, start, end, false, "completed", `Auto sync (${opts.trigger})`, count],
+          );
+          await conn.query(
+            "DELETE FROM `SeoSnapshot` WHERE `source`=? AND `propertyId`=? AND `isDemo`=? AND `startDate` >= ? AND `startDate` <= ?",
+            ["gsc", property, false, start, end],
+          );
+          const values = rows.map((r) => {
+            const d = new Date(r.keys[0]);
+            return [createId(), property, "gsc", d, d, r.clicks, r.impressions, r.ctr, r.position, false, batchId];
           });
-          await tx.seoSnapshot.deleteMany({
-            where: { source: "gsc", propertyId: property, isDemo: false, startDate: { gte: start, lte: end } },
-          });
-          await tx.seoSnapshot.createMany({
-            data: rows.map((r) => {
-              const d = new Date(r.keys[0]);
-              return { propertyId: property, source: "gsc", startDate: d, endDate: d, clicks: r.clicks, impressions: r.impressions, ctr: r.ctr, position: r.position, isDemo: false, importBatchId: batch.id };
-            }),
-          });
-          await tx.importBatch.update({ where: { id: batch.id }, data: { rowCount: count } });
+          await conn.query(
+            "INSERT INTO `SeoSnapshot` (`id`,`propertyId`,`source`,`startDate`,`endDate`,`clicks`,`impressions`,`ctr`,`position`,`isDemo`,`importBatchId`) VALUES ?",
+            [values],
+          );
         });
       }
     } else {
@@ -207,22 +210,26 @@ export async function runGoogleSync(
       );
       count = rows.length;
       if (count > 0) {
-        await prisma.$transaction(async (tx) => {
-          const batch = await tx.importBatch.create({
-            data: { source: "ga4", propertyId: property, periodStart: start, periodEnd: end, isDemo: false, status: "completed", message: `Auto sync (${opts.trigger})` },
+        await transaction(async (conn) => {
+          const batchId = createId();
+          await conn.query(
+            "INSERT INTO `ImportBatch` (`id`,`source`,`propertyId`,`periodStart`,`periodEnd`,`isDemo`,`status`,`message`,`rowCount`) VALUES (?,?,?,?,?,?,?,?,?)",
+            [batchId, "ga4", property, start, end, false, "completed", `Auto sync (${opts.trigger})`, count],
+          );
+          await conn.query(
+            "DELETE FROM `AnalyticsSnapshot` WHERE `source`=? AND `propertyId`=? AND `isDemo`=? AND `startDate` >= ? AND `startDate` <= ?",
+            ["ga4", property, false, start, end],
+          );
+          const values = rows.map((r) => {
+            const raw = r.dimensionValues[0].value; // YYYYMMDD
+            const d = new Date(`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`);
+            const m = r.metricValues.map((v) => Number(v.value));
+            return [createId(), property, "ga4", d, d, m[0] ?? 0, m[1] ?? 0, m[2] ?? 0, m[3] ?? 0, m[4] ?? 0, m[5] ?? 0, false, batchId];
           });
-          await tx.analyticsSnapshot.deleteMany({
-            where: { source: "ga4", propertyId: property, isDemo: false, startDate: { gte: start, lte: end } },
-          });
-          await tx.analyticsSnapshot.createMany({
-            data: rows.map((r) => {
-              const raw = r.dimensionValues[0].value; // YYYYMMDD
-              const d = new Date(`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`);
-              const m = r.metricValues.map((v) => Number(v.value));
-              return { propertyId: property, source: "ga4", startDate: d, endDate: d, views: m[0] ?? 0, activeUsers: m[1] ?? 0, sessions: m[2] ?? 0, engagedSessions: m[3] ?? 0, engagementRate: m[4] ?? 0, avgEngagementSecs: m[5] ?? 0, isDemo: false, importBatchId: batch.id };
-            }),
-          });
-          await tx.importBatch.update({ where: { id: batch.id }, data: { rowCount: count } });
+          await conn.query(
+            "INSERT INTO `AnalyticsSnapshot` (`id`,`propertyId`,`source`,`startDate`,`endDate`,`views`,`activeUsers`,`sessions`,`engagedSessions`,`engagementRate`,`avgEngagementSecs`,`isDemo`,`importBatchId`) VALUES ?",
+            [values],
+          );
         });
       }
     }

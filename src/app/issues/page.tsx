@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { FlaskConical } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { TechnicalIssue } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
 import { ISSUE_STATUSES, SEVERITIES } from "@/lib/enums";
@@ -17,9 +18,9 @@ export default async function IssuesPage({
   searchParams: Promise<{ new?: string }>;
 }) {
   const sp = await searchParams;
-  const issuesRaw = await prisma.technicalIssue.findMany({
-    orderBy: { createdAt: "desc" },
-  });
+  const issuesRaw = await query<TechnicalIssue>(
+    "SELECT * FROM `TechnicalIssue` ORDER BY `createdAt` DESC",
+  );
 
   const issues: IssueRow[] = issuesRaw.map((i) => {
     const urlList = toStringArray(i.urls);

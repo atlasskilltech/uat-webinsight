@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, ChevronRight } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { Report } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { StatusBadge, Badge } from "@/components/ui/badge";
@@ -32,7 +33,7 @@ export default async function ReportsPage({
   searchParams: Promise<{ new?: string }>;
 }) {
   const sp = await searchParams;
-  const reports = await prisma.report.findMany({ orderBy: { createdAt: "desc" } });
+  const reports = await query<Report>("SELECT * FROM `Report` ORDER BY `createdAt` DESC");
 
   return (
     <div>

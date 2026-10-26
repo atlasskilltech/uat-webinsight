@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Server, AlertTriangle, ShieldAlert } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { ServerAsset, OperationsLog } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
 import { fmtDate } from "@/lib/dates";
 import {
@@ -43,8 +44,8 @@ export default async function OperationsPage({
 }) {
   const sp = await searchParams;
   const [assetsRaw, logsRaw] = await Promise.all([
-    prisma.serverAsset.findMany({ orderBy: { type: "asc" } }),
-    prisma.operationsLog.findMany({ orderBy: { occurredAt: "desc" } }),
+    query<ServerAsset>("SELECT * FROM `ServerAsset` ORDER BY `type` ASC"),
+    query<OperationsLog>("SELECT * FROM `OperationsLog` ORDER BY `occurredAt` DESC"),
   ]);
 
   const assets: AssetRow[] = assetsRaw.map((a) => ({

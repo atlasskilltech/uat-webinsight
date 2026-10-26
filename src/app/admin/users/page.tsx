@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { Prisma } from "@prisma/client";
 import { ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { prisma } from "@/lib/prisma";
+import { query } from "@/lib/db";
+import type { User, AdminAuditLog } from "@/lib/models";
 import { getCurrentUser } from "@/lib/auth/session";
 import { AdminUsersClient } from "./users-client";
 
@@ -43,27 +43,36 @@ export default async function AdminUsersPage({
   const statusFilter = sp.status === "active" || sp.status === "inactive" ? sp.status : "";
   const page = Math.max(1, Number(sp.page) || 1);
 
-  const where: Prisma.UserWhereInput = {};
-  if (q) where.OR = [{ name: { contains: q } }, { email: { contains: q } }];
-  if (roleFilter) where.role = roleFilter;
-  if (statusFilter) where.status = statusFilter;
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (q) {
+    conditions.push("(`name` LIKE ? OR `email` LIKE ?)");
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  if (roleFilter) {
+    conditions.push("`role` = ?");
+    params.push(roleFilter);
+  }
+  if (statusFilter) {
+    conditions.push("`status` = ?");
+    params.push(statusFilter);
+  }
+  const whereSql = conditions.length ? conditions.join(" AND ") : "1=1";
 
-  const [users, total, auditLogs] = await Promise.all([
-    prisma.user.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-      // Explicit select — passwordHash is never read or sent to the client.
-      select: { id: true, name: true, email: true, role: true, status: true, lastLoginAt: true, createdAt: true },
-    }),
-    prisma.user.count({ where }),
-    prisma.adminAuditLog.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 25,
-      select: { id: true, action: true, actorEmail: true, targetEmail: true, createdAt: true },
-    }),
+  const [users, totalRows, auditLogs] = await Promise.all([
+    // Explicit column list — passwordHash is never read or sent to the client.
+    query<Pick<User, "id" | "name" | "email" | "role" | "status" | "lastLoginAt" | "createdAt">>(
+      "SELECT `id`, `name`, `email`, `role`, `status`, `lastLoginAt`, `createdAt` FROM `User` WHERE " +
+        whereSql +
+        " ORDER BY `createdAt` DESC LIMIT ? OFFSET ?",
+      [...params, PAGE_SIZE, (page - 1) * PAGE_SIZE],
+    ),
+    query<{ c: number }>("SELECT COUNT(*) AS c FROM `User` WHERE " + whereSql, params),
+    query<Pick<AdminAuditLog, "id" | "action" | "actorEmail" | "targetEmail" | "createdAt">>(
+      "SELECT `id`, `action`, `actorEmail`, `targetEmail`, `createdAt` FROM `AdminAuditLog` ORDER BY `createdAt` DESC LIMIT 25",
+    ),
   ]);
+  const total = Number(totalRows[0]?.c ?? 0);
 
   return (
     <div>

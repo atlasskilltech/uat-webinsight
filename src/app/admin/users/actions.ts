@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import type { PoolConnection } from "mysql2/promise";
+import { transaction } from "@/lib/db";
+import { createId } from "@/lib/id";
+import type { User } from "@/lib/models";
 import { parseForm, errorState, successState } from "@/lib/form-state";
 import { createUserSchema, updateUserSchema } from "@/lib/auth/validation";
 import { requireAdmin, isAuthError, AuthError } from "@/lib/auth/guard";
@@ -22,15 +24,18 @@ function deniedResult(e: unknown): ActionResult {
  * Evaluated inside a transaction so concurrent writes can't both slip past.
  */
 async function assertNotLastAdmin(
-  tx: Prisma.TransactionClient,
+  conn: PoolConnection,
   targetUserId: string,
   after: { role?: string; status?: string },
 ): Promise<void> {
-  const target = await tx.user.findUnique({ where: { id: targetUserId } });
+  const [targetRows] = await conn.query("SELECT * FROM `User` WHERE `id` = ?", [targetUserId]);
+  const target = (targetRows as User[])[0] ?? null;
   if (!target) throw new AuthError("User not found.", 404);
-  const otherActiveAdmins = await tx.user.count({
-    where: { id: { not: targetUserId }, role: "admin", status: "active" },
-  });
+  const [countRows] = await conn.query(
+    "SELECT COUNT(*) AS c FROM `User` WHERE `id` <> ? AND `role` = 'admin' AND `status` = 'active'",
+    [targetUserId],
+  );
+  const otherActiveAdmins = Number((countRows as { c: number }[])[0].c);
   const targetStaysActiveAdmin =
     (after.role ?? target.role) === "admin" && (after.status ?? target.status) === "active";
   if (otherActiveAdmins === 0 && !targetStaysActiveAdmin) {
@@ -54,19 +59,24 @@ export async function createUserAction(_prev: AdminActionState, formData: FormDa
   const { name, email, role } = parsed.data;
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const existing = await tx.user.findUnique({ where: { email } });
+    await transaction(async (conn) => {
+      const [existingRows] = await conn.query("SELECT * FROM `User` WHERE `email` = ?", [email]);
+      const existing = (existingRows as User[])[0] ?? null;
       if (existing) throw new AuthError("A user with this email already exists.", 409);
-      const created = await tx.user.create({ data: { name, email, role, status: "active" } });
+      const id = createId();
+      await conn.query(
+        "INSERT INTO `User` (`id`, `name`, `email`, `role`, `status`) VALUES (?, ?, ?, ?, ?)",
+        [id, name, email, role, "active"],
+      );
       await logAudit(
-        { actorId: admin.id, actorEmail: admin.email, action: "user.created", targetUserId: created.id, targetEmail: created.email, metadata: { role } },
-        tx,
+        { actorId: admin.id, actorEmail: admin.email, action: "user.created", targetUserId: id, targetEmail: email, metadata: { role } },
+        conn,
       );
     });
     revalidatePath("/admin/users");
     return successState(`${email} approved. They can now sign in with Google.`);
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+    if ((e as { code?: string })?.code === "ER_DUP_ENTRY") {
       return errorState("A user with this email already exists.");
     }
     if (isAuthError(e)) return errorState(e.message);
@@ -88,26 +98,28 @@ export async function updateUserAction(_prev: AdminActionState, formData: FormDa
   const { userId, name, email } = parsed.data;
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const target = await tx.user.findUnique({ where: { id: userId } });
+    await transaction(async (conn) => {
+      const [targetRows] = await conn.query("SELECT * FROM `User` WHERE `id` = ?", [userId]);
+      const target = (targetRows as User[])[0] ?? null;
       if (!target) throw new AuthError("User not found.", 404);
-      const clash = await tx.user.findUnique({ where: { email } });
+      const [clashRows] = await conn.query("SELECT * FROM `User` WHERE `email` = ?", [email]);
+      const clash = (clashRows as User[])[0] ?? null;
       if (clash && clash.id !== userId) throw new AuthError("A user with this email already exists.", 409);
 
       const changed: Record<string, unknown> = {};
       if (target.name !== name) changed.name = { from: target.name, to: name };
       if (target.email !== email) changed.email = { from: target.email, to: email };
 
-      await tx.user.update({ where: { id: userId }, data: { name, email } });
+      await conn.query("UPDATE `User` SET `name` = ?, `email` = ? WHERE `id` = ?", [name, email, userId]);
       await logAudit(
         { actorId: admin.id, actorEmail: admin.email, action: "user.updated", targetUserId: userId, targetEmail: email, metadata: changed },
-        tx,
+        conn,
       );
     });
     revalidatePath("/admin/users");
     return successState("User updated.");
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+    if ((e as { code?: string })?.code === "ER_DUP_ENTRY") {
       return errorState("A user with this email already exists.");
     }
     if (isAuthError(e)) return errorState(e.message);
@@ -126,17 +138,18 @@ export async function changeRoleAction(userId: string, role: "admin" | "user"): 
   if (role !== "admin" && role !== "user") return { ok: false, message: "Invalid role." };
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const target = await tx.user.findUnique({ where: { id: userId } });
+    await transaction(async (conn) => {
+      const [rows] = await conn.query("SELECT * FROM `User` WHERE `id` = ?", [userId]);
+      const target = (rows as User[])[0] ?? null;
       if (!target) throw new AuthError("User not found.", 404);
       if (target.role === role) return;
       if (target.role === "admin" && role === "user") {
-        await assertNotLastAdmin(tx, userId, { role: "user" });
+        await assertNotLastAdmin(conn, userId, { role: "user" });
       }
-      await tx.user.update({ where: { id: userId }, data: { role } });
+      await conn.query("UPDATE `User` SET `role` = ? WHERE `id` = ?", [role, userId]);
       await logAudit(
         { actorId: admin.id, actorEmail: admin.email, action: "user.role_changed", targetUserId: userId, targetEmail: target.email, metadata: { from: target.role, to: role } },
-        tx,
+        conn,
       );
     });
     revalidatePath("/admin/users");
@@ -161,14 +174,15 @@ export async function setStatusAction(userId: string, status: "active" | "inacti
   if (status !== "active" && status !== "inactive") return { ok: false, message: "Invalid status." };
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const target = await tx.user.findUnique({ where: { id: userId } });
+    await transaction(async (conn) => {
+      const [rows] = await conn.query("SELECT * FROM `User` WHERE `id` = ?", [userId]);
+      const target = (rows as User[])[0] ?? null;
       if (!target) throw new AuthError("User not found.", 404);
       if (target.status === status) return;
       if (status === "inactive") {
-        await assertNotLastAdmin(tx, userId, { status: "inactive" });
+        await assertNotLastAdmin(conn, userId, { status: "inactive" });
       }
-      await tx.user.update({ where: { id: userId }, data: { status } });
+      await conn.query("UPDATE `User` SET `status` = ? WHERE `id` = ?", [status, userId]);
       await logAudit(
         {
           actorId: admin.id,
@@ -177,7 +191,7 @@ export async function setStatusAction(userId: string, status: "active" | "inacti
           targetUserId: userId,
           targetEmail: target.email,
         },
-        tx,
+        conn,
       );
     });
     revalidatePath("/admin/users");

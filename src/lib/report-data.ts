@@ -1,5 +1,6 @@
 import "server-only";
-import { prisma } from "./prisma";
+import { query, queryOne } from "./db";
+import type { Task, WorkLog, TechnicalIssue, OperationsLog, CompetitorResearch } from "./models";
 import { type DateRange, previousPeriod, toISODate } from "./dates";
 import { getSeoWithComparison, getAnalyticsWithComparison, getTopPages } from "./metrics";
 import {
@@ -50,25 +51,26 @@ export async function buildReportData(range: DateRange): Promise<ReportData> {
   const compDemo = demoFilter(compSc);
 
   const [
-    completedTasks, inProgressTasks, blockedTasks, overdueCount, logs,
+    completedTasks, inProgressTasks, blockedTasks, overdueRow, logs,
     seo, analytics, topPages,
     discoveredIssues, verifiedIssues, openIssues,
     ops, competitors,
   ] = await Promise.all([
-    prisma.task.findMany({ where: { status: "completed", completedDate: { gte: range.start, lte: range.end }, isDemo: taskDemo }, orderBy: { completedDate: "desc" } }),
-    prisma.task.findMany({ where: { status: "in_progress", isDemo: taskDemo }, orderBy: { priority: "asc" } }),
-    prisma.task.findMany({ where: { status: "blocked", isDemo: taskDemo } }),
-    prisma.task.count({ where: { status: { not: "completed" }, dueDate: { lt: new Date() }, isDemo: taskDemo } }),
-    prisma.workLog.findMany({ where: { date: { gte: range.start, lte: range.end }, isDemo: logDemo }, orderBy: { date: "desc" } }),
+    query<Task>("SELECT * FROM `Task` WHERE `status`='completed' AND `completedDate` >= ? AND `completedDate` <= ? AND `isDemo`=? ORDER BY `completedDate` DESC", [range.start, range.end, taskDemo]),
+    query<Task>("SELECT * FROM `Task` WHERE `status`='in_progress' AND `isDemo`=? ORDER BY `priority` ASC", [taskDemo]),
+    query<Task>("SELECT * FROM `Task` WHERE `status`='blocked' AND `isDemo`=?", [taskDemo]),
+    queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `Task` WHERE `status`<>'completed' AND `dueDate` < ? AND `isDemo`=?", [new Date(), taskDemo]),
+    query<WorkLog>("SELECT * FROM `WorkLog` WHERE `date` >= ? AND `date` <= ? AND `isDemo`=? ORDER BY `date` DESC", [range.start, range.end, logDemo]),
     getSeoWithComparison(range),
     getAnalyticsWithComparison(range),
     getTopPages(range, 6),
-    prisma.technicalIssue.findMany({ where: { dateDiscovered: { gte: range.start, lte: range.end }, isDemo: issueDemo } }),
-    prisma.technicalIssue.findMany({ where: { status: "verified", dateResolved: { gte: range.start, lte: range.end }, isDemo: issueDemo } }),
-    prisma.technicalIssue.findMany({ where: { status: { in: ["open", "in_progress"] }, severity: { in: ["critical", "high"] }, isDemo: issueDemo }, orderBy: { severity: "asc" } }),
-    prisma.operationsLog.findMany({ where: { occurredAt: { gte: range.start, lte: range.end }, isDemo: opsDemo }, orderBy: { occurredAt: "desc" } }),
-    prisma.competitorResearch.findMany({ where: { researchDate: { gte: range.start, lte: range.end }, isDemo: compDemo }, orderBy: { researchDate: "desc" } }),
+    query<TechnicalIssue>("SELECT * FROM `TechnicalIssue` WHERE `dateDiscovered` >= ? AND `dateDiscovered` <= ? AND `isDemo`=?", [range.start, range.end, issueDemo]),
+    query<TechnicalIssue>("SELECT * FROM `TechnicalIssue` WHERE `status`='verified' AND `dateResolved` >= ? AND `dateResolved` <= ? AND `isDemo`=?", [range.start, range.end, issueDemo]),
+    query<TechnicalIssue>("SELECT * FROM `TechnicalIssue` WHERE `status` IN ('open','in_progress') AND `severity` IN ('critical','high') AND `isDemo`=? ORDER BY `severity` ASC", [issueDemo]),
+    query<OperationsLog>("SELECT * FROM `OperationsLog` WHERE `occurredAt` >= ? AND `occurredAt` <= ? AND `isDemo`=? ORDER BY `occurredAt` DESC", [range.start, range.end, opsDemo]),
+    query<CompetitorResearch>("SELECT * FROM `CompetitorResearch` WHERE `researchDate` >= ? AND `researchDate` <= ? AND `isDemo`=? ORDER BY `researchDate` DESC", [range.start, range.end, compDemo]),
   ]);
+  const overdueCount = Number(overdueRow?.c ?? 0);
 
   return {
     period: {
