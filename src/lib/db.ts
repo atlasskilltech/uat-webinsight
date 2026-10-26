@@ -36,10 +36,16 @@ export function getPool(): mysql.Pool {
         return v === null ? null : v === "1";
       }
       // JSON -> parsed object. A custom typeCast disables mysql2's built-in
-      // JSON parsing, so we must parse it ourselves here.
+      // JSON parsing, so we parse it ourselves. mysql2 reads JSON as BINARY by
+      // default, so request utf8 explicitly.
       if (field.type === "JSON") {
-        const v = field.string();
-        return v === null ? null : JSON.parse(v);
+        const v = field.string("utf8");
+        if (v === null) return null;
+        try {
+          return JSON.parse(v);
+        } catch {
+          return null;
+        }
       }
       return next();
     },
