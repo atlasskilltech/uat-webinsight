@@ -1,26 +1,220 @@
 @import "tailwindcss";
 
+/* Dark mode driven by a `.dark` class on <html> (next-themes), not the OS. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Design tokens — premium enterprise analytics.
+   Light: warm neutral canvas, white surfaces, deep navy sidebar, indigo accent.
+--------------------------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f5f3; /* warm neutral */
+  --surface: #ffffff;
+  --surface-2: #faf9f7;
+  --surface-hover: #f2f1ee;
+  --foreground: #1c1b1f;
+  --muted: #5c5a63;
+  --muted-2: #8a8892;
+  --border: #e7e4df;
+  --border-strong: #d8d4cd;
+
+  --accent: #4f46e5; /* indigo-600 */
+  --accent-hover: #4338ca;
+  --accent-foreground: #ffffff;
+  --accent-soft: #eef2ff;
+  --accent-soft-foreground: #4338ca;
+
+  --sidebar: #0f1a34; /* deep navy */
+  --sidebar-foreground: #e6e9f2;
+  --sidebar-muted: #93a0bd;
+  --sidebar-accent: #1d2b4d;
+  --sidebar-active: #2a3c66;
+  --sidebar-border: #223150;
+
+  --success: #16a34a;
+  --success-soft: #e9f7ef;
+  --info: #2563eb;
+  --info-soft: #e8f0fe;
+  --warning: #d97706;
+  --warning-soft: #fdf3e6;
+  --danger: #dc2626;
+  --danger-soft: #fdECEC;
+  --accent-chart-2: #0ea5e9;
+  --accent-chart-3: #14b8a6;
+
+  --ring: #a5b4fc;
+  --radius: 0.75rem;
 }
 
+.dark {
+  --background: #0b0e14;
+  --surface: #141925;
+  --surface-2: #10151f;
+  --surface-hover: #1b2230;
+  --foreground: #e8eaf0;
+  --muted: #9aa3b2;
+  --muted-2: #6b7486;
+  --border: #242c3a;
+  --border-strong: #323b4d;
+
+  --accent: #818cf8; /* indigo-400 for contrast on dark */
+  --accent-hover: #a5b4fc;
+  --accent-foreground: #0b0e14;
+  --accent-soft: #1e2440;
+  --accent-soft-foreground: #c7d0ff;
+
+  --sidebar: #090c13;
+  --sidebar-foreground: #dfe3ec;
+  --sidebar-muted: #7f8aa3;
+  --sidebar-accent: #161c2b;
+  --sidebar-active: #212a40;
+  --sidebar-border: #1c2433;
+
+  --success: #34d399;
+  --success-soft: #0f2a20;
+  --info: #60a5fa;
+  --info-soft: #11223f;
+  --warning: #fbbf24;
+  --warning-soft: #2c2410;
+  --danger: #f87171;
+  --danger-soft: #2d1414;
+  --accent-chart-2: #38bdf8;
+  --accent-chart-3: #2dd4bf;
+
+  --ring: #4f46e5;
+}
+
+/* Map tokens into Tailwind's utility space. */
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-foreground: var(--accent-soft-foreground);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-border: var(--sidebar-border);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-chart-2: var(--accent-chart-2);
+  --color-chart-3: var(--accent-chart-3);
+
+  --color-ring: var(--ring);
+
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.25rem);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
+}
+
+html {
+  color-scheme: light dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Thin, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+/* Focus ring utility used across interactive elements */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-hover);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--surface) 60%, transparent),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-in {
+  animation: fade-in 0.24s ease-out;
+}
+
+/* Print: show only the report surface, hide app chrome. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff;
+  }
+  .print-container {
+    padding: 0 !important;
+  }
 }

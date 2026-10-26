@@ -1,0 +1,495 @@
+// Atlas Work & Website Intelligence Dashboard — data model
+// Datasource: SQLite (file-backed, zero-config, fully persistent).
+// To switch to MySQL/Postgres: change `provider` + DATABASE_URL, then
+// `npx prisma migrate dev`. Enum-like fields are stored as String and
+// validated in the app layer (see src/lib/enums.ts) so the schema stays
+// portable across engines. Structured data uses Json (TEXT on SQLite).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Work management
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String   @default("#6366f1")
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks Task[]
+}
+
+model Task {
+  id                String    @id @default(cuid())
+  title             String
+  description       String?
+  category          String    @default("other") // see TASK_CATEGORIES
+  status            String    @default("not_started") // see TASK_STATUSES
+  priority          String    @default("medium") // see PRIORITIES
+  startDate         DateTime?
+  dueDate           DateTime?
+  completedDate     DateTime?
+  estimatedMinutes  Int?
+  actualMinutes     Int?
+  progress          Int       @default(0) // 0-100
+  relatedUrl        String?
+  notes             String?
+  evidenceLinks     Json? // string[]
+  completionSummary String?
+  blocker           String?
+  nextAction        String?
+  isDemo            Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  issueId String?
+  issue   TechnicalIssue? @relation(fields: [issueId], references: [id], onDelete: SetNull)
+
+  activities TaskActivity[]
+  workLogs   WorkLog[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([category])
+  @@index([dueDate])
+  @@index([projectId])
+}
+
+model TaskActivity {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  type      String // created | status_change | priority_change | progress | note | completed | edited
+  message   String
+  fromValue String?
+  toValue   String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model WorkLog {
+  id        String   @id @default(cuid())
+  date      DateTime
+  summary   String
+  category  String   @default("other")
+  minutes   Int?
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Website pages & metrics
+// ---------------------------------------------------------------------------
+
+model WebsitePage {
+  id        String   @id @default(cuid())
+  url       String   @unique
+  path      String
+  title     String?
+  section   String? // e.g. school / blog / programme
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  seoSnapshots       SeoSnapshot[]
+  analyticsSnapshots AnalyticsSnapshot[]
+  audits             PageAudit[]
+
+  @@index([section])
+}
+
+// Google Search Console snapshot (one row per page per period, optionally
+// broken down by query/device/country).
+model SeoSnapshot {
+  id            String   @id @default(cuid())
+  propertyId    String
+  source        String   @default("gsc")
+  startDate     DateTime
+  endDate       DateTime
+  clicks        Int      @default(0)
+  impressions   Int      @default(0)
+  ctr           Float    @default(0) // 0-1
+  position      Float    @default(0)
+  query         String?
+  device        String?
+  country       String?
+  isDemo        Boolean  @default(false)
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importedAt    DateTime @default(now())
+
+  pageId String?
+  page   WebsitePage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([pageId])
+  @@index([startDate, endDate])
+  @@index([propertyId])
+}
+
+// Google Analytics 4 snapshot.
+model AnalyticsSnapshot {
+  id                String   @id @default(cuid())
+  propertyId        String
+  source            String   @default("ga4")
+  startDate         DateTime
+  endDate           DateTime
+  views             Int      @default(0)
+  activeUsers       Int      @default(0)
+  sessions          Int      @default(0)
+  engagedSessions   Int      @default(0)
+  engagementRate    Float    @default(0) // 0-1
+  avgEngagementSecs Float    @default(0)
+  channel           String?
+  isDemo            Boolean  @default(false)
+  importBatchId     String?
+  importBatch       ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importedAt        DateTime @default(now())
+
+  pageId String?
+  page   WebsitePage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([pageId])
+  @@index([startDate, endDate])
+  @@index([propertyId])
+}
+
+// ---------------------------------------------------------------------------
+// Page Inspector audits + diagnostic findings
+// ---------------------------------------------------------------------------
+
+model PageAudit {
+  id                 String   @id @default(cuid())
+  url                String
+  pageId             String?
+  page               WebsitePage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  httpStatus         Int?
+  indexable          String? // indexable | blocked | unknown
+  robots             String?
+  canonical          String?
+  title              String?
+  titleLength        Int?
+  metaDescription    String?
+  metaDescLength     Int?
+  h1                 String?
+  headingStructure   Json? // [{level, text}]
+  imagesTotal        Int?
+  imagesMissingAlt   Int?
+  internalLinks      Int?
+  externalLinks      Int?
+  brokenLinks        Json? // string[]
+  redirects          Json? // [{from,to,status}]
+  structuredData     Json? // detected schema.org types
+  wordCount          Int?
+  performanceScore   Int?
+  accessibilityScore Int?
+  seoScore           Int?
+  mobileScore        Int?
+  lcp                Float?
+  cls                Float?
+  inp                Float?
+  fetchedHtml        Boolean  @default(false)
+  psiFetched         Boolean  @default(false)
+  notes              String?
+  rawJson            Json?
+  createdAt          DateTime @default(now())
+
+  findings AuditFinding[]
+
+  @@index([url])
+  @@index([pageId])
+}
+
+model AuditFinding {
+  id                String   @id @default(cuid())
+  auditId           String
+  audit             PageAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  detected          String
+  evidence          String?
+  why               String?
+  confidence        String   @default("medium") // high | medium | low
+  recommendation    String?
+  priority          String   @default("medium")
+  owner             String?
+  status            String   @default("open") // open | investigating | hypothesis | confirmed | resolved | dismissed
+  verificationSteps String?
+  isHypothesis      Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([auditId])
+}
+
+// ---------------------------------------------------------------------------
+// Technical SEO issue register
+// ---------------------------------------------------------------------------
+
+model TechnicalIssue {
+  id                 String   @id @default(cuid())
+  title              String
+  urls               Json? // string[]
+  category           String   @default("other")
+  evidence           String?
+  source             String?
+  severity           String   @default("medium") // critical | high | medium | low
+  priority           String   @default("medium")
+  impact             String?
+  recommendedFix     String?
+  status             String   @default("open") // open | in_progress | fixed | verified | wont_fix
+  dateDiscovered     DateTime @default(now())
+  owner              String?
+  approvalStatus     String   @default("pending") // pending | approved | rejected | not_required
+  implementationNotes String?
+  verificationResult String?
+  dateResolved       DateTime?
+  pageId             String?
+  auditId            String?
+  isDemo             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tasks Task[]
+
+  @@index([status])
+  @@index([severity])
+  @@index([category])
+}
+
+// ---------------------------------------------------------------------------
+// Backend & server operations
+// ---------------------------------------------------------------------------
+
+model ServerAsset {
+  id        String   @id @default(cuid())
+  type      String   @default("application") // hosting | domain | subdomain | application | database | api | ssl | service
+  name      String
+  provider  String?
+  plan      String?
+  environment String? // production | staging | dev
+  version   String?
+  status    String   @default("active") // active | degraded | down | retired
+  sslExpiry DateTime?
+  details   Json?
+  notes     String?
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([status])
+}
+
+model OperationsLog {
+  id                 String   @id @default(cuid())
+  occurredAt         DateTime @default(now())
+  system             String
+  title              String
+  kind               String   @default("task") // task | incident | maintenance | deployment | backup
+  symptoms           String?
+  investigation      String?
+  resolution         String?
+  verificationStatus String   @default("pending") // pending | verified | failed | n/a
+  status             String   @default("open") // open | in_progress | resolved | monitoring
+  httpStatus         Int?
+  approvedBy         String?
+  responsiblePerson  String?
+  isDemo             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([occurredAt])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Competitor intelligence
+// ---------------------------------------------------------------------------
+
+model CompetitorResearch {
+  id              String   @id @default(cuid())
+  organisation    String
+  website         String?
+  researchDate    DateTime @default(now())
+  sourceUrl       String?
+  observation     String
+  category        String   @default("seo") // seo | content | admissions | conversion | ux | automation | technology | operations
+  evidence        String?
+  isAssumption    Boolean  @default(false)
+  relevance       String?
+  effort          String   @default("medium") // low | medium | high
+  expectedBenefit String?
+  measurement     String?
+  recommendation  String   @default("investigate") // investigate | pilot | adopt | reject
+  status          String   @default("new") // new | reviewing | actioned | archived
+  followUpDate    DateTime?
+  isDemo          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@index([recommendation])
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+model Report {
+  id                 String   @id @default(cuid())
+  title              String
+  type               String   @default("weekly") // weekly | monthly | custom
+  periodStart        DateTime
+  periodEnd          DateTime
+  comparePeriodStart DateTime?
+  comparePeriodEnd   DateTime?
+  executiveSummary   String?
+  status             String   @default("draft") // draft | final
+  snapshot           Json? // frozen computed data at generation time
+  isDemo             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([periodStart, periodEnd])
+}
+
+// ---------------------------------------------------------------------------
+// Integrations & import history
+// ---------------------------------------------------------------------------
+
+model Integration {
+  id         String   @id @default(cuid())
+  provider   String   @unique // gsc | ga4 | psi
+  status     String   @default("not_connected") // not_connected | connected | error
+  propertyId String?
+  lastSyncAt DateTime?
+  lastError  String?
+  config     Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model ImportBatch {
+  id          String   @id @default(cuid())
+  source      String // gsc | ga4
+  fileName    String?
+  rowCount    Int      @default(0)
+  skippedRows Int      @default(0)
+  periodStart DateTime?
+  periodEnd   DateTime?
+  propertyId  String?
+  status      String   @default("completed") // completed | failed | partial
+  message     String?
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  seoSnapshots       SeoSnapshot[]
+  analyticsSnapshots AnalyticsSnapshot[]
+
+  @@index([source])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Authentication & admin user management
+// ---------------------------------------------------------------------------
+
+// Application user. `passwordHash` is null until the user sets a password via a
+// single-use invite token. Role/status are plain strings validated in the app
+// layer (see src/lib/auth). All of these tables are additive — no existing
+// model is changed — so existing dashboard data is untouched.
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique // stored lower-cased / normalised
+  role         String    @default("user") // admin | user
+  status       String    @default("active") // active | inactive
+  passwordHash String? // null until set via invite; never exposed to the client
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions   Session[]
+  authTokens AuthToken[]
+
+  @@index([role])
+  @@index([status])
+}
+
+// Server-side session. The cookie holds an opaque random token; only its SHA-256
+// hash is stored, so a DB leak cannot be replayed as a session. Deleting a row
+// (on deactivate / role change) invalidates the session immediately.
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Single-use, expiring token for invitations and password resets. Only the hash
+// is stored; the plaintext token lives only in the one-time link. `usedAt`
+// enforces one-time use.
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // invite | reset
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// Append-only audit trail for administrative actions. Stores snapshot strings
+// (actorEmail / targetEmail) so entries stay readable even if a user is later
+// renamed. Never stores passwords, tokens, cookies or OAuth secrets.
+model AdminAuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  actorEmail   String?
+  action       String // user.created | user.updated | user.role_changed | user.activated | user.deactivated | invite.created | reset.created | password.set | login.success | login.failed | logout
+  targetUserId String?
+  targetEmail  String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([targetUserId])
+}
+
+// Singleton application settings (always id = "app").
+model AppSettings {
+  id            String   @id @default("app")
+  siteUrl       String   @default("https://atlasuniversity.edu.in/")
+  siteName      String   @default("Atlas University")
+  ownerName     String   @default("")
+  ownerEmail    String   @default("")
+  timezone      String   @default("Asia/Kolkata")
+  gscProperty   String   @default("")
+  ga4Property   String   @default("")
+  updatedAt     DateTime @updatedAt
+}
