@@ -1,5 +1,5 @@
 import "server-only";
-import { execute, queryOne, transaction } from "@/lib/db";
+import { execute, query, queryOne, transaction } from "@/lib/db";
 import { createId } from "@/lib/id";
 import {
   validAccessToken,
@@ -113,6 +113,98 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, baseDelayMs = 500
 }
 
 /**
+ * Ensure a WebsitePage row exists for each URL; return a url -> id map.
+ * New pages are created with the URL path; existing pages are left untouched.
+ */
+async function ensurePages(urls: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const unique = [...new Set(urls.filter(Boolean))];
+  if (unique.length === 0) return map;
+
+  const ph = unique.map(() => "?").join(", ");
+  const existing = await query<{ id: string; url: string }>(
+    `SELECT \`id\`, \`url\` FROM \`WebsitePage\` WHERE \`url\` IN (${ph})`,
+    unique,
+  );
+  for (const p of existing) map.set(p.url, p.id);
+
+  const missing = unique.filter((u) => !map.has(u));
+  if (missing.length > 0) {
+    const values = missing.map((u) => {
+      let path = "/";
+      try {
+        path = new URL(u).pathname || "/";
+      } catch {
+        /* non-URL key (e.g. anonymised) — keep "/" */
+      }
+      return [createId(), u, path];
+    });
+    await execute(
+      "INSERT INTO `WebsitePage` (`id`,`url`,`path`) VALUES ? ON DUPLICATE KEY UPDATE `url` = `url`",
+      [values],
+    );
+    const rows = await query<{ id: string; url: string }>(
+      `SELECT \`id\`, \`url\` FROM \`WebsitePage\` WHERE \`url\` IN (${missing.map(() => "?").join(", ")})`,
+      missing,
+    );
+    for (const p of rows) map.set(p.url, p.id);
+  }
+  return map;
+}
+
+/**
+ * Refresh per-page GSC rows for the window (dimensions date + page) so the
+ * "Top Pages" table reflects real Search Console data. Additive: callers run
+ * this best-effort so a failure here never fails the main (totals) sync.
+ */
+async function syncGscPages(
+  accessToken: string,
+  property: string,
+  start: Date,
+  end: Date,
+  trigger: string,
+): Promise<void> {
+  const rows = await withRetry(() =>
+    fetchSearchConsole(accessToken, property, {
+      startDate: fmt(start),
+      endDate: fmt(end),
+      dimensions: ["date", "page"],
+      rowLimit: 25000,
+    }),
+  );
+  if (rows.length === 0) return;
+
+  const pageIdByUrl = await ensurePages(rows.map((r) => r.keys[1]));
+
+  await transaction(async (conn) => {
+    const batchId = createId();
+    await conn.query(
+      "INSERT INTO `ImportBatch` (`id`,`source`,`propertyId`,`periodStart`,`periodEnd`,`isDemo`,`status`,`message`,`rowCount`) VALUES (?,?,?,?,?,?,?,?,?)",
+      [batchId, "gsc", property, start, end, false, "completed", `Auto sync pages (${trigger})`, rows.length],
+    );
+    // Replace only the real per-page rows for this window.
+    await conn.query(
+      "DELETE FROM `SeoSnapshot` WHERE `source`=? AND `propertyId`=? AND `isDemo`=? AND `pageId` IS NOT NULL AND `query` IS NULL AND `startDate` >= ? AND `startDate` <= ?",
+      ["gsc", property, false, start, end],
+    );
+    const values = rows
+      .map((r) => {
+        const d = new Date(r.keys[0]);
+        const pageId = pageIdByUrl.get(r.keys[1]);
+        if (!pageId) return null;
+        return [createId(), property, "gsc", d, d, r.clicks, r.impressions, r.ctr, r.position, pageId, false, batchId];
+      })
+      .filter((v): v is (string | number | boolean | Date)[] => v !== null);
+    if (values.length > 0) {
+      await conn.query(
+        "INSERT INTO `SeoSnapshot` (`id`,`propertyId`,`source`,`startDate`,`endDate`,`clicks`,`impressions`,`ctr`,`position`,`pageId`,`isDemo`,`importBatchId`) VALUES ?",
+        [values],
+      );
+    }
+  });
+}
+
+/**
  * Fetch recent metrics for one provider and refresh the stored real rows for
  * the synced window. Safe to call repeatedly. Never throws for expected
  * failures — returns a result the caller can report.
@@ -196,6 +288,13 @@ export async function runGoogleSync(
             [values],
           );
         });
+      }
+      // Per-page rows (Top Pages) — best-effort; a failure here must not fail
+      // the main totals sync above.
+      try {
+        await syncGscPages(tokens.access_token, property, start, end, opts.trigger);
+      } catch (e) {
+        console.error("GSC per-page sync failed:", e instanceof Error ? e.message : e);
       }
     } else {
       const { rows } = await withRetry(() =>

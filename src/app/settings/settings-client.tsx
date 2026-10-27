@@ -27,7 +27,7 @@ import { DemoBadge } from "@/components/ui/demo-badge";
 import { idleState } from "@/lib/form-state";
 import { INTEGRATION_STATUSES } from "@/lib/enums";
 import { fmtDateTime, fmtDate } from "@/lib/dates";
-import { saveSettings, importCsvAction, disconnectProvider, syncProvider, clearDemoData } from "./actions";
+import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData } from "./actions";
 
 interface IntegrationView {
   provider: "gsc" | "ga4" | "psi";
@@ -186,6 +186,12 @@ function Integrations({ integrations }: { integrations: IntegrationView[] }) {
       toast(res.message ?? "", res.status === "success" ? "success" : "error");
       router.refresh();
     });
+  const onBackfill = (p: "gsc" | "ga4") =>
+    start(async () => {
+      const res = await backfillProvider(p);
+      toast(res.message ?? "", res.status === "success" ? "success" : "error");
+      router.refresh();
+    });
   const onDisconnect = (p: "gsc" | "ga4" | "psi") =>
     start(async () => { await disconnectProvider(p); toast("Disconnected."); router.refresh(); });
 
@@ -231,6 +237,9 @@ function Integrations({ integrations }: { integrations: IntegrationView[] }) {
                 <>
                   <Button size="sm" variant="secondary" disabled={pending || i.syncInProgress} onClick={() => onSync(i.provider as "gsc" | "ga4")}>
                     <RefreshCw className="h-3.5 w-3.5" /> Sync 28d
+                  </Button>
+                  <Button size="sm" variant="secondary" disabled={pending || i.syncInProgress} onClick={() => onBackfill(i.provider as "gsc" | "ga4")} title="Pull ~16 months of history (one-time, slower)">
+                    <RefreshCw className="h-3.5 w-3.5" /> Backfill 16mo
                   </Button>
                   <Button size="sm" variant="ghost" disabled={pending} onClick={() => onDisconnect(i.provider)}>
                     <Unplug className="h-3.5 w-3.5" /> Disconnect
