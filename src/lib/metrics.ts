@@ -89,15 +89,18 @@ export async function getAnalyticsSummary(
   };
 }
 
-/** Summary plus percent change vs the equivalent previous period. */
-export async function getSeoWithComparison(range: DateRange, opts: { pageId?: string | null } = {}) {
-  const prev = previousPeriod(range);
+/** Summary plus percent change vs a comparison period (default: previous period). */
+export async function getSeoWithComparison(
+  range: DateRange,
+  opts: { pageId?: string | null; compareRange?: DateRange } = {},
+) {
+  const prev = opts.compareRange ?? previousPeriod(range);
   // Resolve the scope once so the current and previous periods are always on
   // the same side (both real or both demo) — never one of each.
   const scope = await metricsScope();
   const [current, previous] = await Promise.all([
-    getSeoSummary(range, { ...opts, scope }),
-    getSeoSummary(prev, { ...opts, scope }),
+    getSeoSummary(range, { pageId: opts.pageId, scope }),
+    getSeoSummary(prev, { pageId: opts.pageId, scope }),
   ]);
   return {
     current,
@@ -111,13 +114,16 @@ export async function getSeoWithComparison(range: DateRange, opts: { pageId?: st
   };
 }
 
-export async function getAnalyticsWithComparison(range: DateRange, opts: { pageId?: string | null } = {}) {
-  const prev = previousPeriod(range);
+export async function getAnalyticsWithComparison(
+  range: DateRange,
+  opts: { pageId?: string | null; compareRange?: DateRange } = {},
+) {
+  const prev = opts.compareRange ?? previousPeriod(range);
   // Resolve the scope once so the current and previous periods match.
   const scope = await metricsScope();
   const [current, previous] = await Promise.all([
-    getAnalyticsSummary(range, { ...opts, scope }),
-    getAnalyticsSummary(prev, { ...opts, scope }),
+    getAnalyticsSummary(range, { pageId: opts.pageId, scope }),
+    getAnalyticsSummary(prev, { pageId: opts.pageId, scope }),
   ]);
   return {
     current,
