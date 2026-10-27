@@ -93,15 +93,6 @@ export function Sidebar({
           );
         })}
       </nav>
-
-      {/* Footer note */}
-      {!collapsed && (
-        <div className="border-t border-sidebar-border px-4 py-3">
-          <p className="text-[11px] leading-relaxed text-sidebar-muted">
-            Local workspace · data stored on this machine
-          </p>
-        </div>
-      )}
     </aside>
   );
 }
