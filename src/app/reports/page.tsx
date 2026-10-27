@@ -50,9 +50,9 @@ export default async function ReportsPage({
           description="Generate your first weekly report to compile your work and the website's performance for management."
         />
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {reports.map((r) => (
-            <Link key={r.id} href={`/reports/${r.id}`}>
+            <Link key={r.id} href={`/reports/${r.id}`} className="block">
               <Card interactive className="flex items-center gap-4 p-4">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent-soft-foreground">
                   <FileText className="h-4 w-4" />

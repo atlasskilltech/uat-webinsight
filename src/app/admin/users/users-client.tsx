@@ -203,11 +203,11 @@ export function AdminUsersClient({
                     <TD className="text-muted-2">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "Never"}</TD>
                     <TD>
                       <div className="flex items-center justify-end gap-1">
-                        <Button size="sm" variant="ghost" disabled={pending} onClick={() => setEditUser(u)} title="Edit">
-                          <Pencil className="h-3.5 w-3.5" /> Edit
+                        <Button size="sm" variant="ghost" disabled={pending} onClick={() => setEditUser(u)} title="Edit" aria-label="Edit">
+                          <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button size="sm" variant="ghost" disabled={pending} onClick={() => onStatus(u)} title={u.status === "active" ? "Deactivate" : "Activate"}>
-                          <Power className="h-3.5 w-3.5" /> {u.status === "active" ? "Deactivate" : "Activate"}
+                        <Button size="sm" variant="ghost" disabled={pending} onClick={() => onStatus(u)} title={u.status === "active" ? "Deactivate" : "Activate"} aria-label={u.status === "active" ? "Deactivate" : "Activate"}>
+                          <Power className="h-4 w-4" />
                         </Button>
                       </div>
                     </TD>
