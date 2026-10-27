@@ -19,11 +19,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Atlas Web Insight",
-    template: "%s · Atlas Web Insight",
+    default: "ATLAS WEB INSIGHT",
+    template: "%s · ATLAS WEB INSIGHT",
   },
   description:
-    "Central workspace for managing work, website SEO performance, technical issues, server operations and weekly reporting at Atlas University.",
+    "Central workspace for managing work, website SEO performance, technical issues, server operations and weekly reporting at ATLAS University.",
 };
 
 // Pages reachable without a session.

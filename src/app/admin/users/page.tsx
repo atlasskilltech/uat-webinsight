@@ -76,7 +76,7 @@ export default async function AdminUsersPage({
 
   return (
     <div>
-      <PageHeader title="User Management" description="Create and manage accounts, roles and access for Atlas Web Insight." />
+      <PageHeader title="User Management" description="Create and manage accounts, roles and access for ATLAS WEB INSIGHT." />
       <AdminUsersClient
         users={users}
         total={total}

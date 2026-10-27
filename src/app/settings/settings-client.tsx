@@ -146,7 +146,7 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Your name" error={err("ownerName")}>
-              <Input name="ownerName" defaultValue={settings.ownerName} placeholder="e.g. Atlas Web Team" />
+              <Input name="ownerName" defaultValue={settings.ownerName} placeholder="e.g. ATLAS Web Team" />
             </Field>
             <Field label="Your email" error={err("ownerEmail")}>
               <Input name="ownerEmail" type="email" defaultValue={settings.ownerEmail} />

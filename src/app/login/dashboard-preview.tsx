@@ -58,7 +58,7 @@ export function DashboardPreview() {
         <div className="hidden w-36 shrink-0 flex-col gap-0.5 border-r border-white/5 bg-slate-950/60 p-3 sm:flex">
           <div className="mb-3 flex items-center gap-1.5 px-1">
             <span className="flex h-5 w-5 items-center justify-center rounded bg-gradient-to-br from-teal-400 to-emerald-500 text-[9px] font-bold text-slate-900">A</span>
-            <span className="text-[10px] font-semibold text-white/90">Atlas</span>
+            <span className="text-[10px] font-semibold text-white/90">ATLAS</span>
           </div>
           {NAV.map((n) => (
             <div

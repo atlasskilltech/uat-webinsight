@@ -130,8 +130,8 @@ export function ResearchForm({
         <Textarea name="evidence" defaultValue={entry?.evidence ?? ""} className="min-h-16" />
       </Field>
 
-      <Field label="Potential relevance to Atlas" error={err("relevance")}>
-        <Textarea name="relevance" defaultValue={entry?.relevance ?? ""} className="min-h-16" placeholder="Why this might matter for Atlas." />
+      <Field label="Potential relevance to ATLAS" error={err("relevance")}>
+        <Textarea name="relevance" defaultValue={entry?.relevance ?? ""} className="min-h-16" placeholder="Why this might matter for ATLAS." />
       </Field>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
