@@ -38,9 +38,9 @@ jobs:
             # Build the production bundle (.next/) that `next start` serves
             npm run build
 
-            # Start (or restart) the app under pm2. There is no src/app.js —
-            # this is a Next.js app, started via `npm start` (-> next start),
-            # which listens on PORT from .env.
-            pm2 restart uat-webinsight --update-env || pm2 start npm --name uat-webinsight -- start
+            # Start or reload the app under pm2 using ecosystem.config.js, which
+            # pins the working directory (/home/ubuntu/uat-webinsight) and port
+            # (9091, the proxy target) so it can't start from the wrong dir/port.
+            pm2 startOrReload ecosystem.config.js --update-env
 
             pm2 save

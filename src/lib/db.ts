@@ -15,6 +15,23 @@ import { getConnectionConfig } from "./db-config";
  */
 const globalForDb = globalThis as unknown as { __pool?: mysql.Pool };
 
+// Columns that hold JSON. On MySQL these report type "JSON"; on MariaDB they
+// are LONGTEXT (JSON is an alias), so the driver does NOT auto-parse them and
+// their type is not "JSON". Parse by column name to cover both engines.
+const JSON_COLUMNS = new Set([
+  "config",
+  "snapshot",
+  "metadata",
+  "details",
+  "urls",
+  "evidenceLinks",
+  "headingStructure",
+  "brokenLinks",
+  "redirects",
+  "structuredData",
+  "rawJson",
+]);
+
 /**
  * Lazily create (and memoize) the connection pool on first use. Lazy creation
  * means importing this module never reads DB_* / connects — which lets the
@@ -36,9 +53,10 @@ export function getPool(): mysql.Pool {
         return v === null ? null : v === "1";
       }
       // JSON -> parsed object. A custom typeCast disables mysql2's built-in
-      // JSON parsing, so we parse it ourselves. mysql2 reads JSON as BINARY by
-      // default, so request utf8 explicitly.
-      if (field.type === "JSON") {
+      // JSON parsing, so we parse it ourselves. Match type "JSON" (MySQL) or a
+      // known JSON column name (MariaDB stores JSON as LONGTEXT). Read as utf8
+      // and tolerate parse errors.
+      if (field.type === "JSON" || JSON_COLUMNS.has(field.name)) {
         const v = field.string("utf8");
         if (v === null) return null;
         try {
