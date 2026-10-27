@@ -33,7 +33,7 @@ export function DataStatusBanner({
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
         <p className="text-foreground">
           <span className="font-medium">Showing demo data.</span> These are seeded
-          sample figures for demonstration — not Atlas&apos;s real metrics. Connect a
+          sample figures for demonstration — not ATLAS&apos;s real metrics. Connect a
           data source or remove demo data in{" "}
           <Link href="/settings" className="font-medium text-accent hover:underline">
             Settings

@@ -27,7 +27,7 @@ import { DemoBadge } from "@/components/ui/demo-badge";
 import { idleState } from "@/lib/form-state";
 import { INTEGRATION_STATUSES } from "@/lib/enums";
 import { fmtDateTime, fmtDate } from "@/lib/dates";
-import { saveSettings, importCsvAction, disconnectProvider, syncProvider, clearDemoData } from "./actions";
+import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData } from "./actions";
 
 interface IntegrationView {
   provider: "gsc" | "ga4" | "psi";
@@ -146,7 +146,7 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Your name" error={err("ownerName")}>
-              <Input name="ownerName" defaultValue={settings.ownerName} placeholder="e.g. Atlas Web Team" />
+              <Input name="ownerName" defaultValue={settings.ownerName} placeholder="e.g. ATLAS Web Team" />
             </Field>
             <Field label="Your email" error={err("ownerEmail")}>
               <Input name="ownerEmail" type="email" defaultValue={settings.ownerEmail} />
@@ -183,6 +183,12 @@ function Integrations({ integrations }: { integrations: IntegrationView[] }) {
   const onSync = (p: "gsc" | "ga4") =>
     start(async () => {
       const res = await syncProvider(p);
+      toast(res.message ?? "", res.status === "success" ? "success" : "error");
+      router.refresh();
+    });
+  const onBackfill = (p: "gsc" | "ga4") =>
+    start(async () => {
+      const res = await backfillProvider(p);
       toast(res.message ?? "", res.status === "success" ? "success" : "error");
       router.refresh();
     });
@@ -231,6 +237,9 @@ function Integrations({ integrations }: { integrations: IntegrationView[] }) {
                 <>
                   <Button size="sm" variant="secondary" disabled={pending || i.syncInProgress} onClick={() => onSync(i.provider as "gsc" | "ga4")}>
                     <RefreshCw className="h-3.5 w-3.5" /> Sync 28d
+                  </Button>
+                  <Button size="sm" variant="secondary" disabled={pending || i.syncInProgress} onClick={() => onBackfill(i.provider as "gsc" | "ga4")} title="Pull ~16 months of history (one-time, slower)">
+                    <RefreshCw className="h-3.5 w-3.5" /> Backfill 16mo
                   </Button>
                   <Button size="sm" variant="ghost" disabled={pending} onClick={() => onDisconnect(i.provider)}>
                     <Unplug className="h-3.5 w-3.5" /> Disconnect

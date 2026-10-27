@@ -68,7 +68,7 @@ export function Topbar({
       {/* Breadcrumbs */}
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
         <Link href="/" className="text-muted-2 hover:text-foreground">
-          Atlas Web Insight
+          ATLAS WEB INSIGHT
         </Link>
         {active && (
           <>

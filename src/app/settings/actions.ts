@@ -152,3 +152,19 @@ export async function syncProvider(provider: Provider): Promise<FormState> {
   revalidatePath("/");
   return result.ok ? successState(result.message) : errorState(result.message);
 }
+
+/**
+ * One-time full backfill: pull ~16 months of history (the GSC maximum; GA4
+ * returns up to its retention). Heavier than the daily sync, so it is a
+ * separate, explicit action rather than the default.
+ */
+export async function backfillProvider(provider: Provider): Promise<FormState> {
+  const denied = await assertAdmin();
+  if (denied) return denied;
+  if (provider === "psi") return errorState("PageSpeed is used per-URL in the Page Inspector, not synced here.");
+  const result = await runGoogleSync(provider, { trigger: "manual", windowDays: 16 * 30 });
+  revalidatePath("/settings");
+  revalidatePath("/seo");
+  revalidatePath("/");
+  return result.ok ? successState(result.message) : errorState(result.message);
+}

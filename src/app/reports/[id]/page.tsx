@@ -140,7 +140,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
               </>
             ) : <Empty>No Analytics data for this period.</Empty>}
           </div>
-          {(seo.current.isDemo || analytics.current.isDemo) && <p className="mt-2 text-xs text-warning">Figures include demo data — not real Atlas metrics.</p>}
+          {(seo.current.isDemo || analytics.current.isDemo) && <p className="mt-2 text-xs text-warning">Figures include demo data — not real ATLAS metrics.</p>}
         </Section>
 
         {/* 5. Pages requiring attention + 6 */}

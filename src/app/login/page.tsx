@@ -7,7 +7,6 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { googleSignInAction } from "./actions";
 import { GoogleSignInButton } from "./google-signin-button";
 import { DashboardPreview } from "./dashboard-preview";
-import { AtlasLogo } from "./atlas-logo";
 
 export const metadata: Metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
@@ -81,7 +80,7 @@ export default async function LoginPage({
             Smarter Insights
             <br />
             <span className="bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-300 bg-clip-text text-transparent">
-              A Stronger Atlas
+              A Stronger ATLAS
             </span>
           </h1>
           <p className="mt-4 text-base text-slate-300/90">Monitor. Analyze. Improve. All in one place.</p>
@@ -120,7 +119,7 @@ export default async function LoginPage({
             <h1 className="text-2xl font-semibold leading-tight text-slate-900 dark:text-white">
               Smarter Insights,{" "}
               <span className="bg-gradient-to-r from-blue-600 to-teal-500 bg-clip-text text-transparent dark:from-blue-400 dark:to-teal-300">
-                A Stronger Atlas
+                A Stronger ATLAS
               </span>
             </h1>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Monitor. Analyze. Improve. All in one place.</p>
@@ -128,18 +127,16 @@ export default async function LoginPage({
 
           {/* Login card */}
           <div className="relative w-full max-w-md rounded-2xl bg-white p-7 shadow-xl ring-1 ring-slate-900/5 dark:bg-slate-900 dark:ring-white/10 sm:p-8">
-            <AtlasLogo tone="auto" size="md" />
-
-            <h2 className="mt-6 text-2xl font-semibold leading-tight tracking-tight text-slate-900 dark:text-white">
+            <h2 className="text-2xl font-semibold leading-tight tracking-tight text-slate-900 dark:text-white">
               Welcome Back
               <br />
               to{" "}
               <span className="bg-gradient-to-r from-blue-600 to-teal-500 bg-clip-text text-transparent dark:from-blue-400 dark:to-teal-300">
-                Atlas Web Insight
+                ATLAS WEB INSIGHT
               </span>
             </h2>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-              Sign in with your Atlas Google account to continue to the dashboard.
+              Sign in with your ATLAS Google account to continue to the dashboard.
             </p>
 
             {errorMessage && (
@@ -167,7 +164,7 @@ export default async function LoginPage({
               <div>
                 <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Secure Access</p>
                 <p className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                  Only approved Atlas accounts can access this application.
+                  Only approved ATLAS accounts can access this application.
                 </p>
               </div>
             </div>
