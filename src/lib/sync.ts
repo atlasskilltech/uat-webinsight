@@ -60,50 +60,46 @@ function resolveProperty(provider: Provider, dbProperty?: string | null): string
   return env?.trim() ?? "";
 }
 
-async function readSyncMeta(provider: Provider): Promise<SyncMeta> {
-  const row = await queryOne<Integration>(
-    "SELECT `config` FROM `Integration` WHERE `provider` = ?",
-    [provider],
+type IntegrationConfig = {
+  tokens?: GoogleTokens;
+  sync?: SyncMeta;
+  [key: string]: unknown;
+};
+
+/**
+ * Write the whole config object back as JSON. Assigning a JSON string works on
+ * both MySQL (JSON column) and MariaDB (LONGTEXT), avoiding engine-specific
+ * JSON write functions (MariaDB has no CAST(... AS JSON)).
+ */
+async function writeConfig(provider: Provider, config: IntegrationConfig): Promise<void> {
+  await execute(
+    "UPDATE `Integration` SET `config` = ? WHERE `provider` = ?",
+    [JSON.stringify(config), provider],
   );
-  const cfg = row?.config as { sync?: SyncMeta } | null;
-  return cfg?.sync ?? {};
 }
 
 /**
- * Atomically acquire the per-provider sync lock. The WHERE clause is evaluated
- * against the committed row at write time, so even if two requests read the
- * same stale state, only one UPDATE matches and writes. Returns true if the
- * lock was acquired by this call.
+ * Atomically acquire the per-provider sync lock. The WHERE clause guards on the
+ * committed row using text JSON extraction (`->>`), which is portable across
+ * MySQL and MariaDB, so only one concurrent UPDATE matches. On success the
+ * passed config's `sync` is updated in place so later whole-config writes keep
+ * the lock held.
  */
-async function acquireLock(provider: Provider, meta: SyncMeta): Promise<boolean> {
-  const next: SyncMeta = { ...meta, inProgress: true, startedAt: Date.now() };
+async function acquireLock(provider: Provider, config: IntegrationConfig): Promise<boolean> {
+  const meta = config.sync ?? {};
+  const nextSync: SyncMeta = { ...meta, inProgress: true, startedAt: Date.now() };
   const staleBefore = Date.now() - STALE_LOCK_MS;
   const res = await execute(
-    "UPDATE `Integration` " +
-      "SET `config` = JSON_SET(COALESCE(`config`, '{}'), '$.sync', CAST(? AS JSON)) " +
-      "WHERE `provider` = ? AND ( " +
-      "  COALESCE(`config`->>'$.sync.inProgress', 'false') <> 'true' " +
-      "  OR COALESCE(CAST(`config`->>'$.sync.startedAt' AS UNSIGNED), 0) < ? " +
-      ")",
-    [JSON.stringify(next), provider, staleBefore],
+    "UPDATE `Integration` SET `config` = ? WHERE `provider` = ? AND ( " +
+      "COALESCE(`config`->>'$.sync.inProgress', 'false') <> 'true' " +
+      "OR COALESCE(CAST(`config`->>'$.sync.startedAt' AS UNSIGNED), 0) < ? )",
+    [JSON.stringify({ ...config, sync: nextSync }), provider, staleBefore],
   );
-  return res.affectedRows === 1;
-}
-
-/** Write the sync metadata sub-object, preserving tokens and other config. */
-async function writeSyncMeta(provider: Provider, meta: SyncMeta): Promise<void> {
-  await execute(
-    "UPDATE `Integration` SET `config` = JSON_SET(COALESCE(`config`, '{}'), '$.sync', CAST(? AS JSON)) WHERE `provider` = ?",
-    [JSON.stringify(meta), provider],
-  );
-}
-
-/** Persist refreshed tokens without disturbing the sync lock metadata. */
-async function persistTokens(provider: Provider, tokens: GoogleTokens): Promise<void> {
-  await execute(
-    "UPDATE `Integration` SET `config` = JSON_SET(COALESCE(`config`, '{}'), '$.tokens', CAST(? AS JSON)) WHERE `provider` = ?",
-    [JSON.stringify(tokens), provider],
-  );
+  if (res.affectedRows === 1) {
+    config.sync = nextSync;
+    return true;
+  }
+  return false;
 }
 
 /** Bounded retry: at most `retries` extra attempts, never for permanent errors. */
@@ -138,22 +134,24 @@ export async function runGoogleSync(
     "SELECT * FROM `Integration` WHERE `provider` = ?",
     [provider],
   );
-  const config = row?.config as { tokens?: GoogleTokens } | null;
+  const config = (row?.config as IntegrationConfig | null) ?? {};
   const property = resolveProperty(provider, row?.propertyId);
 
   // Gate: tokens present == Google account connected (disconnect clears them).
   // We intentionally allow a provider in "error" state to retry so a transient
   // failure can self-recover on the next scheduled/manual run.
-  if (!config?.tokens) {
+  if (!config.tokens) {
     return { provider, ok: false, skipped: true, count: 0, message: "Not connected. Connect your Google account first." };
   }
   if (!property) {
     return { provider, ok: false, skipped: true, count: 0, message: "Set the property id in Settings (or in .env) before syncing." };
   }
 
-  // Overlap guard — atomic lock.
-  const meta = await readSyncMeta(provider);
-  const locked = await acquireLock(provider, meta);
+  // Keep the pre-lock sync metadata (nextRunAt etc.) for the finish patch.
+  const meta: SyncMeta = { ...(config.sync ?? {}) };
+
+  // Overlap guard — atomic lock (updates config.sync in place on success).
+  const locked = await acquireLock(provider, config);
   if (!locked) {
     return { provider, ok: false, skipped: true, count: 0, message: "A sync is already in progress for this provider." };
   }
@@ -163,13 +161,18 @@ export async function runGoogleSync(
   const start = new Date();
   start.setDate(start.getDate() - windowDays);
 
-  const finish = (patch: Partial<SyncMeta>) =>
-    writeSyncMeta(provider, { ...meta, inProgress: false, startedAt: null, lastTrigger: opts.trigger, ...patch });
+  const finish = (patch: Partial<SyncMeta>) => {
+    config.sync = { ...meta, inProgress: false, startedAt: null, lastTrigger: opts.trigger, ...patch };
+    return writeConfig(provider, config);
+  };
 
   try {
     // 1. Ensure a valid access token, persisting any refresh.
     const tokens = await withRetry(() => validAccessToken(config.tokens!));
-    if (tokens !== config.tokens) await persistTokens(provider, tokens);
+    if (tokens !== config.tokens) {
+      config.tokens = tokens;
+      await writeConfig(provider, config);
+    }
 
     // 2. Fetch FIRST. Only replace stored rows once a successful response is in hand.
     let count = 0;
