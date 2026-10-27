@@ -44,9 +44,14 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
     getSettings(),
   ]);
   if (!report) notFound();
-  // Older/seeded reports may not have a stored snapshot — build it on demand.
-  const data = (report.snapshot as unknown as ReportData | null) ??
-    (await buildReportData({ start: report.periodStart, end: report.periodEnd }));
+  // Use the stored snapshot only when it is a well-formed object; otherwise
+  // (missing, legacy, or not parsed into an object) rebuild it on demand so the
+  // page can never crash on a bad snapshot.
+  const snap = report.snapshot as unknown;
+  const data: ReportData =
+    snap && typeof snap === "object" && "work" in snap
+      ? (snap as ReportData)
+      : await buildReportData({ start: report.periodStart, end: report.periodEnd });
   const { seo, analytics, work } = data;
 
   return (
