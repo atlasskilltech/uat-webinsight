@@ -10,9 +10,10 @@ module.exports = {
       name: "uat-webinsight",
       cwd: "/home/ubuntu/uat-webinsight",
       // Run Next directly (no npm wrapper, so there is no package.json lookup
-      // from the wrong directory).
+      // from the wrong directory). The port comes from env.PORT below — do NOT
+      // pass `-p` here, as the arg can be mis-parsed as a project directory.
       script: "node_modules/next/dist/bin/next",
-      args: "start -p 9091",
+      args: "start",
       instances: 1,
       autorestart: true,
       max_restarts: 10,
