@@ -79,27 +79,22 @@ async function writeConfig(provider: Provider, config: IntegrationConfig): Promi
 }
 
 /**
- * Atomically acquire the per-provider sync lock. The WHERE clause guards on the
- * committed row using text JSON extraction (`->>`), which is portable across
- * MySQL and MariaDB, so only one concurrent UPDATE matches. On success the
- * passed config's `sync` is updated in place so later whole-config writes keep
- * the lock held.
+ * Acquire the per-provider sync lock. The check is done in JS (the config is
+ * already parsed) and the whole config is written back with inProgress=true, so
+ * it does not depend on any MySQL/MariaDB JSON SQL functions. A crashed run's
+ * lock is reclaimed after STALE_LOCK_MS. Returns true if the lock was acquired.
  */
 async function acquireLock(provider: Provider, config: IntegrationConfig): Promise<boolean> {
   const meta = config.sync ?? {};
-  const nextSync: SyncMeta = { ...meta, inProgress: true, startedAt: Date.now() };
-  const staleBefore = Date.now() - STALE_LOCK_MS;
-  const res = await execute(
-    "UPDATE `Integration` SET `config` = ? WHERE `provider` = ? AND ( " +
-      "COALESCE(`config`->>'$.sync.inProgress', 'false') <> 'true' " +
-      "OR COALESCE(CAST(`config`->>'$.sync.startedAt' AS UNSIGNED), 0) < ? )",
-    [JSON.stringify({ ...config, sync: nextSync }), provider, staleBefore],
-  );
-  if (res.affectedRows === 1) {
-    config.sync = nextSync;
-    return true;
-  }
-  return false;
+  const now = Date.now();
+  const held =
+    meta.inProgress === true &&
+    typeof meta.startedAt === "number" &&
+    now - meta.startedAt < STALE_LOCK_MS;
+  if (held) return false;
+  config.sync = { ...meta, inProgress: true, startedAt: now };
+  await writeConfig(provider, config);
+  return true;
 }
 
 /** Bounded retry: at most `retries` extra attempts, never for permanent errors. */
