@@ -16,7 +16,7 @@ import {
   getTopPages,
 } from "@/lib/metrics";
 import { getIntegrations } from "@/lib/integrations";
-import { resolveSeoRange, rangeLabel, previousPeriod } from "@/lib/dates";
+import { resolveSeoRange, resolveSeoCompare, rangeLabel, compareLabel } from "@/lib/dates";
 import { formatNumber, formatPercent, formatPosition, truncate } from "@/lib/utils";
 import { explain } from "@/lib/glossary";
 
@@ -26,15 +26,15 @@ export const dynamic = "force-dynamic";
 export default async function SeoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string; start?: string; end?: string }>;
+  searchParams: Promise<{ range?: string; start?: string; end?: string; cmp?: string; cmpStart?: string; cmpEnd?: string }>;
 }) {
   const sp = await searchParams;
   const { range, invalid } = resolveSeoRange(sp);
-  const prev = previousPeriod(range);
+  const { compareRange, mode: cmpMode } = resolveSeoCompare(sp, range);
 
   const [seo, ga, trend, topPages, integrations] = await Promise.all([
-    getSeoWithComparison(range),
-    getAnalyticsWithComparison(range),
+    getSeoWithComparison(range, { compareRange }),
+    getAnalyticsWithComparison(range, { compareRange }),
     getTrend(range),
     getTopPages(range),
     getIntegrations(),
@@ -49,7 +49,7 @@ export default async function SeoPage({
     <div>
       <PageHeader
         title="SEO & Website Analytics"
-        description={`Search and visitor performance for the website. Comparing ${rangeLabel(range)} with the previous period (${rangeLabel(prev)}).`}
+        description={`Search and visitor performance for the website. Comparing ${rangeLabel(range)} with ${compareLabel(cmpMode)} (${rangeLabel(compareRange)}).`}
         actions={<DateRangePicker />}
       />
 

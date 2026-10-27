@@ -8,6 +8,7 @@ import { Input, Field } from "@/components/ui/form";
 import { cn } from "@/lib/utils";
 import {
   SEO_RANGE_PRESETS,
+  SEO_COMPARE_PRESETS,
   SEO_DEFAULT_RANGE_KEY,
   fmtDate,
   toISODate,
@@ -17,10 +18,14 @@ import {
 /**
  * Google Search Console-style date-range picker for the SEO & Analytics page.
  *
- * Presets (Last 6 / 12 / 16 months) and a Custom option with start/end pickers,
- * Apply and Cancel. The chosen range is written to the URL as query params
- * (`range`, plus `start`/`end` for custom), which the server component reads to
- * drive every metric query. Validation prevents an end date before the start.
+ * Two tabs:
+ *  - Filter — preset windows (24 hours … 16 months) or a Custom start/end range.
+ *  - Compare — compare against the Previous period, Year over year, or a Custom
+ *    period.
+ *
+ * The selection is written to the URL query params (`range`, `start`/`end` for a
+ * custom range; `cmp`, `cmpStart`/`cmpEnd` for a custom compare), which the
+ * server component reads to drive every metric query.
  */
 export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
   const router = useRouter();
@@ -30,21 +35,33 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
   const urlKey = params.get(paramKey) ?? SEO_DEFAULT_RANGE_KEY;
   const urlStart = params.get("start");
   const urlEnd = params.get("end");
+  const urlCmp = params.get("cmp") ?? "previous";
+  const urlCmpStart = params.get("cmpStart");
+  const urlCmpEnd = params.get("cmpEnd");
 
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<"filter" | "compare">("filter");
+
   const [sel, setSel] = useState<string>(urlKey);
   const [customStart, setCustomStart] = useState<string>(urlStart ?? toISODate(subMonths(new Date(), 6)));
   const [customEnd, setCustomEnd] = useState<string>(urlEnd ?? toISODate(new Date()));
+
+  const [cmp, setCmp] = useState<string>(urlCmp);
+  const [cmpStart, setCmpStart] = useState<string>(urlCmpStart ?? toISODate(subMonths(new Date(), 12)));
+  const [cmpEnd, setCmpEnd] = useState<string>(urlCmpEnd ?? toISODate(subMonths(new Date(), 6)));
+
   const popRef = useRef<HTMLDivElement>(null);
 
   // Reset the local draft to the URL's current state whenever the popover opens.
   useEffect(() => {
-    if (open) {
-      setSel(urlKey);
-      setCustomStart(urlStart ?? toISODate(subMonths(new Date(), 6)));
-      setCustomEnd(urlEnd ?? toISODate(new Date()));
-    }
-  }, [open, urlKey, urlStart, urlEnd]);
+    if (!open) return;
+    setSel(urlKey);
+    setCustomStart(urlStart ?? toISODate(subMonths(new Date(), 6)));
+    setCustomEnd(urlEnd ?? toISODate(new Date()));
+    setCmp(urlCmp);
+    setCmpStart(urlCmpStart ?? toISODate(subMonths(new Date(), 12)));
+    setCmpEnd(urlCmpEnd ?? toISODate(subMonths(new Date(), 6)));
+  }, [open, urlKey, urlStart, urlEnd, urlCmp, urlCmpStart, urlCmpEnd]);
 
   // Close on outside click or Escape.
   useEffect(() => {
@@ -64,6 +81,8 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
   }, [open]);
 
   const customInvalid = sel === "custom" && (!customStart || !customEnd || customEnd < customStart);
+  const cmpInvalid = cmp === "custom" && (!cmpStart || !cmpEnd || cmpEnd < cmpStart);
+  const invalid = customInvalid || cmpInvalid;
 
   // Label shown on the trigger button for the currently-applied range.
   const activeLabel = (() => {
@@ -71,12 +90,13 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
       return `${fmtDate(urlStart)} – ${fmtDate(urlEnd)}`;
     }
     const preset = SEO_RANGE_PRESETS.find((p) => p.key === urlKey);
-    return preset?.label ?? "Last 6 months";
+    return preset?.label ?? "6 months";
   })();
 
   const apply = () => {
-    if (customInvalid) return;
+    if (invalid) return;
     const next = new URLSearchParams(params.toString());
+
     next.set(paramKey, sel);
     if (sel === "custom") {
       next.set("start", customStart);
@@ -85,11 +105,27 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
       next.delete("start");
       next.delete("end");
     }
+
+    if (cmp && cmp !== "previous") {
+      next.set("cmp", cmp);
+      if (cmp === "custom") {
+        next.set("cmpStart", cmpStart);
+        next.set("cmpEnd", cmpEnd);
+      } else {
+        next.delete("cmpStart");
+        next.delete("cmpEnd");
+      }
+    } else {
+      next.delete("cmp");
+      next.delete("cmpStart");
+      next.delete("cmpEnd");
+    }
+
     setOpen(false);
     router.push(`${pathname}?${next.toString()}`);
   };
 
-  const options = [...SEO_RANGE_PRESETS, { key: "custom", label: "Custom", months: 0 }] as const;
+  const rangeOptions = [...SEO_RANGE_PRESETS.map((p) => ({ key: p.key, label: p.label })), { key: "custom", label: "Custom" }];
 
   return (
     <div className="relative" ref={popRef}>
@@ -109,46 +145,100 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
         <div
           role="dialog"
           aria-label="Choose date range"
-          className="absolute right-0 z-50 mt-2 w-72 rounded-xl border border-border bg-surface p-3 shadow-lg"
+          className="absolute right-0 z-50 mt-2 w-80 rounded-xl border border-border bg-surface p-3 shadow-lg"
         >
-          <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">Date range</p>
-          <div className="space-y-0.5">
-            {options.map((o) => (
+          {/* Tabs */}
+          <div className="mb-3 flex gap-1 border-b border-border">
+            {(["filter", "compare"] as const).map((t) => (
               <button
-                key={o.key}
+                key={t}
                 type="button"
-                onClick={() => setSel(o.key)}
+                onClick={() => setTab(t)}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm transition-colors",
-                  sel === o.key ? "bg-accent-soft text-accent-soft-foreground font-medium" : "text-foreground hover:bg-surface-hover",
+                  "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium capitalize transition-colors",
+                  tab === t ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground",
                 )}
-                aria-pressed={sel === o.key}
+                aria-selected={tab === t}
+                role="tab"
               >
-                {o.label}
-                {sel === o.key && <Check className="h-4 w-4" />}
+                {t}
               </button>
             ))}
           </div>
 
-          {sel === "custom" && (
-            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3">
-              <Field label="Start date">
-                <Input type="date" value={customStart} max={customEnd || undefined} onChange={(e) => setCustomStart(e.target.value)} />
-              </Field>
-              <Field label="End date">
-                <Input type="date" value={customEnd} min={customStart || undefined} onChange={(e) => setCustomEnd(e.target.value)} />
-              </Field>
-              {customInvalid && (
-                <p className="col-span-2 -mt-1 text-xs text-danger">
-                  The end date can’t be before the start date.
-                </p>
+          {tab === "filter" ? (
+            <>
+              <div className="space-y-0.5">
+                {rangeOptions.map((o) => (
+                  <button
+                    key={o.key}
+                    type="button"
+                    onClick={() => setSel(o.key)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm transition-colors",
+                      sel === o.key ? "bg-accent-soft text-accent-soft-foreground font-medium" : "text-foreground hover:bg-surface-hover",
+                    )}
+                    aria-pressed={sel === o.key}
+                  >
+                    {o.label}
+                    {sel === o.key && <Check className="h-4 w-4" />}
+                  </button>
+                ))}
+              </div>
+
+              {sel === "custom" && (
+                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3">
+                  <Field label="Start date">
+                    <Input type="date" value={customStart} max={customEnd || undefined} onChange={(e) => setCustomStart(e.target.value)} />
+                  </Field>
+                  <Field label="End date">
+                    <Input type="date" value={customEnd} min={customStart || undefined} onChange={(e) => setCustomEnd(e.target.value)} />
+                  </Field>
+                  {customInvalid && (
+                    <p className="col-span-2 -mt-1 text-xs text-danger">The end date can’t be before the start date.</p>
+                  )}
+                </div>
               )}
-            </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-0.5">
+                {SEO_COMPARE_PRESETS.map((o) => (
+                  <button
+                    key={o.key}
+                    type="button"
+                    onClick={() => setCmp(o.key)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm transition-colors",
+                      cmp === o.key ? "bg-accent-soft text-accent-soft-foreground font-medium" : "text-foreground hover:bg-surface-hover",
+                    )}
+                    aria-pressed={cmp === o.key}
+                  >
+                    {o.label}
+                    {cmp === o.key && <Check className="h-4 w-4" />}
+                  </button>
+                ))}
+              </div>
+
+              {cmp === "custom" && (
+                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3">
+                  <Field label="Compare start">
+                    <Input type="date" value={cmpStart} max={cmpEnd || undefined} onChange={(e) => setCmpStart(e.target.value)} />
+                  </Field>
+                  <Field label="Compare end">
+                    <Input type="date" value={cmpEnd} min={cmpStart || undefined} onChange={(e) => setCmpEnd(e.target.value)} />
+                  </Field>
+                  {cmpInvalid && (
+                    <p className="col-span-2 -mt-1 text-xs text-danger">The end date can’t be before the start date.</p>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           <div className="mt-3 flex justify-end gap-2 border-t border-border pt-3">
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={apply} disabled={customInvalid}>Apply</Button>
+            <Button size="sm" onClick={apply} disabled={invalid}>Apply</Button>
           </div>
         </div>
       )}

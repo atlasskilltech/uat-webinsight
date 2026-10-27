@@ -8,6 +8,7 @@ import {
   subDays,
   subWeeks,
   subMonths,
+  subYears,
   differenceInCalendarDays,
   isValid,
   parseISO,
@@ -95,11 +96,19 @@ export function resolveRange(key?: string | null): { range: DateRange; key: stri
   }
 }
 
-/** Preset keys offered by the SEO & Analytics date-range picker. */
+/**
+ * Preset keys offered by the SEO & Analytics date-range picker (Search
+ * Console-style): short day windows plus trailing-month windows. Each carries a
+ * `resolve()` that builds the concrete DateRange.
+ */
 export const SEO_RANGE_PRESETS = [
-  { key: "6mo", label: "Last 6 months", months: 6 },
-  { key: "12mo", label: "Last 12 months", months: 12 },
-  { key: "16mo", label: "Last 16 months", months: 16 },
+  { key: "24h", label: "24 hours", resolve: () => ({ start: subDays(new Date(), 1), end: new Date() }) },
+  { key: "7d", label: "7 days", resolve: () => lastNDays(7) },
+  { key: "28d", label: "28 days", resolve: () => lastNDays(28) },
+  { key: "3mo", label: "3 months", resolve: () => lastNMonths(3) },
+  { key: "6mo", label: "6 months", resolve: () => lastNMonths(6) },
+  { key: "12mo", label: "12 months", resolve: () => lastNMonths(12) },
+  { key: "16mo", label: "16 months", resolve: () => lastNMonths(16) },
 ] as const;
 
 export const SEO_DEFAULT_RANGE_KEY = "6mo";
@@ -145,8 +154,72 @@ export function resolveSeoRange(sp: {
   }
 
   const preset = SEO_RANGE_PRESETS.find((p) => p.key === key);
-  const months = preset?.months ?? 6;
-  return { range: lastNMonths(months), key: preset?.key ?? SEO_DEFAULT_RANGE_KEY, custom: null, invalid: false };
+  return {
+    range: preset ? preset.resolve() : lastNMonths(6),
+    key: preset?.key ?? SEO_DEFAULT_RANGE_KEY,
+    custom: null,
+    invalid: false,
+  };
+}
+
+/** How the comparison period is chosen on the SEO page. */
+export type CompareMode = "previous" | "yoy" | "custom";
+
+export const SEO_COMPARE_PRESETS = [
+  { key: "previous", label: "Previous period" },
+  { key: "yoy", label: "Year over year" },
+  { key: "custom", label: "Custom" },
+] as const;
+
+export interface SeoCompareResolution {
+  compareRange: DateRange;
+  mode: CompareMode;
+  custom: { start: string; end: string } | null;
+  invalid: boolean;
+}
+
+/**
+ * Resolve the comparison period from the URL (`cmp`, plus `cmpStart`/`cmpEnd`
+ * for a custom compare) relative to the main range:
+ *  - "previous" (default) — the equivalent window immediately before `range`.
+ *  - "yoy" — the same window one year earlier.
+ *  - "custom" — explicit `cmpStart`/`cmpEnd`; falls back to "previous" if invalid.
+ */
+export function resolveSeoCompare(
+  sp: { cmp?: string | null; cmpStart?: string | null; cmpEnd?: string | null },
+  range: DateRange,
+): SeoCompareResolution {
+  const mode = (sp.cmp as CompareMode) ?? "previous";
+
+  if (mode === "yoy") {
+    return {
+      compareRange: { start: subYears(range.start, 1), end: subYears(range.end, 1) },
+      mode: "yoy",
+      custom: null,
+      invalid: false,
+    };
+  }
+
+  if (mode === "custom") {
+    const start = sp.cmpStart ? parseISO(sp.cmpStart) : null;
+    const end = sp.cmpEnd ? parseISO(sp.cmpEnd) : null;
+    const ok = !!start && !!end && isValid(start) && isValid(end) && end >= start;
+    if (ok) {
+      const s = new Date(start!);
+      s.setHours(0, 0, 0, 0);
+      const e = new Date(end!);
+      e.setHours(23, 59, 59, 999);
+      return { compareRange: { start: s, end: e }, mode: "custom", custom: { start: toISODate(s), end: toISODate(e) }, invalid: false };
+    }
+    return { compareRange: previousPeriod(range), mode: "previous", custom: null, invalid: true };
+  }
+
+  return { compareRange: previousPeriod(range), mode: "previous", custom: null, invalid: false };
+}
+
+/** Short phrase describing the comparison period, for the page description. */
+export function compareLabel(mode: CompareMode): string {
+  return mode === "yoy" ? "the same period last year" : mode === "custom" ? "a custom period" : "the previous period";
 }
 
 export const PRESET_RANGES = [
