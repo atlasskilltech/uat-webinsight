@@ -110,7 +110,7 @@ export function Topbar({
         <div className="relative ml-1" ref={menuRef}>
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-xs font-semibold uppercase text-accent-foreground focus-ring"
+            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-accent text-xs font-semibold uppercase text-accent-foreground focus-ring"
             title={user.name}
             aria-haspopup="menu"
             aria-expanded={menuOpen}

@@ -128,8 +128,7 @@ export default async function LoginPage({
 
           {/* Login card */}
           <div className="relative w-full max-w-md rounded-2xl bg-white p-7 shadow-xl ring-1 ring-slate-900/5 dark:bg-slate-900 dark:ring-white/10 sm:p-8">
-            <AtlasLogo tone="light" size="md" className="dark:hidden" />
-            <AtlasLogo tone="dark" size="md" className="hidden dark:inline-flex" />
+            <AtlasLogo tone="auto" size="md" />
 
             <h2 className="mt-6 text-2xl font-semibold leading-tight tracking-tight text-slate-900 dark:text-white">
               Welcome Back

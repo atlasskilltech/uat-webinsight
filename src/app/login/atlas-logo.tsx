@@ -15,15 +15,19 @@ export function AtlasLogo({
   size = "md",
   className = "",
 }: {
-  tone?: "light" | "dark";
+  // "auto" adapts to the current theme (navy in light, white in dark) in a
+  // single element — use it so a surface doesn't need two stacked logos.
+  tone?: "light" | "dark" | "auto";
   size?: "sm" | "md" | "lg";
   className?: string;
 }) {
   const mark = size === "lg" ? "h-12 w-12" : size === "sm" ? "h-9 w-9" : "h-11 w-11";
   const atlas = size === "lg" ? "text-[1.7rem]" : size === "sm" ? "text-lg" : "text-2xl";
   const sub = size === "lg" ? "text-base" : size === "sm" ? "text-[0.7rem]" : "text-sm";
-  const atlasColor = tone === "dark" ? "text-white" : "text-slate-900";
-  const subColor = tone === "dark" ? "text-slate-300" : "text-slate-600";
+  const atlasColor =
+    tone === "auto" ? "text-slate-900 dark:text-white" : tone === "dark" ? "text-white" : "text-slate-900";
+  const subColor =
+    tone === "auto" ? "text-slate-600 dark:text-slate-300" : tone === "dark" ? "text-slate-300" : "text-slate-600";
 
   return (
     <span className={`inline-flex items-center gap-2.5 ${className}`}>
