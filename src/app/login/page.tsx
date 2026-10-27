@@ -61,7 +61,14 @@ export default async function LoginPage({
 
         {/* Top row: brand + pill */}
         <div className="relative flex items-center justify-between gap-4">
-          <AtlasLogo tone="dark" size="md" />
+          <Image
+            src="/brand/atlas-logo-full.png"
+            alt="Atlas Web Insight"
+            width={1893}
+            height={608}
+            priority
+            className="h-11 w-auto xl:h-12"
+          />
           <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-slate-200 backdrop-blur">
             <BarChart3 className="h-3.5 w-3.5 text-sky-300" />
             Website &amp; Work Intelligence
@@ -166,20 +173,6 @@ export default async function LoginPage({
               </div>
             </div>
           </div>
-        </div>
-
-        {/* --- Atlas building imagery, anchored to the bottom of the panel --- */}
-        <div aria-hidden className="relative h-44 w-full shrink-0 sm:h-52">
-          <Image
-            src="/brand/atlas-building.jpg"
-            alt=""
-            fill
-            sizes="(min-width: 1024px) 40vw, 100vw"
-            priority
-            className="object-cover object-center"
-          />
-          {/* Blend the top seam of the photo into the panel background */}
-          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-indigo-100 via-indigo-50/70 to-transparent dark:from-slate-950 dark:via-slate-950/70" />
         </div>
       </section>
     </div>

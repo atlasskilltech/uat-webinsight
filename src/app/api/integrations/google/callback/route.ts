@@ -5,6 +5,7 @@ import { createId } from "@/lib/id";
 import { exchangeCode } from "@/lib/google";
 import { recordError } from "@/lib/integrations";
 import { getCurrentUser } from "@/lib/auth/session";
+import { baseUrl } from "@/lib/base-url";
 
 /**
  * OAuth callback. Exchanges the authorization code for tokens and stores them
@@ -13,7 +14,7 @@ import { getCurrentUser } from "@/lib/auth/session";
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const origin = url.origin;
+  const origin = baseUrl(request);
 
   // Admin-only: only an admin can complete the data-integration connection.
   const user = await getCurrentUser();

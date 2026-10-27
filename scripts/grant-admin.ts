@@ -13,12 +13,12 @@
  * or demotes anyone else.
  */
 import { loadEnvConfig } from "@next/env";
+import mysql from "mysql2/promise";
 import { BOOTSTRAP_ADMIN_EMAIL } from "../src/lib/auth/constants";
-import { execute, json, queryOne, getPool } from "../src/lib/db";
+import { getConnectionConfig } from "../src/lib/db-config";
 import { createId } from "../src/lib/id";
 
-// Load .env so DB_* / DATABASE_URL are available before the pool is created.
-// (The pool is created lazily on first query, after this runs.)
+// Load .env so DB_* / DATABASE_URL are available before connecting.
 loadEnvConfig(process.cwd());
 
 function isValidEmail(email: string): boolean {
@@ -34,45 +34,45 @@ async function main() {
     return;
   }
 
-  const existing = await queryOne<{ id: string }>(
-    "SELECT `id` FROM `User` WHERE `email` = ?",
-    [email],
-  );
-  let userId: string;
-  if (existing) {
-    await execute(
-      "UPDATE `User` SET `role`='admin', `status`='active' WHERE `email` = ?",
-      [email],
+  // Connect directly (don't import src/lib/db.ts — it is server-only and
+  // cannot be loaded from a standalone script).
+  const conn = await mysql.createConnection(getConnectionConfig());
+  try {
+    const [rows] = await conn.query("SELECT `id` FROM `User` WHERE `email` = ?", [email]);
+    const existing = (rows as { id: string }[])[0];
+    let userId: string;
+    if (existing) {
+      await conn.query("UPDATE `User` SET `role`='admin', `status`='active' WHERE `email` = ?", [email]);
+      userId = existing.id;
+      console.log(`Promoted existing user to active admin: ${email}`);
+    } else {
+      userId = createId();
+      await conn.query(
+        "INSERT INTO `User` (`id`,`email`,`name`,`role`,`status`) VALUES (?,?,?,'admin','active')",
+        [userId, email, name],
+      );
+      console.log(`Created active admin: ${email}`);
+    }
+
+    await conn.query(
+      "INSERT INTO `AdminAuditLog` (`id`,`actorEmail`,`action`,`targetUserId`,`targetEmail`,`metadata`) VALUES (?,?,?,?,?,?)",
+      [
+        createId(),
+        email,
+        "user.role_changed",
+        userId,
+        email,
+        JSON.stringify({ to: "admin", status: "active", via: "cli-grant-admin" }),
+      ],
     );
-    userId = existing.id;
-    console.log(`Promoted existing user to active admin: ${email}`);
-  } else {
-    userId = createId();
-    await execute(
-      "INSERT INTO `User` (`id`,`email`,`name`,`role`,`status`) VALUES (?,?,?,'admin','active')",
-      [userId, email, name],
-    );
-    console.log(`Created active admin: ${email}`);
+
+    console.log("Done. Sign in at /login with Google using this email.");
+  } finally {
+    await conn.end();
   }
-
-  await execute(
-    "INSERT INTO `AdminAuditLog` (`id`,`actorEmail`,`action`,`targetUserId`,`targetEmail`,`metadata`) VALUES (?,?,?,?,?,?)",
-    [
-      createId(),
-      email,
-      "user.role_changed",
-      userId,
-      email,
-      json({ to: "admin", status: "active", via: "cli-grant-admin" }),
-    ],
-  );
-
-  console.log("Done. Sign in at /login with Google using this email.");
 }
 
-main()
-  .catch((e) => {
-    console.error("grant-admin failed:", e instanceof Error ? e.message : e);
-    process.exitCode = 1;
-  })
-  .finally(() => getPool().end());
+main().catch((e) => {
+  console.error("grant-admin failed:", e instanceof Error ? e.message : e);
+  process.exitCode = 1;
+});
