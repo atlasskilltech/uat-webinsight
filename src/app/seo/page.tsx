@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { MousePointerClick, Eye, Percent, TrendingUp, Users, Activity, LayoutList } from "lucide-react";
 import { PageHeader, SectionTitle } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +32,13 @@ export default async function SeoPage({
   searchParams: Promise<{ range?: string; start?: string; end?: string; cmp?: string; cmpStart?: string; cmpEnd?: string }>;
 }) {
   const sp = await searchParams;
+  // Visited without an explicit range (e.g. via the sidebar link)? Restore the
+  // last-used filters saved by the date-range picker so the selection persists.
+  if (!sp.range) {
+    const saved = (await cookies()).get("seo_filters")?.value;
+    const qs = saved ? decodeURIComponent(saved) : "";
+    if (qs.includes("range=")) redirect(`/seo?${qs}`);
+  }
   const resolved = resolveSeoRange(sp);
   let range = resolved.range;
   const invalid = resolved.invalid;

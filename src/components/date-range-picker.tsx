@@ -121,8 +121,16 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
       next.delete("cmpEnd");
     }
 
+    const qs = next.toString();
+    // Remember the selection so returning to the page (e.g. via the sidebar
+    // link, which has no query params) restores it instead of the default.
+    try {
+      document.cookie = `seo_filters=${encodeURIComponent(qs)};path=/;max-age=31536000;samesite=lax`;
+    } catch {
+      /* cookies unavailable — fall back to URL only */
+    }
     setOpen(false);
-    router.push(`${pathname}?${next.toString()}`);
+    router.push(`${pathname}?${qs}`);
   };
 
   const rangeOptions = [...SEO_RANGE_PRESETS.map((p) => ({ key: p.key, label: p.label })), { key: "custom", label: "Custom" }];
