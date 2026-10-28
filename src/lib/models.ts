@@ -215,6 +215,7 @@ export interface ServerAsset {
   plan: string | null;
   environment: string | null;
   version: string | null;
+  url: string | null;
   status: string;
   sslExpiry: Date | null;
   details: JsonValue | null;

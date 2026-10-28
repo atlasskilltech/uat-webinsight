@@ -10,6 +10,7 @@ import {
   ScrollText,
   ShieldAlert,
   ShieldCheck,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -53,6 +54,16 @@ export interface OpsRow extends OpsLogFormValues {
 }
 
 type Tab = "inventory" | "log";
+
+/** Add a protocol so a bare domain (e.g. "example.com") links correctly. */
+function toHref(url: string): string {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+/** Strip the protocol for a compact display label. */
+function displayUrl(url: string): string {
+  return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
+}
 
 /** Days until an SSL/cert expiry; negative = past. */
 function daysUntil(d?: Date | string | null): number | null {
@@ -293,6 +304,18 @@ function AssetCard({
         </div>
         <StatusBadge options={ASSET_STATUSES} value={asset.status} dot />
       </div>
+
+      {asset.url && (
+        <a
+          href={toHref(asset.url)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex max-w-full items-center gap-1 text-xs font-medium text-accent hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{displayUrl(asset.url)}</span>
+        </a>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {asset.environment && <Badge tone="neutral">{asset.environment}</Badge>}

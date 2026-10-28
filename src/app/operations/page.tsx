@@ -56,6 +56,7 @@ export default async function OperationsPage({
     plan: a.plan,
     environment: a.environment,
     version: a.version,
+    url: a.url,
     status: a.status,
     sslExpiry: a.sslExpiry,
     notes: a.notes,

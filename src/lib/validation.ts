@@ -104,6 +104,7 @@ export const serverAssetSchema = z.object({
   plan: optionalString,
   environment: optionalString,
   version: optionalString,
+  url: optionalString,
   status: enumOf(ASSET_STATUS_VALUES, "active"),
   sslExpiry: optionalDate,
   notes: optionalString,
