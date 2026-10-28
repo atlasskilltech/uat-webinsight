@@ -51,6 +51,25 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
   const [cmpEnd, setCmpEnd] = useState<string>(urlCmpEnd ?? toISODate(subMonths(new Date(), 6)));
 
   const popRef = useRef<HTMLDivElement>(null);
+  const restored = useRef(false);
+
+  // Restore the last-used filters when the page is opened without any in the
+  // URL (e.g. via the sidebar link). Runs on the client, so it works even when
+  // the router serves a cached page — no hard refresh needed.
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    if (params.get(paramKey)) return; // URL already carries a filter
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem("seo_filters");
+    } catch {
+      /* storage unavailable */
+    }
+    if (saved && saved.includes("range=")) {
+      router.replace(`${pathname}?${saved}`);
+    }
+  }, [params, paramKey, pathname, router]);
 
   // Reset the local draft to the URL's current state whenever the popover opens.
   useEffect(() => {
@@ -125,9 +144,9 @@ export function DateRangePicker({ paramKey = "range" }: { paramKey?: string }) {
     // Remember the selection so returning to the page (e.g. via the sidebar
     // link, which has no query params) restores it instead of the default.
     try {
-      document.cookie = `seo_filters=${encodeURIComponent(qs)};path=/;max-age=31536000;samesite=lax`;
+      localStorage.setItem("seo_filters", qs);
     } catch {
-      /* cookies unavailable — fall back to URL only */
+      /* storage unavailable — fall back to URL only */
     }
     setOpen(false);
     router.push(`${pathname}?${qs}`);
