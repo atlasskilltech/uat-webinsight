@@ -18,6 +18,7 @@ export interface AssetFormValues {
   plan?: string | null;
   environment?: string | null;
   version?: string | null;
+  url?: string | null;
   status?: string;
   sslExpiry?: Date | string | null;
   notes?: string | null;
@@ -102,6 +103,20 @@ export function AssetForm({
           <Input name="version" defaultValue={asset?.version ?? ""} placeholder="e.g. 8.2" />
         </Field>
       </div>
+
+      <Field
+        label="Domain / URL"
+        hint="The domain or link for this asset — e.g. the website, hosting panel or API endpoint."
+        error={err("url")}
+      >
+        <Input
+          type="text"
+          name="url"
+          defaultValue={asset?.url ?? ""}
+          placeholder="e.g. atlasuniversity.edu.in"
+          inputMode="url"
+        />
+      </Field>
 
       <Field label="SSL / certificate expiry" hint="For SSL assets — used to warn before expiry." error={err("sslExpiry")}>
         <Input type="date" name="sslExpiry" defaultValue={dateInput(asset?.sslExpiry)} />

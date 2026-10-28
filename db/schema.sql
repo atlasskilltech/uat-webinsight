@@ -256,6 +256,7 @@ CREATE TABLE IF NOT EXISTS `ServerAsset` (
     `plan` VARCHAR(191) NULL,
     `environment` VARCHAR(191) NULL,
     `version` VARCHAR(191) NULL,
+    `url` VARCHAR(512) NULL,
     `status` VARCHAR(191) NOT NULL DEFAULT 'active',
     `sslExpiry` DATETIME(3) NULL,
     `details` JSON NULL,
@@ -417,3 +418,13 @@ CREATE TABLE IF NOT EXISTS `AppSettings` (
     `updatedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Migrations — additive column changes for databases created before a column
+-- existed. CREATE TABLE IF NOT EXISTS above only covers brand-new tables, so
+-- new columns on existing tables are added here. MariaDB's IF NOT EXISTS makes
+-- each ALTER idempotent, so db:init stays safe to re-run.
+-- ---------------------------------------------------------------------------
+
+-- ServerAsset.url — the domain / link for an asset (added 2026-10).
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `url` VARCHAR(512) NULL AFTER `version`;
