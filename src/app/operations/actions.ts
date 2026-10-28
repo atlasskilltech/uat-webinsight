@@ -16,6 +16,22 @@ function revalidateOps() {
   revalidatePath("/");
 }
 
+/**
+ * A submitted form represents the whole record, so a blank optional field
+ * means "clear it", not "leave it unchanged". Zod turns blanks into
+ * `undefined`, which buildInsert/buildUpdate skip — so without this an emptied
+ * field (e.g. a cleared provider) would silently keep its old value on edit.
+ * Converting `undefined` → `null` persists the blank (the columns are all
+ * nullable, so writing NULL matches the database default on insert too).
+ */
+function clearBlanks<T extends Record<string, unknown>>(data: T): T {
+  const out: Record<string, unknown> = { ...data };
+  for (const key of Object.keys(out)) {
+    if (out[key] === undefined) out[key] = null;
+  }
+  return out as T;
+}
+
 /** Build an INSERT for the given record, omitting undefined fields so the
  * database defaults apply (mirrors Prisma's create omission semantics). */
 function buildInsert(table: string, record: Record<string, unknown>) {
@@ -57,7 +73,7 @@ export async function createServerAsset(
   if (!parsed.success) return parsed.state;
   try {
     const id = createId();
-    const { sql, params } = buildInsert("ServerAsset", { id, ...parsed.data });
+    const { sql, params } = buildInsert("ServerAsset", { id, ...clearBlanks(parsed.data) });
     await execute(sql, params);
     revalidateOps();
     return successState("Asset added.", id);
@@ -75,7 +91,7 @@ export async function updateServerAsset(
   const parsed = parseForm(serverAssetSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
-    const { sql, params } = buildUpdate("ServerAsset", { ...parsed.data }, id);
+    const { sql, params } = buildUpdate("ServerAsset", clearBlanks(parsed.data), id);
     await execute(sql, params);
     revalidateOps();
     return successState("Asset updated.", id);
@@ -99,7 +115,7 @@ export async function createOpsLog(
   if (!parsed.success) return parsed.state;
   try {
     const id = createId();
-    const { sql, params } = buildInsert("OperationsLog", { id, ...parsed.data });
+    const { sql, params } = buildInsert("OperationsLog", { id, ...clearBlanks(parsed.data) });
     await execute(sql, params);
     revalidateOps();
     return successState("Log entry recorded.", id);
@@ -117,7 +133,7 @@ export async function updateOpsLog(
   const parsed = parseForm(opsLogSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
-    const { sql, params } = buildUpdate("OperationsLog", { ...parsed.data }, id);
+    const { sql, params } = buildUpdate("OperationsLog", clearBlanks(parsed.data), id);
     await execute(sql, params);
     revalidateOps();
     return successState("Log entry updated.", id);
