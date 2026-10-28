@@ -18,11 +18,11 @@
   --border: #e7e4df;
   --border-strong: #d8d4cd;
 
-  --accent: #4f46e5; /* indigo-600 */
-  --accent-hover: #4338ca;
+  --accent: #10b981; /* emerald-500 — brand */
+  --accent-hover: #059669; /* emerald-600 */
   --accent-foreground: #ffffff;
-  --accent-soft: #eef2ff;
-  --accent-soft-foreground: #4338ca;
+  --accent-soft: #ecfdf5; /* emerald-50 */
+  --accent-soft-foreground: #047857; /* emerald-700 */
 
   --sidebar: #0f1a34; /* deep navy */
   --sidebar-foreground: #e6e9f2;
@@ -42,7 +42,7 @@
   --accent-chart-2: #0ea5e9;
   --accent-chart-3: #14b8a6;
 
-  --ring: #a5b4fc;
+  --ring: #6ee7b7; /* emerald-300 */
   --radius: 0.75rem;
 }
 
@@ -57,11 +57,11 @@
   --border: #242c3a;
   --border-strong: #323b4d;
 
-  --accent: #818cf8; /* indigo-400 for contrast on dark */
-  --accent-hover: #a5b4fc;
+  --accent: #34d399; /* emerald-400 for contrast on dark */
+  --accent-hover: #6ee7b7; /* emerald-300 */
   --accent-foreground: #0b0e14;
-  --accent-soft: #1e2440;
-  --accent-soft-foreground: #c7d0ff;
+  --accent-soft: #0f2e24; /* deep emerald tint */
+  --accent-soft-foreground: #a7f3d0; /* emerald-200 */
 
   --sidebar: #090c13;
   --sidebar-foreground: #dfe3ec;
@@ -81,7 +81,7 @@
   --accent-chart-2: #38bdf8;
   --accent-chart-3: #2dd4bf;
 
-  --ring: #4f46e5;
+  --ring: #10b981;
 }
 
 /* Map tokens into Tailwind's utility space. */
