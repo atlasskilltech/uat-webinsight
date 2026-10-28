@@ -20,7 +20,7 @@ const FEATURES = [
   { icon: BarChart3, label: "Track\nPerformance", tint: "from-blue-500/20 to-blue-500/5 text-blue-300" },
   { icon: SearchCheck, label: "Improve\nSEO", tint: "from-teal-500/20 to-teal-500/5 text-teal-300" },
   { icon: FileText, label: "Manage\nContent", tint: "from-emerald-500/20 to-emerald-500/5 text-emerald-300" },
-  { icon: Zap, label: "Get\nActionable Insights", tint: "from-indigo-500/20 to-indigo-500/5 text-indigo-300" },
+  { icon: Zap, label: "Get\nActionable Insights", tint: "from-teal-500/20 to-teal-500/5 text-teal-300" },
 ];
 
 export default async function LoginPage({
@@ -42,7 +42,7 @@ export default async function LoginPage({
       <section className="relative isolate hidden flex-col justify-between overflow-hidden bg-[#0a1020] px-8 py-10 text-white lg:flex xl:px-14 xl:py-12">
         {/* Ambient gradients + curved lines */}
         <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -left-24 -top-24 h-96 w-96 rounded-full bg-indigo-600/20 blur-3xl motion-safe:animate-pulse" />
+          <div className="absolute -left-24 -top-24 h-96 w-96 rounded-full bg-emerald-600/20 blur-3xl motion-safe:animate-pulse" />
           <div className="absolute right-0 top-1/3 h-80 w-80 rounded-full bg-sky-500/10 blur-3xl" />
           <div className="absolute bottom-0 left-1/4 h-72 w-72 rounded-full bg-blue-700/20 blur-3xl" />
           <svg className="absolute inset-0 h-full w-full opacity-40" viewBox="0 0 800 900" fill="none" preserveAspectRatio="xMidYMid slice">
@@ -79,7 +79,7 @@ export default async function LoginPage({
           <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight xl:text-5xl">
             Smarter Insights
             <br />
-            <span className="bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-300 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-300 bg-clip-text text-transparent">
               A Stronger ATLAS
             </span>
           </h1>
@@ -107,7 +107,7 @@ export default async function LoginPage({
       </section>
 
       {/* ================= RIGHT — login panel ================================= */}
-      <section className="relative flex min-h-dvh flex-col overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-indigo-100 dark:from-slate-900 dark:via-slate-950 dark:to-indigo-950">
+      <section className="relative flex min-h-dvh flex-col overflow-hidden bg-gradient-to-br from-emerald-50 via-white to-emerald-100 dark:from-slate-900 dark:via-slate-950 dark:to-emerald-950">
         <div className="absolute right-4 top-4 z-20">
           <ThemeToggle />
         </div>
@@ -118,7 +118,7 @@ export default async function LoginPage({
           <div className="mb-6 w-full max-w-md text-center lg:hidden">
             <h1 className="text-2xl font-semibold leading-tight text-slate-900 dark:text-white">
               Smarter Insights,{" "}
-              <span className="bg-gradient-to-r from-blue-600 to-teal-500 bg-clip-text text-transparent dark:from-blue-400 dark:to-teal-300">
+              <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent dark:from-emerald-400 dark:to-teal-300">
                 A Stronger ATLAS
               </span>
             </h1>
@@ -131,7 +131,7 @@ export default async function LoginPage({
               Welcome Back
               <br />
               to{" "}
-              <span className="bg-gradient-to-r from-blue-600 to-teal-500 bg-clip-text text-transparent dark:from-blue-400 dark:to-teal-300">
+              <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent dark:from-emerald-400 dark:to-teal-300">
                 ATLAS WEB INSIGHT
               </span>
             </h2>
@@ -157,8 +157,8 @@ export default async function LoginPage({
             </div>
 
             {/* Secure access notice */}
-            <div className="flex items-start gap-3 rounded-xl bg-blue-50 p-4 dark:bg-blue-500/10">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-300">
+            <div className="flex items-start gap-3 rounded-xl bg-emerald-50 p-4 dark:bg-emerald-500/10">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-300">
                 <ShieldCheck className="h-5 w-5" />
               </span>
               <div>
