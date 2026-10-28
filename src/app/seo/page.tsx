@@ -14,9 +14,10 @@ import {
   getAnalyticsWithComparison,
   getTrend,
   getTopPages,
+  getLatestDataDate,
 } from "@/lib/metrics";
 import { getIntegrations } from "@/lib/integrations";
-import { resolveSeoRange, resolveSeoCompare, rangeLabel, compareLabel } from "@/lib/dates";
+import { resolveSeoRange, resolveSeoCompare, rangeLabel, compareLabel, utcDayWindow } from "@/lib/dates";
 import { formatNumber, formatPercent, formatPosition, truncate } from "@/lib/utils";
 import { explain } from "@/lib/glossary";
 
@@ -29,7 +30,15 @@ export default async function SeoPage({
   searchParams: Promise<{ range?: string; start?: string; end?: string; cmp?: string; cmpStart?: string; cmpEnd?: string }>;
 }) {
   const sp = await searchParams;
-  const { range, invalid } = resolveSeoRange(sp);
+  const resolved = resolveSeoRange(sp);
+  let range = resolved.range;
+  const invalid = resolved.invalid;
+  // "Latest day" (24h key): snap to the most recent day that actually has data,
+  // since daily GSC/GA4 data lags ~2-3 days so the literal last day is usually empty.
+  if (sp.range === "24h") {
+    const latest = await getLatestDataDate();
+    if (latest) range = utcDayWindow(latest);
+  }
   const { compareRange, mode: cmpMode } = resolveSeoCompare(sp, range);
 
   const [seo, ga, trend, topPages, integrations] = await Promise.all([

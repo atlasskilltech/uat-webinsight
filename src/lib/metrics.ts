@@ -220,6 +220,21 @@ export async function getTopPages(range: DateRange, limit = 8, opts: { scope?: D
   });
 }
 
+/** The most recent day that has site-wide SEO/GA data for the current scope. */
+export async function getLatestDataDate(): Promise<Date | null> {
+  const scope = await metricsScope();
+  const demo = demoFilter(scope);
+  const row = await queryOne<{ d: Date | null }>(
+    "SELECT MAX(`d`) AS `d` FROM (" +
+      "SELECT MAX(`startDate`) AS `d` FROM `SeoSnapshot` WHERE `isDemo`=? AND `query` IS NULL AND `pageId` IS NULL " +
+      "UNION ALL " +
+      "SELECT MAX(`startDate`) AS `d` FROM `AnalyticsSnapshot` WHERE `isDemo`=? AND `channel` IS NULL AND `pageId` IS NULL" +
+      ") t",
+    [demo, demo],
+  );
+  return row?.d ?? null;
+}
+
 /** Whether any non-demo SEO/GA data exists (for honest "connected" messaging). */
 export async function hasRealMetrics(): Promise<boolean> {
   const seo = await queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM `SeoSnapshot` WHERE `isDemo` = ?", [false]);

@@ -96,19 +96,48 @@ export function resolveRange(key?: string | null): { range: DateRange; key: stri
   }
 }
 
+/** Start of the given day in UTC (snapshots are stored at UTC midnight). */
+function startOfUtcDay(d: Date): Date {
+  const x = new Date(d);
+  x.setUTCHours(0, 0, 0, 0);
+  return x;
+}
+
+/** The full UTC day containing `d` (00:00:00 — 23:59:59.999). */
+export function utcDayWindow(d: Date): DateRange {
+  const start = new Date(d);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/**
+ * A trailing window whose start is snapped to the beginning of the UTC day, so
+ * daily snapshots stored at UTC midnight are always included (otherwise a
+ * window starting at the current time-of-day would drop that day's row — which
+ * made "24 hours" show nothing).
+ */
+function trailingDays(days: number): DateRange {
+  return { start: startOfUtcDay(subDays(new Date(), days)), end: new Date() };
+}
+function trailingMonths(months: number): DateRange {
+  return { start: startOfUtcDay(subMonths(new Date(), months)), end: new Date() };
+}
+
 /**
  * Preset keys offered by the SEO & Analytics date-range picker (Search
  * Console-style): short day windows plus trailing-month windows. Each carries a
  * `resolve()` that builds the concrete DateRange.
  */
 export const SEO_RANGE_PRESETS = [
-  { key: "24h", label: "24 hours", resolve: () => ({ start: subDays(new Date(), 1), end: new Date() }) },
-  { key: "7d", label: "7 days", resolve: () => lastNDays(7) },
-  { key: "28d", label: "28 days", resolve: () => lastNDays(28) },
-  { key: "3mo", label: "3 months", resolve: () => lastNMonths(3) },
-  { key: "6mo", label: "6 months", resolve: () => lastNMonths(6) },
-  { key: "12mo", label: "12 months", resolve: () => lastNMonths(12) },
-  { key: "16mo", label: "16 months", resolve: () => lastNMonths(16) },
+  { key: "24h", label: "Latest day", resolve: () => trailingDays(1) },
+  { key: "7d", label: "7 days", resolve: () => trailingDays(7) },
+  { key: "28d", label: "28 days", resolve: () => trailingDays(28) },
+  { key: "3mo", label: "3 months", resolve: () => trailingMonths(3) },
+  { key: "6mo", label: "6 months", resolve: () => trailingMonths(6) },
+  { key: "12mo", label: "12 months", resolve: () => trailingMonths(12) },
+  { key: "16mo", label: "16 months", resolve: () => trailingMonths(16) },
 ] as const;
 
 export const SEO_DEFAULT_RANGE_KEY = "6mo";
