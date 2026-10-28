@@ -103,6 +103,15 @@ function startOfUtcDay(d: Date): Date {
   return x;
 }
 
+/** The full UTC day containing `d` (00:00:00 — 23:59:59.999). */
+export function utcDayWindow(d: Date): DateRange {
+  const start = new Date(d);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+}
+
 /**
  * A trailing window whose start is snapped to the beginning of the UTC day, so
  * daily snapshots stored at UTC midnight are always included (otherwise a
@@ -122,7 +131,7 @@ function trailingMonths(months: number): DateRange {
  * `resolve()` that builds the concrete DateRange.
  */
 export const SEO_RANGE_PRESETS = [
-  { key: "24h", label: "24 hours", resolve: () => trailingDays(1) },
+  { key: "24h", label: "Latest day", resolve: () => trailingDays(1) },
   { key: "7d", label: "7 days", resolve: () => trailingDays(7) },
   { key: "28d", label: "28 days", resolve: () => trailingDays(28) },
   { key: "3mo", label: "3 months", resolve: () => trailingMonths(3) },
