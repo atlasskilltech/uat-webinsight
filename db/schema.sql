@@ -152,6 +152,7 @@ CREATE TABLE IF NOT EXISTS `SeoSnapshot` (
     `query` VARCHAR(191) NULL,
     `device` VARCHAR(191) NULL,
     `country` VARCHAR(191) NULL,
+    `granularity` VARCHAR(16) NOT NULL DEFAULT 'day',
     `isDemo` BOOLEAN NOT NULL DEFAULT false,
     `importBatchId` VARCHAR(191) NULL,
     `importedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -177,6 +178,7 @@ CREATE TABLE IF NOT EXISTS `AnalyticsSnapshot` (
     `engagementRate` DOUBLE NOT NULL DEFAULT 0,
     `avgEngagementSecs` DOUBLE NOT NULL DEFAULT 0,
     `channel` VARCHAR(191) NULL,
+    `granularity` VARCHAR(16) NOT NULL DEFAULT 'day',
     `isDemo` BOOLEAN NOT NULL DEFAULT false,
     `importBatchId` VARCHAR(191) NULL,
     `importedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -428,3 +430,9 @@ CREATE TABLE IF NOT EXISTS `AppSettings` (
 
 -- ServerAsset.url — the domain / link for an asset (added 2026-10).
 ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `url` VARCHAR(512) NULL AFTER `version`;
+
+-- SeoSnapshot/AnalyticsSnapshot.granularity — 'day' (daily snapshot) or 'hour'
+-- (hourly breakdown for the 24-hour view). Existing rows default to 'day', so
+-- daily aggregate queries keep working unchanged (added 2026-10).
+ALTER TABLE `SeoSnapshot` ADD COLUMN IF NOT EXISTS `granularity` VARCHAR(16) NOT NULL DEFAULT 'day' AFTER `country`;
+ALTER TABLE `AnalyticsSnapshot` ADD COLUMN IF NOT EXISTS `granularity` VARCHAR(16) NOT NULL DEFAULT 'day' AFTER `channel`;

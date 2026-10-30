@@ -14,10 +14,10 @@ import {
   getAnalyticsWithComparison,
   getTrend,
   getTopPages,
-  getLatestDataDate,
+  getLatestHourlyTime,
 } from "@/lib/metrics";
 import { getIntegrations } from "@/lib/integrations";
-import { resolveSeoRange, resolveSeoCompare, rangeLabel, compareLabel, utcDayWindow } from "@/lib/dates";
+import { resolveSeoRange, resolveSeoCompare, rangeLabel, compareLabel } from "@/lib/dates";
 import { formatNumber, formatPercent, formatPosition, truncate } from "@/lib/utils";
 import { explain } from "@/lib/glossary";
 
@@ -33,13 +33,22 @@ export default async function SeoPage({
   const resolved = resolveSeoRange(sp);
   let range = resolved.range;
   const invalid = resolved.invalid;
-  // "Latest day" (24h key): snap to the most recent day that actually has data,
-  // since daily GSC/GA4 data lags ~2-3 days so the literal last day is usually empty.
+  const isHourly = range.granularity === "hour";
+  // "24 hours" (hourly view): end the 24-hour window at the most recent hour
+  // that actually has data, since GSC/GA4 hourly data lags a few hours so the
+  // literal last hour is usually empty.
   if (sp.range === "24h") {
-    const latest = await getLatestDataDate();
-    if (latest) range = utcDayWindow(latest);
+    const latest = await getLatestHourlyTime();
+    if (latest) {
+      const end = new Date(latest);
+      range = { start: new Date(end.getTime() - 24 * 3_600_000), end, granularity: "hour" };
+    }
   }
-  const { compareRange, mode: cmpMode } = resolveSeoCompare(sp, range);
+  const resolvedCompare = resolveSeoCompare(sp, range);
+  // Keep the comparison period on the same granularity as the main range so an
+  // hourly view compares against hourly rows, not daily ones.
+  const compareRange = isHourly ? { ...resolvedCompare.compareRange, granularity: "hour" as const } : resolvedCompare.compareRange;
+  const cmpMode = resolvedCompare.mode;
 
   const [seo, ga, trend, topPages, integrations] = await Promise.all([
     getSeoWithComparison(range, { compareRange }),
@@ -64,6 +73,14 @@ export default async function SeoPage({
 
       <DataStatusBanner isDemo={isDemo} hasData={hasData} />
 
+      {isHourly && (
+        <div className="mb-5">
+          <InlineNote>
+            Showing the last 24 hours broken down by hour (times shown in UTC), matching the Search Console “24 hours” view. Hourly data is available for recent days only and updates with a short delay.
+          </InlineNote>
+        </div>
+      )}
+
       {invalid && (
         <div className="mb-5 rounded-lg border border-warning/30 bg-warning-soft/60 px-4 py-3 text-sm text-foreground">
           The custom date range was invalid (the end date was before the start date), so the default range is shown. Pick a valid range to try again.
@@ -85,7 +102,7 @@ export default async function SeoPage({
             <StatCard label="Average position" value={formatPosition(seo.current.position)} icon={TrendingUp} hint={explain("position")} delta={seo.delta.position} deltaGoodWhenUp={false} />
           </div>
           <Card className="mt-3">
-            <CardHeader><CardTitle>Clicks & impressions trend</CardTitle></CardHeader>
+            <CardHeader><CardTitle>{isHourly ? "Clicks & impressions by hour" : "Clicks & impressions trend"}</CardTitle></CardHeader>
             <CardContent><SearchTrend data={trend} /></CardContent>
           </Card>
         </>
@@ -109,7 +126,7 @@ export default async function SeoPage({
               <StatCard label="Engagement rate" value={formatPercent(ga.current.engagementRate)} icon={Percent} hint={explain("engagementRate")} delta={ga.delta.engagementRate} />
             </div>
             <Card className="mt-3">
-              <CardHeader><CardTitle>Views & active users trend</CardTitle></CardHeader>
+              <CardHeader><CardTitle>{isHourly ? "Views & active users by hour" : "Views & active users trend"}</CardTitle></CardHeader>
               <CardContent><VisitorTrend data={trend} /></CardContent>
             </Card>
           </>
@@ -118,7 +135,8 @@ export default async function SeoPage({
         )}
       </div>
 
-      {/* ---- Top pages ---- */}
+      {/* ---- Top pages (daily ranges only — per-page data isn't synced hourly) ---- */}
+      {!isHourly && (
       <div className="mt-8">
         <SectionTitle title="Top landing pages by search clicks" description="Pages receiving the most organic search clicks in this period." />
         <Card>
@@ -151,6 +169,7 @@ export default async function SeoPage({
           </InlineNote>
         </div>
       </div>
+      )}
     </div>
   );
 }

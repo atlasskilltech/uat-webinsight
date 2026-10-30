@@ -1,8 +1,8 @@
 import "server-only";
 import { query, queryOne } from "./db";
-import { type DateRange, previousPeriod, toISODate } from "./dates";
+import { type DateRange, previousPeriod, toISODate, toISOHour } from "./dates";
 import { percentChange, safeDivide } from "./utils";
-import { eachDayLabels } from "./series";
+import { eachDayLabels, eachHourLabels } from "./series";
 import { type DataScope, demoFilter, metricsScope } from "./data-scope";
 import type { WebsitePage } from "./models";
 
@@ -32,10 +32,11 @@ export async function getSeoSummary(
   opts: { pageId?: string | null; scope?: DataScope } = {},
 ): Promise<SeoSummary> {
   const scope = opts.scope ?? (await metricsScope());
+  const grain = range.granularity ?? "day";
   const rows = await query<{ clicks: number; impressions: number; position: number; isDemo: boolean }>(
     "SELECT `clicks`, `impressions`, `position`, `isDemo` FROM `SeoSnapshot` " +
-      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `isDemo` = ?",
-    [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `granularity` = ? AND `isDemo` = ?",
+    [range.start, range.end, opts.pageId ?? null, grain, demoFilter(scope)],
   );
   if (rows.length === 0) {
     return { clicks: 0, impressions: 0, ctr: 0, position: 0, hasData: false, isDemo: false };
@@ -60,13 +61,14 @@ export async function getAnalyticsSummary(
   opts: { pageId?: string | null; scope?: DataScope } = {},
 ): Promise<AnalyticsSummary> {
   const scope = opts.scope ?? (await metricsScope());
+  const grain = range.granularity ?? "day";
   const rows = await query<{
     views: number; activeUsers: number; sessions: number; engagedSessions: number;
     avgEngagementSecs: number; isDemo: boolean;
   }>(
     "SELECT `views`, `activeUsers`, `sessions`, `engagedSessions`, `avgEngagementSecs`, `isDemo` FROM `AnalyticsSnapshot` " +
-      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `channel` IS NULL AND `isDemo` = ?",
-    [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `channel` IS NULL AND `granularity` = ? AND `isDemo` = ?",
+    [range.start, range.end, opts.pageId ?? null, grain, demoFilter(scope)],
   );
   if (rows.length === 0) {
     return {
@@ -151,36 +153,39 @@ export async function getTrend(
   opts: { pageId?: string | null; scope?: DataScope } = {},
 ): Promise<TrendPoint[]> {
   const scope = opts.scope ?? (await metricsScope());
+  const grain = range.granularity ?? "day";
   const [seo, ga] = await Promise.all([
     query<{ startDate: Date; clicks: number; impressions: number }>(
       "SELECT `startDate`, `clicks`, `impressions` FROM `SeoSnapshot` " +
-        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `isDemo` = ? " +
+        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `granularity` = ? AND `isDemo` = ? " +
         "ORDER BY `startDate` ASC",
-      [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+      [range.start, range.end, opts.pageId ?? null, grain, demoFilter(scope)],
     ),
     query<{ startDate: Date; views: number; activeUsers: number }>(
       "SELECT `startDate`, `views`, `activeUsers` FROM `AnalyticsSnapshot` " +
-        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `channel` IS NULL AND `isDemo` = ? " +
+        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `channel` IS NULL AND `granularity` = ? AND `isDemo` = ? " +
         "ORDER BY `startDate` ASC",
-      [range.start, range.end, opts.pageId ?? null, demoFilter(scope)],
+      [range.start, range.end, opts.pageId ?? null, grain, demoFilter(scope)],
     ),
   ]);
 
+  // Hourly ranges bucket by UTC hour; daily ranges by UTC day.
+  const keyOf = grain === "hour" ? toISOHour : toISODate;
+  const labels = grain === "hour" ? eachHourLabels(range) : eachDayLabels(range);
+
   const map = new Map<string, TrendPoint>();
-  for (const label of eachDayLabels(range)) {
+  for (const label of labels) {
     map.set(label.iso, { date: label.short, clicks: 0, impressions: 0, views: 0, activeUsers: 0 });
   }
   for (const r of seo) {
-    const iso = toISODate(r.startDate);
-    const p = map.get(iso);
+    const p = map.get(keyOf(r.startDate));
     if (p) {
       p.clicks = (p.clicks ?? 0) + r.clicks;
       p.impressions = (p.impressions ?? 0) + r.impressions;
     }
   }
   for (const r of ga) {
-    const iso = toISODate(r.startDate);
-    const p = map.get(iso);
+    const p = map.get(keyOf(r.startDate));
     if (p) {
       p.views = (p.views ?? 0) + r.views;
       p.activeUsers = (p.activeUsers ?? 0) + r.activeUsers;
@@ -194,7 +199,7 @@ export async function getTopPages(range: DateRange, limit = 8, opts: { scope?: D
   const scope = opts.scope ?? (await metricsScope());
   const rows = await query<{ pageId: string; clicks: string | number; impressions: string | number }>(
     "SELECT `pageId`, SUM(`clicks`) AS `clicks`, SUM(`impressions`) AS `impressions` FROM `SeoSnapshot` " +
-      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` IS NOT NULL AND `query` IS NULL AND `isDemo` = ? " +
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` IS NOT NULL AND `query` IS NULL AND `granularity` = 'day' AND `isDemo` = ? " +
       "GROUP BY `pageId` ORDER BY SUM(`clicks`) DESC LIMIT ?",
     [range.start, range.end, demoFilter(scope), limit],
   );
@@ -226,9 +231,24 @@ export async function getLatestDataDate(): Promise<Date | null> {
   const demo = demoFilter(scope);
   const row = await queryOne<{ d: Date | null }>(
     "SELECT MAX(`d`) AS `d` FROM (" +
-      "SELECT MAX(`startDate`) AS `d` FROM `SeoSnapshot` WHERE `isDemo`=? AND `query` IS NULL AND `pageId` IS NULL " +
+      "SELECT MAX(`startDate`) AS `d` FROM `SeoSnapshot` WHERE `isDemo`=? AND `query` IS NULL AND `pageId` IS NULL AND `granularity`='day' " +
       "UNION ALL " +
-      "SELECT MAX(`startDate`) AS `d` FROM `AnalyticsSnapshot` WHERE `isDemo`=? AND `channel` IS NULL AND `pageId` IS NULL" +
+      "SELECT MAX(`startDate`) AS `d` FROM `AnalyticsSnapshot` WHERE `isDemo`=? AND `channel` IS NULL AND `pageId` IS NULL AND `granularity`='day'" +
+      ") t",
+    [demo, demo],
+  );
+  return row?.d ?? null;
+}
+
+/** The most recent HOUR that has hourly SEO/GA data for the current scope. */
+export async function getLatestHourlyTime(): Promise<Date | null> {
+  const scope = await metricsScope();
+  const demo = demoFilter(scope);
+  const row = await queryOne<{ d: Date | null }>(
+    "SELECT MAX(`d`) AS `d` FROM (" +
+      "SELECT MAX(`startDate`) AS `d` FROM `SeoSnapshot` WHERE `isDemo`=? AND `query` IS NULL AND `pageId` IS NULL AND `granularity`='hour' " +
+      "UNION ALL " +
+      "SELECT MAX(`startDate`) AS `d` FROM `AnalyticsSnapshot` WHERE `isDemo`=? AND `channel` IS NULL AND `pageId` IS NULL AND `granularity`='hour'" +
       ") t",
     [demo, demo],
   );

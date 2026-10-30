@@ -94,6 +94,7 @@ export interface SeoSnapshot {
   query: string | null;
   device: string | null;
   country: string | null;
+  granularity: string; // 'day' | 'hour'
   isDemo: boolean;
   importBatchId: string | null;
   importedAt: Date;
@@ -113,6 +114,7 @@ export interface AnalyticsSnapshot {
   engagementRate: number;
   avgEngagementSecs: number;
   channel: string | null;
+  granularity: string; // 'day' | 'hour'
   isDemo: boolean;
   importBatchId: string | null;
   importedAt: Date;
