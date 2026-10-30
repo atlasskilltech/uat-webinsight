@@ -35,6 +35,13 @@ export function fmtRelative(date?: Date | string | null): string {
 export interface DateRange {
   start: Date;
   end: Date;
+  /**
+   * Row granularity this range queries. "day" (default) reads daily snapshots;
+   * "hour" reads the hourly breakdown used by the Search Console-style
+   * "24 hours" view. It flows through previousPeriod so a comparison period
+   * matches the main range.
+   */
+  granularity?: "day" | "hour";
 }
 
 /** The current week (Mon–Sun). */
@@ -69,11 +76,33 @@ export function lastNMonths(n: number, now = new Date()): DateRange {
 
 /** The equivalent window immediately before the given range. */
 export function previousPeriod(range: DateRange): DateRange {
+  // Hourly ranges compare against the immediately preceding window of the same
+  // length (e.g. the previous 24 hours), not a calendar-day shift.
+  if (range.granularity === "hour") {
+    const ms = range.end.getTime() - range.start.getTime();
+    return {
+      start: new Date(range.start.getTime() - ms),
+      end: new Date(range.end.getTime() - ms),
+      granularity: "hour",
+    };
+  }
   const days = differenceInCalendarDays(range.end, range.start) + 1;
   return {
     start: subDays(range.start, days),
     end: subDays(range.end, days),
   };
+}
+
+/** ISO key truncated to the hour (yyyy-MM-ddTHH, UTC) — the hourly bucket id. */
+export function toISOHour(date: Date): string {
+  return date.toISOString().slice(0, 13);
+}
+
+/** A trailing N-hour window ending now, tagged for hourly granularity. */
+function trailingHours(hours: number): DateRange {
+  const end = new Date();
+  const start = new Date(end.getTime() - hours * 3_600_000);
+  return { start, end, granularity: "hour" };
 }
 
 export function rangeLabel(range: DateRange): string {
@@ -131,7 +160,7 @@ function trailingMonths(months: number): DateRange {
  * `resolve()` that builds the concrete DateRange.
  */
 export const SEO_RANGE_PRESETS = [
-  { key: "24h", label: "Latest day", resolve: () => trailingDays(1) },
+  { key: "24h", label: "24 hours", resolve: () => trailingHours(24) },
   { key: "7d", label: "7 days", resolve: () => trailingDays(7) },
   { key: "28d", label: "28 days", resolve: () => trailingDays(28) },
   { key: "3mo", label: "3 months", resolve: () => trailingMonths(3) },

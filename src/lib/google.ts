@@ -134,6 +134,9 @@ export async function fetchSearchConsole(
     endDate: string;
     dimensions?: string[];
     rowLimit?: number;
+    // "HOURLY_ALL" (case-insensitive) is required when grouping by the HOUR
+    // dimension; it returns the hourly breakdown including partial hours.
+    dataState?: string;
   },
 ): Promise<GscRow[]> {
   const site = encodeURIComponent(property);
