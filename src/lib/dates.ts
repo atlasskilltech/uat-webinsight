@@ -25,6 +25,21 @@ export function fmtDateTime(date?: Date | string | null): string {
   return fmtDate(date, "d MMM yyyy, HH:mm");
 }
 
+/**
+ * Format a date in UTC — used for SSL certificate expiry, whose `notAfter` is
+ * defined in UTC/GMT. Formatting in the viewer's local timezone would roll a
+ * late-in-the-day UTC expiry into the next calendar day, making every cert
+ * date look a day off.
+ */
+export function fmtDateUTC(date?: Date | string | null): string {
+  if (!date) return "—";
+  const d = typeof date === "string" ? parseISO(date) : date;
+  if (!isValid(d)) return "—";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  }).format(d);
+}
+
 export function fmtRelative(date?: Date | string | null): string {
   if (!date) return "—";
   const d = typeof date === "string" ? parseISO(date) : date;

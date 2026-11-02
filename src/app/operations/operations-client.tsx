@@ -30,7 +30,7 @@ import {
   VERIFICATION_STATUSES,
 } from "@/lib/enums";
 import { cn } from "@/lib/utils";
-import { fmtDate, fmtDateTime, fmtRelative } from "@/lib/dates";
+import { fmtDateTime, fmtRelative, fmtDateUTC } from "@/lib/dates";
 import { AssetForm, type AssetFormValues } from "./asset-form";
 import { OpsLogForm, type OpsLogFormValues } from "./ops-form";
 import { deleteServerAsset, deleteOpsLog } from "./actions";
@@ -81,14 +81,16 @@ function monitorBadge(state?: string | null): { tone: "success" | "danger" | "wa
   }
 }
 
-/** Days until an SSL/cert expiry; negative = past. */
+/** Days until an SSL/cert expiry; negative = past. Compared on UTC day
+ * boundaries, matching how the expiry date itself is shown (certs are UTC). */
 function daysUntil(d?: Date | string | null): number | null {
   if (!d) return null;
   const date = typeof d === "string" ? new Date(d) : d;
   if (Number.isNaN(date.getTime())) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((date.getTime() - today.getTime()) / 86400000);
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const expUTC = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  return Math.round((expUTC - todayUTC) / 86400000);
 }
 
 export function OperationsClient({
@@ -360,7 +362,7 @@ function AssetCard({
         )}>
           {sslTone === "success" ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
           <span>
-            Expires {fmtDate(asset.sslExpiry)}
+            Expires {fmtDateUTC(asset.sslExpiry)}
             {days != null && (days < 0 ? " · expired" : days <= 30 ? ` · in ${days}d` : "")}
           </span>
         </div>
