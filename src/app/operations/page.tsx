@@ -3,7 +3,7 @@ import { Server, AlertTriangle, ShieldAlert, Globe } from "lucide-react";
 import { query } from "@/lib/db";
 import type { ServerAsset, OperationsLog } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
-import { fmtDate } from "@/lib/dates";
+import { fmtDateUTC } from "@/lib/dates";
 import {
   OperationsClient,
   type AssetRow,
@@ -117,7 +117,7 @@ export default async function OperationsPage({
         <StatChip
           icon={ShieldAlert}
           label="Next SSL expiry"
-          value={nextSsl ? fmtDate(nextSsl) : "—"}
+          value={nextSsl ? fmtDateUTC(nextSsl) : "—"}
           tone="bg-warning-soft text-warning"
         />
       </div>

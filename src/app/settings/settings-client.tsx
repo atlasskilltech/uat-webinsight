@@ -177,10 +177,10 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
           <div className="border-t border-border pt-4">
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-2">Domain monitoring</p>
             <p className="mb-3 text-xs text-muted">
-              Root domains the university owns, one per line. Subdomains are auto-discovered from Certificate Transparency logs and health-checked (up/down + SSL expiry) every 30 minutes. Discovered domains appear in Backend &amp; Server → Server Inventory.
+              One entry per line. List <strong>root domains</strong> (e.g. atlasuniversity.edu.in) to auto-discover their subdomains from Certificate Transparency logs, and/or paste <strong>specific subdomains / UAT links</strong> (e.g. uat-webinsight.atlasskilltech.app) to monitor them directly — do this for anything behind a wildcard certificate, which can’t be auto-discovered. Everything listed is health-checked (up/down + SSL expiry) every 30 minutes and shown in Backend &amp; Server → Server Inventory.
             </p>
-            <Field label="Watched root domains" hint="One per line, e.g. atlasuniversity.edu.in" error={err("watchDomains")}>
-              <Textarea name="watchDomains" defaultValue={settings.watchDomains} rows={4} placeholder={"atlasuniversity.edu.in\natlasskilltech.app"} />
+            <Field label="Domains & subdomains to monitor" hint="One per line — root domains and/or specific hosts/UAT links" error={err("watchDomains")}>
+              <Textarea name="watchDomains" defaultValue={settings.watchDomains} rows={5} placeholder={"atlasuniversity.edu.in\natlasskilltech.app\nuat-webinsight.atlasskilltech.app"} />
             </Field>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
