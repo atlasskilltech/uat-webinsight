@@ -218,6 +218,12 @@ export interface ServerAsset {
   environment: string | null;
   version: string | null;
   url: string | null;
+  autoDiscovered: boolean;
+  monitorEnabled: boolean;
+  monitorState: string | null; // 'up' | 'down' | 'degraded' | 'unknown'
+  lastHttpStatus: number | null;
+  responseTimeMs: number | null;
+  lastCheckedAt: Date | null;
   status: string;
   sslExpiry: Date | null;
   details: JsonValue | null;
@@ -361,5 +367,6 @@ export interface AppSettings {
   timezone: string;
   gscProperty: string;
   ga4Property: string;
+  watchDomains: string | null;
   updatedAt: Date;
 }

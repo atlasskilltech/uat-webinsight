@@ -64,6 +64,7 @@ export default async function SettingsPage() {
             timezone: settings.timezone,
             gscProperty: settings.gscProperty,
             ga4Property: settings.ga4Property,
+            watchDomains: settings.watchDomains || "atlasuniversity.edu.in\natlasskilltech.app",
           }}
           integrations={integrations}
           batches={batches}

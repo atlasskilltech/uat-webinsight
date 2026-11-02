@@ -11,6 +11,7 @@ const DEFAULTS: AppSettings = {
   timezone: "Asia/Kolkata",
   gscProperty: "",
   ga4Property: "",
+  watchDomains: "",
   updatedAt: new Date(),
 };
 
