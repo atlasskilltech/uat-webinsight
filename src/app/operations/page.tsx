@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Server, AlertTriangle, ShieldAlert } from "lucide-react";
+import { Server, AlertTriangle, ShieldAlert, Globe } from "lucide-react";
 import { query } from "@/lib/db";
 import type { ServerAsset, OperationsLog } from "@/lib/models";
 import { PageHeader } from "@/components/ui/page-header";
@@ -61,6 +61,11 @@ export default async function OperationsPage({
     sslExpiry: a.sslExpiry,
     notes: a.notes,
     isDemo: a.isDemo,
+    autoDiscovered: a.autoDiscovered,
+    monitorState: a.monitorState,
+    lastHttpStatus: a.lastHttpStatus,
+    responseTimeMs: a.responseTimeMs,
+    lastCheckedAt: a.lastCheckedAt,
   }));
 
   const logs: OpsRow[] = logsRaw.map((l) => ({
@@ -81,6 +86,8 @@ export default async function OperationsPage({
   }));
 
   const activeAssets = assetsRaw.filter((a) => a.status === "active").length;
+  const monitored = assetsRaw.filter((a) => a.monitorState);
+  const domainsDown = monitored.filter((a) => a.monitorState === "down" || a.monitorState === "degraded").length;
   const openIncidents = logsRaw.filter(
     (l) => l.kind === "incident" && l.status !== "resolved",
   ).length;
@@ -98,8 +105,14 @@ export default async function OperationsPage({
         description="Document and track your hosting, infrastructure and operational work. This is a documentation and task-tracking system only — it does not connect to, or make changes on, any server."
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatChip icon={Server} label="Active assets" value={activeAssets} tone="bg-success-soft text-success" />
+        <StatChip
+          icon={Globe}
+          label={monitored.length > 0 ? `Domains down (of ${monitored.length})` : "Domains monitored"}
+          value={monitored.length > 0 ? domainsDown : "—"}
+          tone={domainsDown > 0 ? "bg-danger-soft text-danger" : "bg-success-soft text-success"}
+        />
         <StatChip icon={AlertTriangle} label="Open incidents" value={openIncidents} tone="bg-danger-soft text-danger" />
         <StatChip
           icon={ShieldAlert}

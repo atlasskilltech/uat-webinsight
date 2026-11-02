@@ -30,7 +30,7 @@ import {
   VERIFICATION_STATUSES,
 } from "@/lib/enums";
 import { cn } from "@/lib/utils";
-import { fmtDate, fmtDateTime } from "@/lib/dates";
+import { fmtDate, fmtDateTime, fmtRelative } from "@/lib/dates";
 import { AssetForm, type AssetFormValues } from "./asset-form";
 import { OpsLogForm, type OpsLogFormValues } from "./ops-form";
 import { deleteServerAsset, deleteOpsLog } from "./actions";
@@ -41,6 +41,11 @@ export interface AssetRow extends AssetFormValues {
   type: string;
   status: string;
   isDemo?: boolean;
+  autoDiscovered?: boolean;
+  monitorState?: string | null;
+  lastHttpStatus?: number | null;
+  responseTimeMs?: number | null;
+  lastCheckedAt?: Date | string | null;
 }
 
 export interface OpsRow extends OpsLogFormValues {
@@ -63,6 +68,17 @@ function toHref(url: string): string {
 /** Strip the protocol for a compact display label. */
 function displayUrl(url: string): string {
   return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
+}
+
+/** Live monitor state → badge tone + label. */
+function monitorBadge(state?: string | null): { tone: "success" | "danger" | "warning" | "neutral"; label: string } | null {
+  switch (state) {
+    case "up": return { tone: "success", label: "Up" };
+    case "down": return { tone: "danger", label: "Down" };
+    case "degraded": return { tone: "warning", label: "Degraded" };
+    case "unknown": return { tone: "neutral", label: "Unknown" };
+    default: return null;
+  }
 }
 
 /** Days until an SSL/cert expiry; negative = past. */
@@ -289,6 +305,7 @@ function AssetCard({
   onEdit: (a: AssetRow) => void;
   onDelete: (id: string) => void;
 }) {
+  const mon = monitorBadge(asset.monitorState);
   const days = daysUntil(asset.sslExpiry);
   const sslTone =
     days == null ? null : days < 0 ? "danger" : days <= 30 ? "warning" : "success";
@@ -297,13 +314,25 @@ function AssetCard({
     <Card className="p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h4 className="truncate text-sm font-semibold text-foreground">{asset.name}</h4>
+          <div className="flex items-center gap-1.5">
+            <h4 className="truncate text-sm font-semibold text-foreground">{asset.name}</h4>
+            {asset.autoDiscovered && <Badge tone="neutral">Auto</Badge>}
+          </div>
           <p className="mt-0.5 text-xs text-muted">
             {[asset.provider, asset.plan, asset.version].filter(Boolean).join(" · ") || "—"}
           </p>
         </div>
         <StatusBadge options={ASSET_STATUSES} value={asset.status} dot />
       </div>
+
+      {mon && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-2">
+          <Badge tone={mon.tone} dot>{mon.label}</Badge>
+          {asset.lastHttpStatus ? <span>HTTP {asset.lastHttpStatus}</span> : null}
+          {asset.responseTimeMs != null ? <span>· {asset.responseTimeMs} ms</span> : null}
+          {asset.lastCheckedAt ? <span>· checked {fmtRelative(asset.lastCheckedAt)}</span> : null}
+        </div>
+      )}
 
       {asset.url && (
         <a

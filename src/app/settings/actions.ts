@@ -154,6 +154,22 @@ export async function syncProvider(provider: Provider): Promise<FormState> {
 }
 
 /**
+ * "Run monitor now" — discover subdomains for every watched root domain and
+ * health-check all monitored domains/subdomains immediately, instead of
+ * waiting for the 30-minute scheduler. Admin-only.
+ */
+export async function runMonitorNow(): Promise<FormState> {
+  const denied = await assertAdmin();
+  if (denied) return denied;
+  const { runDomainMonitor } = await import("@/lib/domain-monitor");
+  const result = await runDomainMonitor({ discover: true });
+  revalidatePath("/operations");
+  revalidatePath("/settings");
+  revalidatePath("/");
+  return result.ok ? successState(result.message) : errorState(result.message);
+}
+
+/**
  * One-time full backfill: pull ~16 months of history (the GSC maximum; GA4
  * returns up to its retention). Heavier than the daily sync, so it is a
  * separate, explicit action rather than the default.

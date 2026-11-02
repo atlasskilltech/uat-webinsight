@@ -259,6 +259,12 @@ CREATE TABLE IF NOT EXISTS `ServerAsset` (
     `environment` VARCHAR(191) NULL,
     `version` VARCHAR(191) NULL,
     `url` VARCHAR(512) NULL,
+    `autoDiscovered` BOOLEAN NOT NULL DEFAULT false,
+    `monitorEnabled` BOOLEAN NOT NULL DEFAULT false,
+    `monitorState` VARCHAR(16) NULL,
+    `lastHttpStatus` INTEGER NULL,
+    `responseTimeMs` INTEGER NULL,
+    `lastCheckedAt` DATETIME(3) NULL,
     `status` VARCHAR(191) NOT NULL DEFAULT 'active',
     `sslExpiry` DATETIME(3) NULL,
     `details` JSON NULL,
@@ -417,6 +423,7 @@ CREATE TABLE IF NOT EXISTS `AppSettings` (
     `timezone` VARCHAR(191) NOT NULL DEFAULT 'Asia/Kolkata',
     `gscProperty` VARCHAR(191) NOT NULL DEFAULT '',
     `ga4Property` VARCHAR(191) NOT NULL DEFAULT '',
+    `watchDomains` TEXT NULL,
     `updatedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -436,3 +443,14 @@ ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `url` VARCHAR(512) NULL AFTER
 -- daily aggregate queries keep working unchanged (added 2026-10).
 ALTER TABLE `SeoSnapshot` ADD COLUMN IF NOT EXISTS `granularity` VARCHAR(16) NOT NULL DEFAULT 'day' AFTER `country`;
 ALTER TABLE `AnalyticsSnapshot` ADD COLUMN IF NOT EXISTS `granularity` VARCHAR(16) NOT NULL DEFAULT 'day' AFTER `channel`;
+
+-- Domain monitoring — live status for auto-discovered and manual domains/
+-- subdomains in the Server Inventory (added 2026-11).
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `autoDiscovered` BOOLEAN NOT NULL DEFAULT false AFTER `url`;
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `monitorEnabled` BOOLEAN NOT NULL DEFAULT false AFTER `autoDiscovered`;
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `monitorState` VARCHAR(16) NULL AFTER `monitorEnabled`;
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `lastHttpStatus` INTEGER NULL AFTER `monitorState`;
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `responseTimeMs` INTEGER NULL AFTER `lastHttpStatus`;
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `lastCheckedAt` DATETIME(3) NULL AFTER `responseTimeMs`;
+-- Root domains the monitor discovers subdomains under (newline/comma separated).
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `watchDomains` TEXT NULL AFTER `ga4Property`;
