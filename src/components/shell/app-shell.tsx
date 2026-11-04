@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import type { SafeUser } from "@/lib/auth/types";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { DomainAlertWatcher } from "./domain-alert-watcher";
 
 export function AppShell({
   children,
@@ -37,6 +38,9 @@ export function AppShell({
 
   return (
     <div className="flex h-dvh overflow-hidden">
+      {/* Fires "site down" pop-ups on every dashboard page (not just Server Inventory). */}
+      <DomainAlertWatcher />
+
       {/* Desktop sidebar */}
       <div className="hidden lg:block no-print">
         <Sidebar collapsed={collapsed} isAdmin={isAdmin} />
