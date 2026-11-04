@@ -85,6 +85,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const soundOnRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const prevStatesRef = useRef<Map<string, string>>(new Map());
+  const firstLoadRef = useRef(true);
 
   useEffect(() => {
     soundOnRef.current = soundOn;
@@ -117,11 +118,16 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
       const next = await checkMonitoredDomainsAction();
       if (!mounted.current) return;
 
-      // Detect domains that just went down (were a known non-down state before).
+      // Alert on any domain that is now down and wasn't down before — this
+      // covers a real up→down transition AND a newly added domain found down.
+      // Skip the very first load so existing down domains don't all alert at
+      // once when the panel opens (we only seed the baseline then).
       const prev = prevStatesRef.current;
-      const wentDown = next.filter(
-        (r) => r.monitorState === "down" && prev.has(r.id) && prev.get(r.id) !== "down",
-      );
+      const justLoaded = firstLoadRef.current;
+      firstLoadRef.current = false;
+      const wentDown = justLoaded
+        ? []
+        : next.filter((r) => r.monitorState === "down" && prev.get(r.id) !== "down");
       const map = new Map<string, string>();
       for (const r of next) map.set(r.id, r.monitorState ?? "");
       prevStatesRef.current = map;
