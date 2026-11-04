@@ -99,10 +99,15 @@ export function SeoBreakdowns({
             {tab === "pages"
               ? pages.map((p, i) =>
                   metricRow(
-                    <>
-                      <span className="font-medium">{p.page?.title ?? "Unknown page"}</span>
-                      <span className="block truncate text-xs text-muted-2">{truncate(p.page?.path ?? "", 60)}</span>
-                    </>,
+                    p.page?.title ? (
+                      <>
+                        <span className="font-medium">{p.page.title}</span>
+                        <span className="block truncate text-xs text-muted-2">{truncate(p.page.path ?? "", 70)}</span>
+                      </>
+                    ) : (
+                      // No stored title — show the URL path as the label, like Search Console does.
+                      <span className="block truncate font-medium">{truncate(p.page?.path ?? "(unknown)", 80)}</span>
+                    ),
                     p,
                     i,
                   ),
