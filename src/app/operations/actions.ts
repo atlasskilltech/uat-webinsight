@@ -115,10 +115,13 @@ export async function deleteServerAsset(id: string): Promise<void> {
 export async function addMonitoredDomain(_prev: FormState, formData: FormData): Promise<FormState> {
   const raw = String(formData.get("domain") ?? "");
   const { addMonitoredHost } = await import("@/lib/domain-monitor");
-  const host = await addMonitoredHost(raw);
-  if (!host) return errorState("Enter a valid domain, e.g. uat-webinsight.atlasskilltech.app");
+  const result = await addMonitoredHost(raw);
+  if (!result.ok) {
+    if (result.reason === "duplicate") return errorState(`${result.host} is already being monitored.`);
+    return errorState("Enter a valid domain, e.g. uat-webinsight.atlasskilltech.app");
+  }
   revalidateOps();
-  return successState(`Now monitoring ${host}.`);
+  return successState(`Now monitoring ${result.host}.`);
 }
 
 /**
