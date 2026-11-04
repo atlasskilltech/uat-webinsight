@@ -35,7 +35,7 @@ export async function getSeoSummary(
   const grain = range.granularity ?? "day";
   const rows = await query<{ clicks: number; impressions: number; position: number; isDemo: boolean }>(
     "SELECT `clicks`, `impressions`, `position`, `isDemo` FROM `SeoSnapshot` " +
-      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `granularity` = ? AND `isDemo` = ?",
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `device` IS NULL AND `country` IS NULL AND `granularity` = ? AND `isDemo` = ?",
     [range.start, range.end, opts.pageId ?? null, grain, demoFilter(scope)],
   );
   if (rows.length === 0) {
@@ -157,7 +157,7 @@ export async function getTrend(
   const [seo, ga] = await Promise.all([
     query<{ startDate: Date; clicks: number; impressions: number }>(
       "SELECT `startDate`, `clicks`, `impressions` FROM `SeoSnapshot` " +
-        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `granularity` = ? AND `isDemo` = ? " +
+        "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` <=> ? AND `query` IS NULL AND `device` IS NULL AND `country` IS NULL AND `granularity` = ? AND `isDemo` = ? " +
         "ORDER BY `startDate` ASC",
       [range.start, range.end, opts.pageId ?? null, grain, demoFilter(scope)],
     ),
@@ -197,9 +197,9 @@ export async function getTrend(
 /** Top landing pages by clicks for a range (site-wide page rows). */
 export async function getTopPages(range: DateRange, limit = 8, opts: { scope?: DataScope } = {}) {
   const scope = opts.scope ?? (await metricsScope());
-  const rows = await query<{ pageId: string; clicks: string | number; impressions: string | number }>(
-    "SELECT `pageId`, SUM(`clicks`) AS `clicks`, SUM(`impressions`) AS `impressions` FROM `SeoSnapshot` " +
-      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` IS NOT NULL AND `query` IS NULL AND `granularity` = 'day' AND `isDemo` = ? " +
+  const rows = await query<{ pageId: string; clicks: string | number; impressions: string | number; wpos: string | number }>(
+    "SELECT `pageId`, SUM(`clicks`) AS `clicks`, SUM(`impressions`) AS `impressions`, SUM(`position` * `impressions`) AS `wpos` FROM `SeoSnapshot` " +
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `pageId` IS NOT NULL AND `query` IS NULL AND `device` IS NULL AND `country` IS NULL AND `granularity` = 'day' AND `isDemo` = ? " +
       "GROUP BY `pageId` ORDER BY SUM(`clicks`) DESC LIMIT ?",
     [range.start, range.end, demoFilter(scope), limit],
   );
@@ -216,11 +216,92 @@ export async function getTopPages(range: DateRange, limit = 8, opts: { scope?: D
   return rows.map((r) => {
     const clicks = Number(r.clicks ?? 0);
     const impressions = Number(r.impressions ?? 0);
+    const wpos = Number(r.wpos ?? 0);
     return {
       page: pageMap.get(r.pageId),
       clicks,
       impressions,
       ctr: safeDivide(clicks, impressions) ?? 0,
+      position: impressions > 0 ? wpos / impressions : 0,
+    };
+  });
+}
+
+// --- GSC / GA4 breakdown tables (queries, countries, devices, channels) -----
+
+export interface SeoBreakdownRow {
+  key: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+/** Aggregate a GSC dimension (query/country/device) over a range: top rows by clicks. */
+async function getSeoBreakdown(
+  dimension: "query" | "country" | "device",
+  range: DateRange,
+  limit: number,
+  opts: { scope?: DataScope } = {},
+): Promise<SeoBreakdownRow[]> {
+  const scope = opts.scope ?? (await metricsScope());
+  const col = dimension; // validated literal, not user input
+  const rows = await query<{ k: string; clicks: string | number; impressions: string | number; wpos: string | number }>(
+    `SELECT \`${col}\` AS k, SUM(\`clicks\`) AS clicks, SUM(\`impressions\`) AS impressions, SUM(\`position\` * \`impressions\`) AS wpos FROM \`SeoSnapshot\` ` +
+      `WHERE \`startDate\` >= ? AND \`startDate\` <= ? AND \`${col}\` IS NOT NULL AND \`pageId\` IS NULL AND \`granularity\` = 'day' AND \`isDemo\` = ? ` +
+      `GROUP BY \`${col}\` ORDER BY SUM(\`clicks\`) DESC LIMIT ?`,
+    [range.start, range.end, demoFilter(scope), limit],
+  );
+  return rows.map((r) => {
+    const clicks = Number(r.clicks ?? 0);
+    const impressions = Number(r.impressions ?? 0);
+    const wpos = Number(r.wpos ?? 0);
+    return {
+      key: r.k,
+      clicks,
+      impressions,
+      ctr: safeDivide(clicks, impressions) ?? 0,
+      position: impressions > 0 ? wpos / impressions : 0,
+    };
+  });
+}
+
+export const getTopQueries = (range: DateRange, limit = 25, opts: { scope?: DataScope } = {}) =>
+  getSeoBreakdown("query", range, limit, opts);
+export const getTopCountries = (range: DateRange, limit = 25, opts: { scope?: DataScope } = {}) =>
+  getSeoBreakdown("country", range, limit, opts);
+export const getTopDevices = (range: DateRange, limit = 10, opts: { scope?: DataScope } = {}) =>
+  getSeoBreakdown("device", range, limit, opts);
+
+export interface ChannelRow {
+  key: string;
+  views: number;
+  activeUsers: number;
+  sessions: number;
+  engagementRate: number;
+}
+
+/** GA4 traffic by channel (Organic, Direct, Referral, …) over a range. */
+export async function getTopChannels(
+  range: DateRange,
+  limit = 12,
+  opts: { scope?: DataScope } = {},
+): Promise<ChannelRow[]> {
+  const scope = opts.scope ?? (await metricsScope());
+  const rows = await query<{ k: string; views: string | number; activeUsers: string | number; sessions: string | number; engaged: string | number }>(
+    "SELECT `channel` AS k, SUM(`views`) AS views, SUM(`activeUsers`) AS activeUsers, SUM(`sessions`) AS sessions, SUM(`engagedSessions`) AS engaged FROM `AnalyticsSnapshot` " +
+      "WHERE `startDate` >= ? AND `startDate` <= ? AND `channel` IS NOT NULL AND `pageId` IS NULL AND `granularity` = 'day' AND `isDemo` = ? " +
+      "GROUP BY `channel` ORDER BY SUM(`sessions`) DESC LIMIT ?",
+    [range.start, range.end, demoFilter(scope), limit],
+  );
+  return rows.map((r) => {
+    const sessions = Number(r.sessions ?? 0);
+    return {
+      key: r.k,
+      views: Number(r.views ?? 0),
+      activeUsers: Number(r.activeUsers ?? 0),
+      sessions,
+      engagementRate: safeDivide(Number(r.engaged ?? 0), sessions) ?? 0,
     };
   });
 }
@@ -231,7 +312,7 @@ export async function getLatestDataDate(): Promise<Date | null> {
   const demo = demoFilter(scope);
   const row = await queryOne<{ d: Date | null }>(
     "SELECT MAX(`d`) AS `d` FROM (" +
-      "SELECT MAX(`startDate`) AS `d` FROM `SeoSnapshot` WHERE `isDemo`=? AND `query` IS NULL AND `pageId` IS NULL AND `granularity`='day' " +
+      "SELECT MAX(`startDate`) AS `d` FROM `SeoSnapshot` WHERE `isDemo`=? AND `query` IS NULL AND `device` IS NULL AND `country` IS NULL AND `pageId` IS NULL AND `granularity`='day' " +
       "UNION ALL " +
       "SELECT MAX(`startDate`) AS `d` FROM `AnalyticsSnapshot` WHERE `isDemo`=? AND `channel` IS NULL AND `pageId` IS NULL AND `granularity`='day'" +
       ") t",
