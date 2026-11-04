@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Globe, Plus, RefreshCw, Trash2, ExternalLink } from "lucide-react";
+import { Globe, Plus, RefreshCw, Trash2, ExternalLink, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import type { DomainStatusRow } from "@/lib/domain-monitor";
 
 const REFRESH_MS = 10_000;
 type Filter = "all" | "up" | "down";
+type View = "cards" | "list";
 
 function stateTone(state?: string | null): { tone: "success" | "danger" | "warning" | "neutral"; label: string } {
   switch (state) {
@@ -42,6 +43,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const [rows, setRows] = useState<DomainStatusRow[]>(initial);
   const [input, setInput] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [view, setView] = useState<View>("cards");
   const [pending, startTransition] = useTransition();
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -148,9 +150,9 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         </Button>
       </div>
 
-      {/* Filter */}
+      {/* Filter + view toggle */}
       {rows.length > 0 && (
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <Segmented
             options={[
               { value: "all", label: `All (${rows.length})` },
@@ -160,15 +162,29 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
             value={filter}
             onChange={(v) => setFilter(v as Filter)}
           />
+          <Segmented
+            options={[
+              { value: "cards", label: "Cards", icon: <LayoutGrid className="h-4 w-4" /> },
+              { value: "list", label: "List", icon: <List className="h-4 w-4" /> },
+            ]}
+            value={view}
+            onChange={(v) => setView(v as View)}
+          />
         </div>
       )}
 
-      {/* List */}
+      {/* Content */}
       <div className="mt-4">
         {rows.length === 0 ? (
           <EmptyState icon={Globe} title="No domains monitored yet" description="Add a domain URL above to start tracking its up/down status live." />
         ) : visibleRows.length === 0 ? (
           <EmptyState icon={Globe} title={`No ${filter === "up" ? "up" : "down/degraded"} domains`} description="Switch the filter to see the others." />
+        ) : view === "cards" ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleRows.map((r) => (
+              <DomainCard key={r.id} r={r} onRemove={onRemove} />
+            ))}
+          </div>
         ) : (
           <div className="divide-y divide-border rounded-lg border border-border">
             {visibleRows.map((r) => {
@@ -206,5 +222,48 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         )}
       </div>
     </Card>
+  );
+}
+
+/** One domain as a card (grid view). */
+function DomainCard({
+  r,
+  onRemove,
+}: {
+  r: DomainStatusRow;
+  onRemove: (id: string, name: string) => void;
+}) {
+  const s = stateTone(r.monitorState);
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <div className="flex items-start justify-between gap-2">
+        <Badge tone={s.tone} dot>{s.label}</Badge>
+        <div className="flex items-center gap-1">
+          {r.autoDiscovered && <Badge tone="neutral">Auto</Badge>}
+          <Tooltip content="Stop monitoring">
+            <button
+              onClick={() => onRemove(r.id, r.name)}
+              className="rounded-md p-1 text-muted hover:bg-danger-soft hover:text-danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+      <a
+        href={hostHref(r.url, r.name)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 flex max-w-full items-center gap-1 text-sm font-medium text-foreground hover:text-accent hover:underline"
+      >
+        <span className="truncate">{r.name}</span>
+        <ExternalLink className="h-3 w-3 shrink-0 text-muted-2" />
+      </a>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-2">
+        {r.lastHttpStatus ? <span>HTTP {r.lastHttpStatus}</span> : null}
+        {r.responseTimeMs != null ? <span>{r.responseTimeMs} ms</span> : null}
+        {r.lastCheckedAt ? <span>checked {fmtRelative(r.lastCheckedAt)}</span> : <span>not checked yet</span>}
+      </div>
+    </div>
   );
 }
