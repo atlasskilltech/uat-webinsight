@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { MousePointerClick, Eye, Percent, TrendingUp, Users, Activity, LayoutList } from "lucide-react";
+import { MousePointerClick, Eye, Percent, TrendingUp, Users, Activity } from "lucide-react";
 import { PageHeader, SectionTitle } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -14,11 +14,16 @@ import {
   getAnalyticsWithComparison,
   getTrend,
   getTopPages,
+  getTopQueries,
+  getTopCountries,
+  getTopDevices,
+  getTopChannels,
   getLatestHourlyTime,
 } from "@/lib/metrics";
+import { SeoBreakdowns } from "./seo-breakdowns";
 import { getIntegrations } from "@/lib/integrations";
 import { resolveSeoRange, resolveSeoCompare, rangeLabel, compareLabel } from "@/lib/dates";
-import { formatNumber, formatPercent, formatPosition, truncate } from "@/lib/utils";
+import { formatNumber, formatPercent, formatPosition } from "@/lib/utils";
 import { explain } from "@/lib/glossary";
 
 export const metadata: Metadata = { title: "SEO & Website Analytics" };
@@ -50,11 +55,15 @@ export default async function SeoPage({
   const compareRange = isHourly ? { ...resolvedCompare.compareRange, granularity: "hour" as const } : resolvedCompare.compareRange;
   const cmpMode = resolvedCompare.mode;
 
-  const [seo, ga, trend, topPages, integrations] = await Promise.all([
+  const [seo, ga, trend, topPages, queries, countries, devices, channels, integrations] = await Promise.all([
     getSeoWithComparison(range, { compareRange }),
     getAnalyticsWithComparison(range, { compareRange }),
     getTrend(range),
-    getTopPages(range),
+    getTopPages(range, 25),
+    getTopQueries(range),
+    getTopCountries(range),
+    getTopDevices(range),
+    getTopChannels(range),
     getIntegrations(),
   ]);
 
@@ -129,40 +138,38 @@ export default async function SeoPage({
               <CardHeader><CardTitle>{isHourly ? "Views & active users by hour" : "Views & active users trend"}</CardTitle></CardHeader>
               <CardContent><VisitorTrend data={trend} /></CardContent>
             </Card>
+            {!isHourly && channels.length > 0 && (
+              <Card className="mt-3 overflow-hidden">
+                <CardHeader><CardTitle>Traffic by channel</CardTitle></CardHeader>
+                <Table>
+                  <THead>
+                    <tr><TH>Channel</TH><TH className="text-right">Sessions</TH><TH className="text-right">Active users</TH><TH className="text-right">Views</TH><TH className="text-right">Engagement</TH></tr>
+                  </THead>
+                  <TBody>
+                    {channels.map((c, i) => (
+                      <TR key={i}>
+                        <TD className="font-medium">{c.key || "(not set)"}</TD>
+                        <TD className="text-right tabular-nums">{formatNumber(c.sessions)}</TD>
+                        <TD className="text-right tabular-nums text-muted">{formatNumber(c.activeUsers)}</TD>
+                        <TD className="text-right tabular-nums text-muted">{formatNumber(c.views)}</TD>
+                        <TD className="text-right tabular-nums text-muted">{formatPercent(c.engagementRate)}</TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </Card>
+            )}
           </>
         ) : (
           <EmptyState icon={Users} title="No Analytics data" description="Connect GA4 or import a GA4 CSV to see visitor analytics." />
         )}
       </div>
 
-      {/* ---- Top pages (daily ranges only — per-page data isn't synced hourly) ---- */}
+      {/* ---- GSC breakdowns (daily ranges only — these dimensions aren't synced hourly) ---- */}
       {!isHourly && (
       <div className="mt-8">
-        <SectionTitle title="Top landing pages by search clicks" description="Pages receiving the most organic search clicks in this period." />
-        <Card>
-          {topPages.length === 0 ? (
-            <CardContent><EmptyState icon={LayoutList} title="No page-level data" description="Page-level rows appear when per-page data is imported or synced." /></CardContent>
-          ) : (
-            <Table>
-              <THead>
-                <tr><TH>Page</TH><TH className="text-right">Clicks</TH><TH className="text-right">Impressions</TH><TH className="text-right">CTR</TH></tr>
-              </THead>
-              <TBody>
-                {topPages.map((p, i) => (
-                  <TR key={i}>
-                    <TD className="max-w-md">
-                      <span className="font-medium">{p.page?.title ?? "Unknown page"}</span>
-                      <span className="block truncate text-xs text-muted-2">{truncate(p.page?.path, 60)}</span>
-                    </TD>
-                    <TD className="text-right tabular-nums">{formatNumber(p.clicks)}</TD>
-                    <TD className="text-right tabular-nums text-muted">{formatNumber(p.impressions)}</TD>
-                    <TD className="text-right tabular-nums text-muted">{formatPercent(p.ctr)}</TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </Card>
+        <SectionTitle title="Search performance breakdown" description="Top queries, pages, countries and devices for this period — like the Search Console Performance report." />
+        <SeoBreakdowns queries={queries} pages={topPages} countries={countries} devices={devices} />
         <div className="mt-3">
           <InlineNote>
             Search Console and Analytics measure different things and are shown separately. Search clicks come from Google results; views and users describe on-site behaviour. They will not match exactly.

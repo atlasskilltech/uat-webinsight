@@ -310,6 +310,102 @@ async function syncGa4Hourly(accessToken: string, property: string, trigger: str
 }
 
 /**
+ * Refresh a GSC breakdown dimension (query / country / device) for the window,
+ * stored as per-day rows with that dimension column set. Scoped by the
+ * dimension column so it never touches site-wide, per-page or other-dimension
+ * rows. Best-effort. The `dimension` is a fixed literal, never user input.
+ */
+async function syncGscBreakdown(
+  dimension: "query" | "country" | "device",
+  accessToken: string,
+  property: string,
+  start: Date,
+  end: Date,
+  trigger: string,
+): Promise<void> {
+  const rows = await withRetry(() =>
+    fetchSearchConsole(accessToken, property, {
+      startDate: fmt(start),
+      endDate: fmt(end),
+      dimensions: ["date", dimension],
+      rowLimit: 25000,
+    }),
+  );
+  if (rows.length === 0) return;
+
+  await transaction(async (conn) => {
+    const batchId = createId();
+    await conn.query(
+      "INSERT INTO `ImportBatch` (`id`,`source`,`propertyId`,`periodStart`,`periodEnd`,`isDemo`,`status`,`message`,`rowCount`) VALUES (?,?,?,?,?,?,?,?,?)",
+      [batchId, "gsc", property, start, end, false, "completed", `Auto sync ${dimension} (${trigger})`, rows.length],
+    );
+    await conn.query(
+      `DELETE FROM \`SeoSnapshot\` WHERE \`source\`=? AND \`propertyId\`=? AND \`isDemo\`=? AND \`granularity\`='day' AND \`pageId\` IS NULL AND \`${dimension}\` IS NOT NULL AND \`startDate\` >= ? AND \`startDate\` <= ?`,
+      ["gsc", property, false, start, end],
+    );
+    const values = rows
+      .map((r) => {
+        const d = new Date(r.keys[0]);
+        if (Number.isNaN(d.getTime())) return null;
+        // id,propertyId,source,startDate,endDate,clicks,impressions,ctr,position,<dimension>,granularity,isDemo,importBatchId
+        return [createId(), property, "gsc", d, d, r.clicks, r.impressions, r.ctr, r.position, r.keys[1] ?? "", "day", false, batchId];
+      })
+      .filter((v): v is (string | number | boolean | Date)[] => v !== null);
+    if (values.length > 0) {
+      await conn.query(
+        `INSERT INTO \`SeoSnapshot\` (\`id\`,\`propertyId\`,\`source\`,\`startDate\`,\`endDate\`,\`clicks\`,\`impressions\`,\`ctr\`,\`position\`,\`${dimension}\`,\`granularity\`,\`isDemo\`,\`importBatchId\`) VALUES ?`,
+        [values],
+      );
+    }
+  });
+}
+
+/**
+ * Refresh GA4 traffic-by-channel rows for the window (dimension
+ * sessionDefaultChannelGroup), stored per day with the channel column set.
+ * Best-effort.
+ */
+async function syncGa4Channels(accessToken: string, property: string, start: Date, end: Date, trigger: string): Promise<void> {
+  const { rows } = await withRetry(() =>
+    fetchGa4Report(accessToken, property, {
+      startDate: fmt(start),
+      endDate: fmt(end),
+      dimensions: ["date", "sessionDefaultChannelGroup"],
+      metrics: ["screenPageViews", "activeUsers", "sessions", "engagedSessions", "engagementRate", "averageSessionDuration"],
+    }),
+  );
+  if (rows.length === 0) return;
+
+  await transaction(async (conn) => {
+    const batchId = createId();
+    await conn.query(
+      "INSERT INTO `ImportBatch` (`id`,`source`,`propertyId`,`periodStart`,`periodEnd`,`isDemo`,`status`,`message`,`rowCount`) VALUES (?,?,?,?,?,?,?,?,?)",
+      [batchId, "ga4", property, start, end, false, "completed", `Auto sync channels (${trigger})`, rows.length],
+    );
+    await conn.query(
+      "DELETE FROM `AnalyticsSnapshot` WHERE `source`=? AND `propertyId`=? AND `isDemo`=? AND `granularity`='day' AND `pageId` IS NULL AND `channel` IS NOT NULL AND `startDate` >= ? AND `startDate` <= ?",
+      ["ga4", property, false, start, end],
+    );
+    const values = rows
+      .map((r) => {
+        const raw = r.dimensionValues[0].value; // YYYYMMDD
+        if (!/^\d{8}$/.test(raw)) return null;
+        const d = new Date(`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`);
+        const channel = r.dimensionValues[1]?.value ?? "(not set)";
+        const m = r.metricValues.map((v) => Number(v.value));
+        return [createId(), property, "ga4", d, d, m[0] ?? 0, m[1] ?? 0, m[2] ?? 0, m[3] ?? 0, m[4] ?? 0, m[5] ?? 0, channel, "day", false, batchId];
+      })
+      .filter((v): v is (string | number | boolean | Date)[] => v !== null);
+    if (values.length > 0) {
+      await conn.query(
+        "INSERT INTO `AnalyticsSnapshot` (`id`,`propertyId`,`source`,`startDate`,`endDate`,`views`,`activeUsers`,`sessions`,`engagedSessions`,`engagementRate`,`avgEngagementSecs`,`channel`,`granularity`,`isDemo`,`importBatchId`) VALUES ?",
+        [values],
+      );
+    }
+  });
+}
+
+/**
  * Fetch recent metrics for one provider and refresh the stored real rows for
  * the synced window. Safe to call repeatedly. Never throws for expected
  * failures — returns a result the caller can report.
@@ -407,6 +503,15 @@ export async function runGoogleSync(
       } catch (e) {
         console.error("GSC hourly sync failed:", e instanceof Error ? e.message : e);
       }
+      // Breakdown tables (queries / countries / devices) — best-effort, each
+      // isolated so one failure doesn't block the others.
+      for (const dim of ["query", "country", "device"] as const) {
+        try {
+          await syncGscBreakdown(dim, tokens.access_token, property, start, end, opts.trigger);
+        } catch (e) {
+          console.error(`GSC ${dim} sync failed:`, e instanceof Error ? e.message : e);
+        }
+      }
     } else {
       const { rows } = await withRetry(() =>
         fetchGa4Report(tokens.access_token, property, {
@@ -445,6 +550,12 @@ export async function runGoogleSync(
         await syncGa4Hourly(tokens.access_token, property, opts.trigger);
       } catch (e) {
         console.error("GA4 hourly sync failed:", e instanceof Error ? e.message : e);
+      }
+      // Traffic-by-channel breakdown — best-effort.
+      try {
+        await syncGa4Channels(tokens.access_token, property, start, end, opts.trigger);
+      } catch (e) {
+        console.error("GA4 channel sync failed:", e instanceof Error ? e.message : e);
       }
     }
 
