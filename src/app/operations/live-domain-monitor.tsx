@@ -17,6 +17,8 @@ import { addMonitoredDomain, checkMonitoredDomainsAction, deleteServerAsset } fr
 import type { DomainStatusRow } from "@/lib/domain-monitor";
 
 const REFRESH_MS = 10_000;
+// Remembers the user's alert on/off choice across reloads and logins.
+const SOUND_PREF_KEY = "live-monitor-alerts";
 type Filter = "all" | "up" | "degraded" | "down" | "checking";
 type View = "cards" | "list";
 
@@ -91,26 +93,62 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     soundOnRef.current = soundOn;
   }, [soundOn]);
 
+  // Lazily create + resume the AudioContext. Browsers require a user gesture
+  // to start audio, so when the preference is restored as "on" at load time we
+  // can't resume yet — instead we arm this to fire on the first interaction.
+  const unlockAudio = () => {
+    try {
+      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return null;
+      if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+      void audioCtxRef.current.resume();
+      return audioCtxRef.current;
+    } catch {
+      return null; // audio unavailable — the toast alert still works
+    }
+  };
+
   // Create/resume the AudioContext on the (user-gesture) toggle so browsers
   // allow the sound to play; play a confirmation blip when turning it on.
+  // Persist the choice so it survives reloads, re-logins and tab close/reopen.
   const toggleSound = () => {
-    setSoundOn((on) => {
-      const next = !on;
-      if (next) {
-        try {
-          const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-          if (Ctx) {
-            if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
-            void audioCtxRef.current.resume();
-            playAlertTune(audioCtxRef.current);
-          }
-        } catch {
-          /* audio unavailable — the toast alert still works */
-        }
-      }
-      return next;
-    });
+    const next = !soundOn;
+    setSoundOn(next);
+    try {
+      localStorage.setItem(SOUND_PREF_KEY, next ? "on" : "off");
+    } catch {
+      /* storage unavailable — the choice just won't persist */
+    }
+    if (next) {
+      const ctx = unlockAudio();
+      if (ctx) playAlertTune(ctx);
+    }
   };
+
+  // Restore the saved alert preference on load (after logout/login or reopening
+  // the page). If it was on, show it on and unlock audio on the first gesture.
+  useEffect(() => {
+    let saved = false;
+    try {
+      saved = localStorage.getItem(SOUND_PREF_KEY) === "on";
+    } catch {
+      /* storage unavailable — default to off */
+    }
+    if (!saved) return;
+    setSoundOn(true);
+    if (audioCtxRef.current) return; // already unlocked this session
+    const onGesture = () => {
+      unlockAudio();
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+    };
+    window.addEventListener("pointerdown", onGesture);
+    window.addEventListener("keydown", onGesture);
+    return () => {
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+    };
+  }, []);
 
   const poll = async () => {
     setRefreshing(true);
