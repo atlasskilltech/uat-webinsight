@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Globe, Plus, RefreshCw, Trash2, ExternalLink, LayoutGrid, List } from "lucide-react";
+import { Globe, Plus, RefreshCw, Trash2, ExternalLink, LayoutGrid, List, Bell, BellOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +39,30 @@ function hostHref(url: string | null, name: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
 }
 
+/** Synthesize a short "site down" alert tune via the Web Audio API (no asset). */
+function playAlertTune(ctx: AudioContext): void {
+  const now = ctx.currentTime;
+  // A descending three-note alert — attention-grabbing but short.
+  const notes = [
+    { f: 988, t: 0 },
+    { f: 740, t: 0.18 },
+    { f: 554, t: 0.36 },
+  ];
+  for (const n of notes) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = n.f;
+    gain.gain.setValueAtTime(0.0001, now + n.t);
+    gain.gain.exponentialRampToValueAtTime(0.35, now + n.t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + n.t + 0.16);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now + n.t);
+    osc.stop(now + n.t + 0.18);
+  }
+}
+
 /**
  * Live domain monitor for the Server Inventory. Add a domain/URL and it is
  * health-checked automatically; the whole list auto-refreshes every 30 seconds
@@ -52,16 +76,74 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const [pending, startTransition] = useTransition();
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [soundOn, setSoundOn] = useState(false);
   const toast = useToast();
   const mounted = useRef(true);
+  // Sound alert plumbing: a ref for the current soundOn (the poll closure is
+  // created once), the unlocked AudioContext, and the last-seen state per
+  // domain so we can detect a fresh transition into "down".
+  const soundOnRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const prevStatesRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    soundOnRef.current = soundOn;
+  }, [soundOn]);
+
+  // Create/resume the AudioContext on the (user-gesture) toggle so browsers
+  // allow the sound to play; play a confirmation blip when turning it on.
+  const toggleSound = () => {
+    setSoundOn((on) => {
+      const next = !on;
+      if (next) {
+        try {
+          const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (Ctx) {
+            if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+            void audioCtxRef.current.resume();
+            playAlertTune(audioCtxRef.current);
+          }
+        } catch {
+          /* audio unavailable — the toast alert still works */
+        }
+      }
+      return next;
+    });
+  };
 
   const poll = async () => {
     setRefreshing(true);
     try {
       const next = await checkMonitoredDomainsAction();
-      if (mounted.current) {
-        setRows(next);
-        setUpdatedAt(Date.now());
+      if (!mounted.current) return;
+
+      // Detect domains that just went down (were a known non-down state before).
+      const prev = prevStatesRef.current;
+      const wentDown = next.filter(
+        (r) => r.monitorState === "down" && prev.has(r.id) && prev.get(r.id) !== "down",
+      );
+      const map = new Map<string, string>();
+      for (const r of next) map.set(r.id, r.monitorState ?? "");
+      prevStatesRef.current = map;
+
+      setRows(next);
+      setUpdatedAt(Date.now());
+
+      if (wentDown.length > 0) {
+        toast(
+          wentDown.length === 1
+            ? `${wentDown[0].name} is down`
+            : `${wentDown.length} domains just went down`,
+          "error",
+        );
+        if (soundOnRef.current && audioCtxRef.current) {
+          try {
+            void audioCtxRef.current.resume();
+            playAlertTune(audioCtxRef.current);
+          } catch {
+            /* ignore audio errors */
+          }
+        }
       }
     } catch {
       /* transient — keep showing the last known state */
@@ -70,7 +152,8 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     }
   };
 
-  // Refresh on mount, then every 30 seconds while the page is open.
+  // Refresh on mount, then every 10 seconds while the page is open. The
+  // interval is set once; poll() reads live values (soundOn, states) via refs.
   useEffect(() => {
     mounted.current = true;
     void poll();
@@ -79,6 +162,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
       mounted.current = false;
       clearInterval(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onAdd = () => {
@@ -152,9 +236,25 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-2">
-          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-          <span>
+        <div className="flex items-center gap-3 text-xs text-muted-2">
+          <Tooltip content={soundOn ? "Sound alert on — plays when a site goes down" : "Enable a sound alert when a site goes down"}>
+            <button
+              type="button"
+              onClick={toggleSound}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border px-2 py-1 font-medium transition-colors",
+                soundOn
+                  ? "border-accent/40 bg-accent-soft text-accent-soft-foreground"
+                  : "border-border text-muted hover:bg-surface-hover hover:text-foreground",
+              )}
+              aria-pressed={soundOn}
+            >
+              {soundOn ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+              {soundOn ? "Alerts on" : "Alerts off"}
+            </button>
+          </Tooltip>
+          <span className="inline-flex items-center gap-1">
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
             Auto-refreshing every 10s{updatedAt ? ` · updated ${fmtRelative(new Date(updatedAt))}` : ""}
           </span>
         </div>
