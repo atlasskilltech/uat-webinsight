@@ -7,6 +7,7 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Search } from "lucide-react";
 import { formatNumber, formatPercent, formatPosition, truncate } from "@/lib/utils";
+import { countryName } from "@/lib/countries";
 
 export interface BreakdownRow {
   key: string;
@@ -115,7 +116,11 @@ export function SeoBreakdowns({
               : current.map((r, i) =>
                   metricRow(
                     <span className="truncate font-medium">
-                      {tab === "devices" ? deviceLabel((r as BreakdownRow).key) : (r as BreakdownRow).key || "(not set)"}
+                      {tab === "devices"
+                        ? deviceLabel((r as BreakdownRow).key)
+                        : tab === "countries"
+                          ? countryName((r as BreakdownRow).key)
+                          : (r as BreakdownRow).key || "(not set)"}
                     </span>,
                     r,
                     i,
