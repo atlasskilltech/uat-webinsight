@@ -132,7 +132,7 @@ export function AssetForm({
             Cancel
           </Button>
         )}
-        <SubmitButton>{editing ? "Save changes" : "Add asset"}</SubmitButton>
+        <SubmitButton>{editing ? "Save changes" : "Add infrastructure"}</SubmitButton>
       </div>
     </form>
   );
