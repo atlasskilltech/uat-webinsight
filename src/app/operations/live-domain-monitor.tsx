@@ -17,8 +17,13 @@ import { addMonitoredDomain, checkMonitoredDomainsAction, deleteServerAsset } fr
 import type { DomainStatusRow } from "@/lib/domain-monitor";
 
 const REFRESH_MS = 10_000;
-type Filter = "all" | "up" | "down";
+type Filter = "all" | "up" | "degraded" | "down" | "checking";
 type View = "cards" | "list";
+
+/** A domain that hasn't produced a concrete up/down/degraded state yet. */
+function isChecking(state?: string | null): boolean {
+  return !["up", "down", "degraded"].includes(state ?? "");
+}
 
 function stateTone(state?: string | null): { tone: "success" | "danger" | "warning" | "neutral"; label: string } {
   switch (state) {
@@ -102,12 +107,34 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   };
 
   const upCount = rows.filter((r) => r.monitorState === "up").length;
-  const downCount = rows.filter((r) => r.monitorState === "down" || r.monitorState === "degraded").length;
+  const degradedCount = rows.filter((r) => r.monitorState === "degraded").length;
+  const downCount = rows.filter((r) => r.monitorState === "down").length;
+  const checkingCount = rows.filter((r) => isChecking(r.monitorState)).length;
+
+  // Status filter tabs appear only for states that currently have domains.
+  const filterTabs = [
+    { value: "all", label: `All (${rows.length})` },
+    ...(upCount ? [{ value: "up", label: `Up (${upCount})` }] : []),
+    ...(degradedCount ? [{ value: "degraded", label: `Degraded (${degradedCount})` }] : []),
+    ...(downCount ? [{ value: "down", label: `Down (${downCount})` }] : []),
+    ...(checkingCount ? [{ value: "checking", label: `Checking (${checkingCount})` }] : []),
+  ];
+
+  // If the active filter's tab disappears (its count dropped to 0 on a
+  // refresh), fall back to All so nothing shows a stale/empty view.
+  useEffect(() => {
+    const counts: Record<Filter, number> = { all: rows.length, up: upCount, degraded: degradedCount, down: downCount, checking: checkingCount };
+    if (filter !== "all" && counts[filter] === 0) setFilter("all");
+  }, [filter, rows.length, upCount, degradedCount, downCount, checkingCount]);
 
   const visibleRows = rows.filter((r) => {
-    if (filter === "up") return r.monitorState === "up";
-    if (filter === "down") return r.monitorState === "down" || r.monitorState === "degraded";
-    return true;
+    switch (filter) {
+      case "up": return r.monitorState === "up";
+      case "degraded": return r.monitorState === "degraded";
+      case "down": return r.monitorState === "down";
+      case "checking": return isChecking(r.monitorState);
+      default: return true;
+    }
   });
 
   return (
@@ -120,7 +147,8 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
           <div>
             <h3 className="text-sm font-semibold text-foreground">Live domain monitor</h3>
             <p className="text-xs text-muted">
-              {rows.length} monitored · {upCount} up · {downCount} down/degraded
+              {rows.length} monitored · {upCount} up · {degradedCount} degraded · {downCount} down
+              {checkingCount ? ` · ${checkingCount} checking` : ""}
             </p>
           </div>
         </div>
@@ -154,11 +182,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
       {rows.length > 0 && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <Segmented
-            options={[
-              { value: "all", label: `All (${rows.length})` },
-              { value: "up", label: `Up (${upCount})` },
-              { value: "down", label: `Down (${downCount})` },
-            ]}
+            options={filterTabs}
             value={filter}
             onChange={(v) => setFilter(v as Filter)}
           />
@@ -178,7 +202,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         {rows.length === 0 ? (
           <EmptyState icon={Globe} title="No domains monitored yet" description="Add a domain URL above to start tracking its up/down status live." />
         ) : visibleRows.length === 0 ? (
-          <EmptyState icon={Globe} title={`No ${filter === "up" ? "up" : "down/degraded"} domains`} description="Switch the filter to see the others." />
+          <EmptyState icon={Globe} title={`No ${filter} domains`} description="Switch the filter to see the others." />
         ) : view === "cards" ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {visibleRows.map((r) => (
