@@ -59,11 +59,11 @@ export default async function SeoPage({
     getSeoWithComparison(range, { compareRange }),
     getAnalyticsWithComparison(range, { compareRange }),
     getTrend(range),
-    getTopPages(range, 25),
-    getTopQueries(range),
-    getTopCountries(range),
-    getTopDevices(range),
-    getTopChannels(range),
+    getTopPages(range, 1000),
+    getTopQueries(range, 1000),
+    getTopCountries(range, 1000),
+    getTopDevices(range, 50),
+    getTopChannels(range, 50),
     getIntegrations(),
   ]);
 
