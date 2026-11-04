@@ -33,7 +33,9 @@ import { cn } from "@/lib/utils";
 import { fmtDateTime, fmtRelative, fmtDateUTC } from "@/lib/dates";
 import { AssetForm, type AssetFormValues } from "./asset-form";
 import { OpsLogForm, type OpsLogFormValues } from "./ops-form";
+import { LiveDomainMonitor } from "./live-domain-monitor";
 import { deleteServerAsset, deleteOpsLog } from "./actions";
+import type { DomainStatusRow } from "@/lib/domain-monitor";
 
 export interface AssetRow extends AssetFormValues {
   id: string;
@@ -96,11 +98,13 @@ function daysUntil(d?: Date | string | null): number | null {
 export function OperationsClient({
   assets,
   logs,
+  monitoredDomains,
   initialTab = "inventory",
   initialNew,
 }: {
   assets: AssetRow[];
   logs: OpsRow[];
+  monitoredDomains: DomainStatusRow[];
   initialTab?: Tab;
   initialNew?: boolean;
 }) {
@@ -126,15 +130,21 @@ export function OperationsClient({
     });
   }, [logs, logSearch, logStatus]);
 
+  // Domains/subdomains live in the Live domain monitor panel; everything else
+  // (hosting, databases, apps, SSL, services) stays in the grouped inventory.
+  const otherAssets = useMemo(
+    () => assets.filter((a) => a.type !== "domain" && a.type !== "subdomain"),
+    [assets],
+  );
   const assetsByType = useMemo(() => {
     const map = new Map<string, AssetRow[]>();
-    for (const a of assets) {
+    for (const a of otherAssets) {
       const arr = map.get(a.type) ?? [];
       arr.push(a);
       map.set(a.type, arr);
     }
     return map;
-  }, [assets]);
+  }, [otherAssets]);
 
   const openNewAsset = () => {
     setEditingAsset(null);
@@ -176,27 +186,30 @@ export function OperationsClient({
       </div>
 
       {tab === "inventory" ? (
-        assets.length === 0 ? (
-          <EmptyState
-            icon={Server}
-            title="No assets documented yet"
-            description="Record your hosting, domains, SSL certificates, databases and applications to keep an inventory of what you're responsible for."
-            action={<Button size="sm" onClick={openNewAsset}><Plus className="h-4 w-4" /> Add asset</Button>}
-          />
-        ) : (
-          <div className="space-y-6">
-            {SERVER_ASSET_TYPES.filter((t) => assetsByType.has(t.value)).map((t) => (
-              <div key={t.value}>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">{t.label}</h3>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {assetsByType.get(t.value)!.map((a) => (
-                    <AssetCard key={a.id} asset={a} onEdit={openEditAsset} onDelete={(id) => startTransition(() => deleteServerAsset(id))} />
-                  ))}
+        <>
+          <LiveDomainMonitor initial={monitoredDomains} />
+          {otherAssets.length === 0 ? (
+            <EmptyState
+              icon={Server}
+              title="No other assets documented"
+              description="Domains are tracked in the Live domain monitor above. Use “Add asset” to document hosting, SSL certificates, databases, APIs and applications."
+              action={<Button size="sm" onClick={openNewAsset}><Plus className="h-4 w-4" /> Add asset</Button>}
+            />
+          ) : (
+            <div className="space-y-6">
+              {SERVER_ASSET_TYPES.filter((t) => t.value !== "domain" && t.value !== "subdomain" && assetsByType.has(t.value)).map((t) => (
+                <div key={t.value}>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">{t.label}</h3>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {assetsByType.get(t.value)!.map((a) => (
+                      <AssetCard key={a.id} asset={a} onEdit={openEditAsset} onDelete={(id) => startTransition(() => deleteServerAsset(id))} />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <>
           <Card className="mb-4 p-3">

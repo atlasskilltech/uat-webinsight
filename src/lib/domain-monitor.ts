@@ -61,7 +61,7 @@ export function parseDomains(raw: string): string[] {
 }
 
 /** Lowercase a host and strip protocol, path, port, wildcard and trailing dot. */
-function normaliseHost(input: string): string | null {
+export function normaliseHost(input: string): string | null {
   if (!input) return null;
   let h = input.trim().toLowerCase();
   if (!h) return null;
@@ -219,7 +219,7 @@ async function pool<T>(items: T[], limit: number, worker: (item: T) => Promise<v
  * every watched root from crt.sh and add any new hosts first. Then health-check
  * every auto-discovered asset and every manually-added domain/subdomain.
  */
-export async function runDomainMonitor(opts: { discover?: boolean } = {}): Promise<MonitorRunResult> {
+export async function runDomainMonitor(opts: { discover?: boolean; staleMs?: number } = {}): Promise<MonitorRunResult> {
   if (running) {
     return { ok: false, discovered: 0, checked: 0, up: 0, degraded: 0, down: 0, message: "A monitor run is already in progress." };
   }
@@ -256,10 +256,16 @@ export async function runDomainMonitor(opts: { discover?: boolean } = {}): Promi
     }
 
     // Health-check every auto-discovered asset and every manual domain/subdomain.
-    const toCheck = await query<ServerAsset>(
+    const all = await query<ServerAsset>(
       "SELECT * FROM `ServerAsset` WHERE `autoDiscovered` = ? OR `type` IN ('domain','subdomain')",
       [true],
     );
+    // When staleMs is set (frequent live polls), only re-check domains whose
+    // last check is older than that, so a 30-second poll doesn't redundantly
+    // re-probe everything each time.
+    const toCheck = opts.staleMs
+      ? all.filter((a) => !a.lastCheckedAt || Date.now() - new Date(a.lastCheckedAt).getTime() >= opts.staleMs!)
+      : all;
     let up = 0, degraded = 0, down = 0, checked = 0;
 
     await pool(toCheck, CONCURRENCY, async (asset) => {
@@ -293,4 +299,51 @@ export async function runDomainMonitor(opts: { discover?: boolean } = {}): Promi
   } finally {
     running = false;
   }
+}
+
+// --- Live domain list (for the Server Inventory monitor panel) --------------
+
+export interface DomainStatusRow {
+  id: string;
+  name: string;
+  url: string | null;
+  type: string;
+  monitorState: string | null;
+  lastHttpStatus: number | null;
+  responseTimeMs: number | null;
+  sslExpiry: Date | null;
+  lastCheckedAt: Date | null;
+  autoDiscovered: boolean;
+}
+
+/** Every monitored domain/subdomain, for the live status panel. */
+export async function getMonitoredDomains(): Promise<DomainStatusRow[]> {
+  return query<DomainStatusRow>(
+    "SELECT `id`,`name`,`url`,`type`,`monitorState`,`lastHttpStatus`,`responseTimeMs`,`sslExpiry`,`lastCheckedAt`,`autoDiscovered` " +
+      "FROM `ServerAsset` WHERE `monitorEnabled` = 1 OR `type` IN ('domain','subdomain') " +
+      "ORDER BY (`monitorState` = 'down') DESC, (`monitorState` = 'degraded') DESC, `name` ASC",
+  );
+}
+
+/**
+ * Add a single domain/URL to monitor (or enable monitoring on an existing
+ * matching asset). Returns the normalised host, or null if the input isn't a
+ * valid domain.
+ */
+export async function addMonitoredHost(input: string): Promise<string | null> {
+  const host = normaliseHost(input);
+  if (!host) return null;
+  const existing = await query<{ id: string; url: string | null; name: string }>(
+    "SELECT `id`,`url`,`name` FROM `ServerAsset`",
+  );
+  const match = existing.find((a) => hostOfAsset(a) === host);
+  if (match) {
+    await execute("UPDATE `ServerAsset` SET `monitorEnabled` = 1 WHERE `id` = ?", [match.id]);
+    return host;
+  }
+  await execute(
+    "INSERT INTO `ServerAsset` (`id`,`type`,`name`,`url`,`autoDiscovered`,`monitorEnabled`,`status`) VALUES (?,?,?,?,?,?,?)",
+    [createId(), "domain", host, `https://${host}`, false, true, "active"],
+  );
+  return host;
 }

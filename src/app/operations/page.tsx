@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Server, AlertTriangle, ShieldAlert, Globe } from "lucide-react";
 import { query } from "@/lib/db";
 import type { ServerAsset, OperationsLog } from "@/lib/models";
+import { getMonitoredDomains } from "@/lib/domain-monitor";
 import { PageHeader } from "@/components/ui/page-header";
 import { fmtDateUTC } from "@/lib/dates";
 import {
@@ -43,9 +44,10 @@ export default async function OperationsPage({
   searchParams: Promise<{ tab?: string; new?: string }>;
 }) {
   const sp = await searchParams;
-  const [assetsRaw, logsRaw] = await Promise.all([
+  const [assetsRaw, logsRaw, monitoredDomains] = await Promise.all([
     query<ServerAsset>("SELECT * FROM `ServerAsset` ORDER BY `type` ASC"),
     query<OperationsLog>("SELECT * FROM `OperationsLog` ORDER BY `occurredAt` DESC"),
+    getMonitoredDomains(),
   ]);
 
   const assets: AssetRow[] = assetsRaw.map((a) => ({
@@ -125,6 +127,7 @@ export default async function OperationsPage({
       <OperationsClient
         assets={assets}
         logs={logs}
+        monitoredDomains={monitoredDomains}
         initialTab={initialTab}
         initialNew={sp.new === "1"}
       />
