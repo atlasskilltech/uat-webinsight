@@ -34,8 +34,7 @@ async function handle(req: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
   }
 
-  const discover = new URL(req.url).searchParams.get("discover") === "1";
-  const result = await runDomainMonitor({ discover });
+  const result = await runDomainMonitor();
 
   revalidatePath("/operations");
   revalidatePath("/");

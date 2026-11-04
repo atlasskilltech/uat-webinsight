@@ -15,7 +15,7 @@ import {
   Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Field, Input, Select, Options, Textarea } from "@/components/ui/form";
+import { Field, Input, Select, Options } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Badge, StatusBadge } from "@/components/ui/badge";
@@ -27,7 +27,7 @@ import { DemoBadge } from "@/components/ui/demo-badge";
 import { idleState } from "@/lib/form-state";
 import { INTEGRATION_STATUSES } from "@/lib/enums";
 import { fmtDateTime, fmtDate } from "@/lib/dates";
-import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData, runMonitorNow } from "./actions";
+import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData } from "./actions";
 
 interface IntegrationView {
   provider: "gsc" | "ga4" | "psi";
@@ -66,7 +66,7 @@ export function SettingsClient({
 }: {
   settings: {
     siteUrl: string; siteName: string; ownerName: string; ownerEmail: string;
-    timezone: string; gscProperty: string; ga4Property: string; watchDomains: string;
+    timezone: string; gscProperty: string; ga4Property: string;
   };
   integrations: IntegrationView[];
   batches: BatchRow[];
@@ -120,19 +120,11 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
   const [state, action] = useActionState(saveSettings, idleState);
   const toast = useToast();
   const router = useRouter();
-  const [monitoring, startMonitor] = useTransition();
   useEffect(() => {
     if (state.status === "success") { toast(state.message ?? "Saved."); router.refresh(); }
     else if (state.status === "error" && state.message && !state.fieldErrors) toast(state.message, "error");
   }, [state, toast, router]);
   const err = (f: string) => state.fieldErrors?.[f];
-
-  const onRunMonitor = () =>
-    startMonitor(async () => {
-      const r = await runMonitorNow();
-      toast(r.message ?? "Monitor run finished.", r.status === "error" ? "error" : "success");
-      router.refresh();
-    });
 
   return (
     <Card className="max-w-2xl">
@@ -174,19 +166,7 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
               </Field>
             </div>
           </div>
-          <div className="border-t border-border pt-4">
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-2">Domain monitoring</p>
-            <p className="mb-3 text-xs text-muted">
-              One entry per line. List <strong>root domains</strong> (e.g. atlasuniversity.edu.in) to auto-discover their subdomains from Certificate Transparency logs, and/or paste <strong>specific subdomains / UAT links</strong> (e.g. uat-webinsight.atlasskilltech.app) to monitor them directly — do this for anything behind a wildcard certificate, which can’t be auto-discovered. Everything listed is health-checked (up/down + SSL expiry) every 30 minutes and shown in Backend &amp; Server → Server Inventory.
-            </p>
-            <Field label="Domains & subdomains to monitor" hint="One per line — root domains and/or specific hosts/UAT links" error={err("watchDomains")}>
-              <Textarea name="watchDomains" defaultValue={settings.watchDomains} rows={5} placeholder={"atlasuniversity.edu.in\natlasskilltech.app\nuat-webinsight.atlasskilltech.app"} />
-            </Field>
-          </div>
           <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
-            <Button type="button" variant="secondary" onClick={onRunMonitor} disabled={monitoring}>
-              {monitoring ? "Running…" : "Run monitor now"}
-            </Button>
             <SubmitButton>Save settings</SubmitButton>
           </div>
         </form>

@@ -164,9 +164,6 @@ export const settingsSchema = z.object({
   timezone: optionalString,
   gscProperty: optionalString,
   ga4Property: optionalString,
-  // Root domains the monitor discovers subdomains under (newline/comma
-  // separated). Always written so the list can be cleared.
-  watchDomains: z.string().trim().default(""),
 });
 
 /** Split a textarea of URLs (newline/comma separated) into a clean array. */

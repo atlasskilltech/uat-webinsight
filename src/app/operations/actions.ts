@@ -132,7 +132,7 @@ export async function checkMonitoredDomainsAction(): Promise<DomainStatusRow[]> 
   const { runDomainMonitor, getMonitoredDomains } = await import("@/lib/domain-monitor");
   // ~8s freshness so the 10s client poll re-checks each cycle without
   // redundantly re-probing a domain already checked moments ago.
-  await runDomainMonitor({ discover: false, staleMs: 8_000 });
+  await runDomainMonitor({ staleMs: 8_000 });
   return getMonitoredDomains();
 }
 

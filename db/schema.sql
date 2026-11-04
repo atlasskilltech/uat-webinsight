@@ -454,3 +454,8 @@ ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `responseTimeMs` INTEGER NULL
 ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `lastCheckedAt` DATETIME(3) NULL AFTER `responseTimeMs`;
 -- Root domains the monitor discovers subdomains under (newline/comma separated).
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `watchDomains` TEXT NULL AFTER `ga4Property`;
+
+-- Auto-discovery of subdomains was removed — only domains a user explicitly
+-- adds are monitored now. Remove any previously auto-discovered entries. Safe
+-- and idempotent: user-added domains have autoDiscovered = 0 and are kept.
+DELETE FROM `ServerAsset` WHERE `autoDiscovered` = 1;
