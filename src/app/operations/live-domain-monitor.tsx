@@ -41,6 +41,68 @@ function hostHref(url: string | null, name: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
 }
 
+type DownNotifyOptions = NotificationOptions & { renotify?: boolean };
+
+/** Register the service worker (needed for notifications on mobile). */
+async function registerSw(): Promise<void> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  try {
+    await navigator.serviceWorker.register("/sw.js");
+  } catch {
+    /* notifications will fall back to the desktop-only path */
+  }
+}
+
+/**
+ * Ask for OS notification permission (must run from a user gesture) and make
+ * sure the service worker is registered. Returns true if pop-ups can be shown.
+ */
+async function ensureNotificationReady(): Promise<boolean> {
+  if (typeof window === "undefined" || !("Notification" in window)) return false;
+  let perm = Notification.permission;
+  // Request first, synchronously within the gesture, before any await.
+  if (perm === "default") {
+    try {
+      perm = await Notification.requestPermission();
+    } catch {
+      perm = Notification.permission;
+    }
+  }
+  await registerSw();
+  return perm === "granted";
+}
+
+/** Show an OS-level "site down" pop-up (desktop + Android). No-op without permission. */
+async function showDownNotification(title: string, body: string, tag: string): Promise<void> {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  const opts: DownNotifyOptions = {
+    body,
+    icon: "/icon.png",
+    badge: "/icon.png",
+    tag,
+    renotify: true,
+    requireInteraction: true,
+  };
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg =
+        (await navigator.serviceWorker.getRegistration()) ??
+        (await navigator.serviceWorker.register("/sw.js"));
+      await reg.showNotification(title, opts);
+      return;
+    }
+    new Notification(title, opts);
+  } catch {
+    // Android throws on `new Notification`; the in-app toast still fires.
+    try {
+      new Notification(title, opts);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /** Synthesize a short "site down" alert tune via the Web Audio API (no asset). */
 function playAlertTune(ctx: AudioContext): void {
   const now = ctx.currentTime;
@@ -122,6 +184,13 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     if (next) {
       const ctx = unlockAudio();
       if (ctx) playAlertTune(ctx);
+      // Turning alerts on also enables OS pop-up notifications. The permission
+      // prompt must come from this click (a user gesture).
+      void ensureNotificationReady().then((ok) => {
+        if (!ok && "Notification" in window && Notification.permission === "denied") {
+          toast("Pop-up notifications are blocked in your browser. Sound and in-app alerts still work.", "error");
+        }
+      });
     }
   };
 
@@ -136,6 +205,12 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     }
     if (!saved) return;
     setSoundOn(true);
+    // Set the ref synchronously so the first poll (run in the effect below,
+    // before the re-render from setSoundOn commits) already treats alerts as on.
+    soundOnRef.current = true;
+    // Register the SW so pop-ups can show on mobile; the browser remembers the
+    // notification permission, so a previously-granted user still gets pop-ups.
+    void registerSw();
     if (audioCtxRef.current) return; // already unlocked this session
     const onGesture = () => {
       unlockAudio();
@@ -156,16 +231,18 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
       const next = await checkMonitoredDomainsAction();
       if (!mounted.current) return;
 
-      // Alert on any domain that is now down and wasn't down before — this
-      // covers a real up→down transition AND a newly added domain found down.
-      // Skip the very first load so existing down domains don't all alert at
-      // once when the panel opens (we only seed the baseline then).
+      // Decide what to alert on. On the FIRST load, surface anything already
+      // down — the user opened the dashboard to a site that is down. On every
+      // poll after that, alert only on a fresh down (a real up→down transition
+      // or a newly added domain found down), so a persistently-down site
+      // doesn't re-alert every 10s.
       const prev = prevStatesRef.current;
       const justLoaded = firstLoadRef.current;
       firstLoadRef.current = false;
-      const wentDown = justLoaded
-        ? []
-        : next.filter((r) => r.monitorState === "down" && prev.get(r.id) !== "down");
+      const down = (r: DomainStatusRow) => r.monitorState === "down";
+      const alerting = justLoaded
+        ? next.filter(down)
+        : next.filter((r) => down(r) && prev.get(r.id) !== "down");
       const map = new Map<string, string>();
       for (const r of next) map.set(r.id, r.monitorState ?? "");
       prevStatesRef.current = map;
@@ -173,19 +250,27 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
       setRows(next);
       setUpdatedAt(Date.now());
 
-      if (wentDown.length > 0) {
-        toast(
-          wentDown.length === 1
-            ? `${wentDown[0].name} is down`
-            : `${wentDown.length} domains just went down`,
-          "error",
-        );
-        if (soundOnRef.current && audioCtxRef.current) {
-          try {
-            void audioCtxRef.current.resume();
-            playAlertTune(audioCtxRef.current);
-          } catch {
-            /* ignore audio errors */
+      if (alerting.length > 0) {
+        const single = alerting.length === 1 ? alerting[0] : null;
+        const title = single ? `${single.name} is down` : `${alerting.length} sites are down`;
+        const body = single
+          ? single.url || single.name
+          : alerting.slice(0, 5).map((r) => r.name).join(", ") + (alerting.length > 5 ? "…" : "");
+        const tag = single ? `down-${single.id}` : "down-multi";
+
+        // In-app toast always shows while the dashboard is open.
+        toast(title, "error");
+
+        // Sound + OS pop-up only when alerts are enabled (the bell toggle).
+        if (soundOnRef.current) {
+          void showDownNotification(title, body, tag);
+          if (audioCtxRef.current) {
+            try {
+              void audioCtxRef.current.resume();
+              playAlertTune(audioCtxRef.current);
+            } catch {
+              /* ignore audio errors */
+            }
           }
         }
       }
@@ -281,7 +366,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-2">
-          <Tooltip content={soundOn ? "Sound alert on — plays when a site goes down" : "Enable a sound alert when a site goes down"}>
+          <Tooltip content={soundOn ? "Alerts on — sound + desktop/mobile pop-up when a site goes down" : "Enable sound + desktop/mobile pop-up alerts when a site goes down"}>
             <button
               type="button"
               onClick={toggleSound}
