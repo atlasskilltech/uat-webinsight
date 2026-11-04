@@ -111,8 +111,8 @@ export function OperationsClient({
   const [tab, setTab] = useState<Tab>(initialTab);
   const [, startTransition] = useTransition();
 
-  // Inventory dialogs
-  const [assetOpen, setAssetOpen] = useState(initialTab === "inventory" && Boolean(initialNew));
+  // Inventory dialogs (edit only — adding infrastructure is disabled for now)
+  const [assetOpen, setAssetOpen] = useState(false);
   const [editingAsset, setEditingAsset] = useState<AssetRow | null>(null);
 
   // Ops dialogs
@@ -146,10 +146,6 @@ export function OperationsClient({
     return map;
   }, [otherAssets]);
 
-  const openNewAsset = () => {
-    setEditingAsset(null);
-    setAssetOpen(true);
-  };
   const openEditAsset = (a: AssetRow) => {
     setEditingAsset(a);
     setAssetOpen(true);
@@ -174,11 +170,7 @@ export function OperationsClient({
           value={tab}
           onChange={(v) => setTab(v as Tab)}
         />
-        {tab === "inventory" ? (
-          <Button size="sm" onClick={openNewAsset}>
-            <Plus className="h-4 w-4" /> Add infrastructure
-          </Button>
-        ) : (
+        {tab === "log" && (
           <Button size="sm" onClick={openNewLog}>
             <Plus className="h-4 w-4" /> Add log entry
           </Button>
@@ -188,16 +180,9 @@ export function OperationsClient({
       {tab === "inventory" ? (
         <>
           <LiveDomainMonitor initial={monitoredDomains} />
-          {otherAssets.length === 0 ? (
-            <EmptyState
-              icon={Server}
-              title="No other assets documented"
-              description="Domains are tracked in the Live domain monitor above. Use “Add infrastructure” to document hosting, SSL certificates, databases, APIs and applications."
-              action={<Button size="sm" onClick={openNewAsset}><Plus className="h-4 w-4" /> Add infrastructure</Button>}
-            />
-          ) : (
+          {otherAssets.length > 0 && (
             <div className="space-y-6">
-              {SERVER_ASSET_TYPES.filter((t) => t.value !== "domain" && t.value !== "subdomain" && assetsByType.has(t.value)).map((t) => (
+              {SERVER_ASSET_TYPES.filter((t) => assetsByType.has(t.value)).map((t) => (
                 <div key={t.value}>
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">{t.label}</h3>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">

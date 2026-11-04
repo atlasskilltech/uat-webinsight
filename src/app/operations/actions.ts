@@ -123,11 +123,13 @@ export async function addMonitoredDomain(_prev: FormState, formData: FormData): 
 
 /**
  * Re-check monitored domains (skipping any checked in the last ~25s) and return
- * the current live list. Called by the Server Inventory panel every 30s.
+ * the current live list. Called by the Server Inventory panel every 10s.
  */
 export async function checkMonitoredDomainsAction(): Promise<DomainStatusRow[]> {
   const { runDomainMonitor, getMonitoredDomains } = await import("@/lib/domain-monitor");
-  await runDomainMonitor({ discover: false, staleMs: 25_000 });
+  // ~8s freshness so the 10s client poll re-checks each cycle without
+  // redundantly re-probing a domain already checked moments ago.
+  await runDomainMonitor({ discover: false, staleMs: 8_000 });
   return getMonitoredDomains();
 }
 

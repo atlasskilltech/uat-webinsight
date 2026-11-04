@@ -8,14 +8,16 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Segmented } from "@/components/ui/segmented";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { fmtDateUTC, fmtRelative } from "@/lib/dates";
+import { fmtRelative } from "@/lib/dates";
 import { idleState } from "@/lib/form-state";
 import { addMonitoredDomain, checkMonitoredDomainsAction, deleteServerAsset } from "./actions";
 import type { DomainStatusRow } from "@/lib/domain-monitor";
 
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 10_000;
+type Filter = "all" | "up" | "down";
 
 function stateTone(state?: string | null): { tone: "success" | "danger" | "warning" | "neutral"; label: string } {
   switch (state) {
@@ -39,6 +41,7 @@ function hostHref(url: string | null, name: string): string {
 export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const [rows, setRows] = useState<DomainStatusRow[]>(initial);
   const [input, setInput] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
   const [pending, startTransition] = useTransition();
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -99,6 +102,12 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const upCount = rows.filter((r) => r.monitorState === "up").length;
   const downCount = rows.filter((r) => r.monitorState === "down" || r.monitorState === "degraded").length;
 
+  const visibleRows = rows.filter((r) => {
+    if (filter === "up") return r.monitorState === "up";
+    if (filter === "down") return r.monitorState === "down" || r.monitorState === "degraded";
+    return true;
+  });
+
   return (
     <Card className="mb-6 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -116,7 +125,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         <div className="flex items-center gap-2 text-xs text-muted-2">
           <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           <span>
-            Auto-refreshing every 30s{updatedAt ? ` · updated ${fmtRelative(new Date(updatedAt))}` : ""}
+            Auto-refreshing every 10s{updatedAt ? ` · updated ${fmtRelative(new Date(updatedAt))}` : ""}
           </span>
         </div>
       </div>
@@ -139,13 +148,30 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         </Button>
       </div>
 
+      {/* Filter */}
+      {rows.length > 0 && (
+        <div className="mt-4">
+          <Segmented
+            options={[
+              { value: "all", label: `All (${rows.length})` },
+              { value: "up", label: `Up (${upCount})` },
+              { value: "down", label: `Down (${downCount})` },
+            ]}
+            value={filter}
+            onChange={(v) => setFilter(v as Filter)}
+          />
+        </div>
+      )}
+
       {/* List */}
       <div className="mt-4">
         {rows.length === 0 ? (
           <EmptyState icon={Globe} title="No domains monitored yet" description="Add a domain URL above to start tracking its up/down status live." />
+        ) : visibleRows.length === 0 ? (
+          <EmptyState icon={Globe} title={`No ${filter === "up" ? "up" : "down/degraded"} domains`} description="Switch the filter to see the others." />
         ) : (
           <div className="divide-y divide-border rounded-lg border border-border">
-            {rows.map((r) => {
+            {visibleRows.map((r) => {
               const s = stateTone(r.monitorState);
               return (
                 <div key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
@@ -163,7 +189,6 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
                   <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-2">
                     {r.lastHttpStatus ? <span>HTTP {r.lastHttpStatus}</span> : null}
                     {r.responseTimeMs != null ? <span>{r.responseTimeMs} ms</span> : null}
-                    {r.sslExpiry ? <span>SSL {fmtDateUTC(r.sslExpiry)}</span> : null}
                     {r.lastCheckedAt ? <span>checked {fmtRelative(r.lastCheckedAt)}</span> : <span>not checked yet</span>}
                     <Tooltip content="Stop monitoring">
                       <button
