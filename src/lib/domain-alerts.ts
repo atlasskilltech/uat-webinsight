@@ -85,16 +85,26 @@ function armGestureUnlock(): void {
     window.removeEventListener("keydown", onGesture);
     if (pendingTune && ctx) {
       pendingTune = false;
-      try {
-        void ctx.resume();
-        playAlertTune(ctx);
-      } catch {
-        /* ignore */
-      }
+      void resumeAndPlay(ctx);
     }
   };
   window.addEventListener("pointerdown", onGesture);
   window.addEventListener("keydown", onGesture);
+}
+
+/**
+ * Resume the context BEFORE scheduling the notes. Browsers auto-suspend an idle
+ * AudioContext; if we schedule against a suspended (frozen) clock the tune only
+ * sounds once the context wakes up — heard as a lag. Awaiting resume first makes
+ * it ring immediately.
+ */
+async function resumeAndPlay(ctx: AudioContext): Promise<void> {
+  try {
+    if (ctx.state !== "running") await ctx.resume();
+    playAlertTune(ctx);
+  } catch {
+    /* ignore audio errors */
+  }
 }
 
 /**
@@ -106,12 +116,7 @@ function armGestureUnlock(): void {
 export function ringAlertTune(): void {
   const ctx = getAudioContext();
   if (ctx) {
-    try {
-      void ctx.resume();
-      playAlertTune(ctx);
-    } catch {
-      /* ignore audio errors */
-    }
+    void resumeAndPlay(ctx);
     return;
   }
   pendingTune = true;

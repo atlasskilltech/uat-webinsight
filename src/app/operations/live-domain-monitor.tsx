@@ -18,7 +18,7 @@ import type { DomainStatusRow } from "@/lib/domain-monitor";
 import {
   ensureNotificationReady,
   isAlertsOn,
-  playAlertTune,
+  ringAlertTune,
   setAlertsPref,
   unlockAudio,
 } from "@/lib/domain-alerts";
@@ -82,8 +82,8 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     setSoundOn(next);
     setAlertsPref(next);
     if (next) {
-      const ctx = unlockAudio();
-      if (ctx) playAlertTune(ctx);
+      unlockAudio();
+      ringAlertTune();
       void ensureNotificationReady().then((ok) => {
         if (!ok && "Notification" in window && Notification.permission === "denied") {
           toast("Pop-up notifications are blocked in your browser. Sound and in-app alerts still work.", "error");
