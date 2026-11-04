@@ -40,6 +40,8 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Run on everything except API routes, Next internals and static assets.
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|ico|csv)$).*)"],
+  // Run on everything except API routes, Next internals, the service worker
+  // (must always be served as JS, never redirected to the login HTML) and
+  // static assets.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|sw.js|.*\\.(?:svg|png|jpg|jpeg|gif|ico|csv)$).*)"],
 };
