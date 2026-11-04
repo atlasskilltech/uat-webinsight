@@ -368,25 +368,28 @@ export async function getMonitoredDomains(): Promise<DomainStatusRow[]> {
   );
 }
 
+export type AddHostResult =
+  | { ok: true; host: string }
+  | { ok: false; reason: "invalid" }
+  | { ok: false; reason: "duplicate"; host: string };
+
 /**
- * Add a single domain/URL to monitor (or enable monitoring on an existing
- * matching asset). Returns the normalised host, or null if the input isn't a
- * valid domain.
+ * Add a single domain/URL to monitor. Rejects with "duplicate" if the same host
+ * already exists (so the same URL can't be added twice), and "invalid" if the
+ * input isn't a valid domain.
  */
-export async function addMonitoredHost(input: string): Promise<string | null> {
+export async function addMonitoredHost(input: string): Promise<AddHostResult> {
   const host = normaliseHost(input);
-  if (!host) return null;
+  if (!host) return { ok: false, reason: "invalid" };
   const existing = await query<{ id: string; url: string | null; name: string }>(
     "SELECT `id`,`url`,`name` FROM `ServerAsset`",
   );
-  const match = existing.find((a) => hostOfAsset(a) === host);
-  if (match) {
-    await execute("UPDATE `ServerAsset` SET `monitorEnabled` = 1 WHERE `id` = ?", [match.id]);
-    return host;
+  if (existing.some((a) => hostOfAsset(a) === host)) {
+    return { ok: false, reason: "duplicate", host };
   }
   await execute(
     "INSERT INTO `ServerAsset` (`id`,`type`,`name`,`url`,`autoDiscovered`,`monitorEnabled`,`status`) VALUES (?,?,?,?,?,?,?)",
     [createId(), "domain", host, `https://${host}`, false, true, "active"],
   );
-  return host;
+  return { ok: true, host };
 }
