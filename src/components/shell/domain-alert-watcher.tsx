@@ -7,10 +7,9 @@ import type { DomainStatusRow } from "@/lib/domain-monitor";
 import {
   ALERTS_CHANGED_EVENT,
   armAudioUnlock,
-  getAudioContext,
   isAlertsOn,
-  playAlertTune,
   registerSw,
+  ringAlertTune,
   showDownNotification,
 } from "@/lib/domain-alerts";
 
@@ -63,15 +62,7 @@ export function DomainAlertWatcher() {
 
         toast(title, "error");
         void showDownNotification(title, body, tag);
-        const ctx = getAudioContext();
-        if (ctx) {
-          try {
-            void ctx.resume();
-            playAlertTune(ctx);
-          } catch {
-            /* ignore audio errors */
-          }
-        }
+        ringAlertTune();
       } catch {
         /* transient — try again next tick */
       }

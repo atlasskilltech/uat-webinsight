@@ -62,18 +62,60 @@ export function getAudioContext(): AudioContext | null {
  * browsers only start audio after a gesture. Returns a cleanup function.
  */
 export function armAudioUnlock(): () => void {
-  if (typeof window === "undefined" || audioCtx) return () => {};
+  armGestureUnlock();
+  // Listeners self-remove on the first gesture; nothing to clean up by hand.
+  return () => {};
+}
+
+// Whether a tune is waiting to ring once audio can play, and whether a
+// first-gesture unlock listener is currently armed (so we never double-add).
+let pendingTune = false;
+let gestureArmed = false;
+
+/** Arm a one-time listener that unlocks audio — and flushes a queued tune — on
+ *  the user's first interaction. Browsers only start audio after a gesture. */
+function armGestureUnlock(): void {
+  if (typeof window === "undefined" || gestureArmed) return;
+  if (audioCtx && !pendingTune) return; // already unlocked and nothing queued
+  gestureArmed = true;
   const onGesture = () => {
-    unlockAudio();
-    cleanup();
-  };
-  const cleanup = () => {
+    const ctx = unlockAudio();
+    gestureArmed = false;
     window.removeEventListener("pointerdown", onGesture);
     window.removeEventListener("keydown", onGesture);
+    if (pendingTune && ctx) {
+      pendingTune = false;
+      try {
+        void ctx.resume();
+        playAlertTune(ctx);
+      } catch {
+        /* ignore */
+      }
+    }
   };
   window.addEventListener("pointerdown", onGesture);
   window.addEventListener("keydown", onGesture);
-  return cleanup;
+}
+
+/**
+ * Ring the alert tune alongside a notification. If audio is already unlocked it
+ * plays immediately; otherwise the tune is queued and rings the instant the
+ * user next interacts with the page (so a notification is never left silent
+ * just because audio hadn't been unlocked yet on this page load).
+ */
+export function ringAlertTune(): void {
+  const ctx = getAudioContext();
+  if (ctx) {
+    try {
+      void ctx.resume();
+      playAlertTune(ctx);
+    } catch {
+      /* ignore audio errors */
+    }
+    return;
+  }
+  pendingTune = true;
+  armGestureUnlock();
 }
 
 /** Synthesize a short "site down" alert tune via the Web Audio API (no asset). */
