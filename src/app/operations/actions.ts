@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { execute } from "@/lib/db";
 import { createId } from "@/lib/id";
 import { serverAssetSchema, opsLogSchema } from "@/lib/validation";
+import type { DomainStatusRow } from "@/lib/domain-monitor";
 import {
   parseForm,
   successState,
@@ -103,6 +104,31 @@ export async function updateServerAsset(
 export async function deleteServerAsset(id: string): Promise<void> {
   await execute("DELETE FROM `ServerAsset` WHERE `id` = ?", [id]);
   revalidateOps();
+}
+
+// --- Live domain monitoring -------------------------------------------------
+
+/**
+ * Add a single domain/URL to live monitoring from the Server Inventory. Just
+ * needs a domain or URL — it is health-checked automatically from then on.
+ */
+export async function addMonitoredDomain(_prev: FormState, formData: FormData): Promise<FormState> {
+  const raw = String(formData.get("domain") ?? "");
+  const { addMonitoredHost } = await import("@/lib/domain-monitor");
+  const host = await addMonitoredHost(raw);
+  if (!host) return errorState("Enter a valid domain, e.g. uat-webinsight.atlasskilltech.app");
+  revalidateOps();
+  return successState(`Now monitoring ${host}.`);
+}
+
+/**
+ * Re-check monitored domains (skipping any checked in the last ~25s) and return
+ * the current live list. Called by the Server Inventory panel every 30s.
+ */
+export async function checkMonitoredDomainsAction(): Promise<DomainStatusRow[]> {
+  const { runDomainMonitor, getMonitoredDomains } = await import("@/lib/domain-monitor");
+  await runDomainMonitor({ discover: false, staleMs: 25_000 });
+  return getMonitoredDomains();
 }
 
 // --- Operations log ---------------------------------------------------------
