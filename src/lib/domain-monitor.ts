@@ -25,6 +25,7 @@ import type { ServerAsset } from "./models";
 const PROBE_TIMEOUT_MS = 10_000;
 const DISCOVERY_TIMEOUT_MS = 25_000;
 const CONCURRENCY = 10;
+const MAX_REDIRECTS = 5;
 const UA = "AtlasWebInsight-Monitor/1.0";
 
 export type MonitorState = "up" | "degraded" | "down" | "unknown";
@@ -128,29 +129,71 @@ interface ProbeResult {
   sslExpiry: Date | null;
 }
 
-/** One HEAD request (https when secure, else http). Resolves status 0 on failure. */
-function headRequest(secure: boolean, host: string): Promise<{ status: number; ms: number }> {
+/** One request to a full URL. Resolves status 0 on connection failure. */
+function requestOnce(urlStr: string, method: "HEAD" | "GET"): Promise<{ status: number; location?: string; ms: number }> {
   const start = Date.now();
+  let u: URL;
+  try {
+    u = new URL(urlStr);
+  } catch {
+    return Promise.resolve({ status: 0, ms: 0 });
+  }
+  const secure = u.protocol === "https:";
   const mod = secure ? https : http;
   const options: https.RequestOptions = {
-    host,
-    port: secure ? 443 : 80,
-    method: "HEAD",
-    path: "/",
+    host: u.hostname,
+    port: u.port ? Number(u.port) : secure ? 443 : 80,
+    method,
+    path: (u.pathname || "/") + (u.search || ""),
     timeout: PROBE_TIMEOUT_MS,
-    headers: { "User-Agent": UA },
-    ...(secure ? { servername: host, rejectUnauthorized: false } : {}),
+    headers: { "User-Agent": UA, Accept: "*/*" },
+    ...(secure ? { servername: u.hostname, rejectUnauthorized: false } : {}),
   };
   return new Promise((resolve) => {
     const req = mod.request(options, (res) => {
-      resolve({ status: res.statusCode ?? 0, ms: Date.now() - start });
-      res.resume();
+      resolve({ status: res.statusCode ?? 0, location: res.headers.location, ms: Date.now() - start });
+      res.resume(); // drain so the socket can close
       req.destroy();
     });
     req.on("timeout", () => { req.destroy(); resolve({ status: 0, ms: Date.now() - start }); });
     req.on("error", () => resolve({ status: 0, ms: Date.now() - start }));
     req.end();
   });
+}
+
+/**
+ * Probe a URL and FOLLOW redirects (like a browser), returning the final
+ * status. Falls back to GET if HEAD is rejected (405). Resolves status 0 if the
+ * first hop can't connect.
+ */
+async function probeFollow(startUrl: string): Promise<{ status: number; ms: number }> {
+  let url = startUrl;
+  let method: "HEAD" | "GET" = "HEAD";
+  let total = 0;
+  let lastStatus = 0;
+  for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+    const r = await requestOnce(url, method);
+    total += r.ms;
+    if (r.status === 0) return { status: hop === 0 ? 0 : lastStatus, ms: total };
+    lastStatus = r.status;
+    // Some servers reject HEAD — retry the same URL with GET once.
+    if (r.status === 405 && method === "HEAD") { method = "GET"; continue; }
+    // Follow 3xx redirects to their Location.
+    if (r.status >= 300 && r.status < 400 && r.location) {
+      let next: string;
+      try {
+        next = new URL(r.location, url).toString();
+      } catch {
+        return { status: r.status, ms: total };
+      }
+      if (next === url) return { status: r.status, ms: total }; // self-redirect loop
+      url = next;
+      method = "HEAD"; // reset for the new hop
+      continue;
+    }
+    return { status: r.status, ms: total };
+  }
+  return { status: lastStatus, ms: total }; // exceeded redirect limit
 }
 
 /** Read the live TLS certificate's expiry (valid_to). Null on failure. */
@@ -183,17 +226,17 @@ function classify(status: number): MonitorState {
   return "down"; // 5xx — server failing
 }
 
-/** Probe a single host: HTTPS first, HTTP fallback, plus TLS expiry. */
+/** Probe a single host: HTTPS (following redirects) first, HTTP fallback, plus TLS expiry. */
 export async function checkHost(host: string): Promise<ProbeResult> {
   const [httpsRes, ssl] = await Promise.all([
-    headRequest(true, host),
+    probeFollow(`https://${host}/`),
     certExpiry(host),
   ]);
   if (httpsRes.status > 0) {
     return { state: classify(httpsRes.status), httpStatus: httpsRes.status, responseTimeMs: httpsRes.ms, sslExpiry: ssl };
   }
   // HTTPS unreachable — try plain HTTP to tell "no HTTPS" apart from "down".
-  const httpRes = await headRequest(false, host);
+  const httpRes = await probeFollow(`http://${host}/`);
   if (httpRes.status > 0) {
     return { state: "degraded", httpStatus: httpRes.status, responseTimeMs: httpRes.ms, sslExpiry: ssl };
   }
