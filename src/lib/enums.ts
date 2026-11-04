@@ -114,10 +114,11 @@ export const FINDING_STATUSES: readonly Option[] = [
 
 // --- Server / operations ----------------------------------------------------
 
+// Domains/subdomains are added and tracked in the Live domain monitor panel,
+// not through the "Add infrastructure" form — so they are intentionally not
+// listed here. This covers everything else you document in the inventory.
 export const SERVER_ASSET_TYPES: readonly Option[] = [
   { value: "hosting", label: "Hosting" },
-  { value: "domain", label: "Domain" },
-  { value: "subdomain", label: "Subdomain" },
   { value: "application", label: "Application" },
   { value: "database", label: "Database" },
   { value: "api", label: "API Dependency" },

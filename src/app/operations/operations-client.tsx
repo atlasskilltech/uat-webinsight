@@ -176,7 +176,7 @@ export function OperationsClient({
         />
         {tab === "inventory" ? (
           <Button size="sm" onClick={openNewAsset}>
-            <Plus className="h-4 w-4" /> Add asset
+            <Plus className="h-4 w-4" /> Add infrastructure
           </Button>
         ) : (
           <Button size="sm" onClick={openNewLog}>
@@ -192,8 +192,8 @@ export function OperationsClient({
             <EmptyState
               icon={Server}
               title="No other assets documented"
-              description="Domains are tracked in the Live domain monitor above. Use “Add asset” to document hosting, SSL certificates, databases, APIs and applications."
-              action={<Button size="sm" onClick={openNewAsset}><Plus className="h-4 w-4" /> Add asset</Button>}
+              description="Domains are tracked in the Live domain monitor above. Use “Add infrastructure” to document hosting, SSL certificates, databases, APIs and applications."
+              action={<Button size="sm" onClick={openNewAsset}><Plus className="h-4 w-4" /> Add infrastructure</Button>}
             />
           ) : (
             <div className="space-y-6">
@@ -291,7 +291,7 @@ export function OperationsClient({
       <Dialog
         open={assetOpen}
         onClose={() => setAssetOpen(false)}
-        title={editingAsset ? "Edit asset" : "Add asset"}
+        title={editingAsset ? "Edit infrastructure" : "Add infrastructure"}
         description="Document a piece of infrastructure you're responsible for."
         size="lg"
       >
