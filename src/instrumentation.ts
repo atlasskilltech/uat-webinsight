@@ -10,8 +10,13 @@ export async function register(): Promise<void> {
   // The positive `=== "nodejs"` guard lets the edge bundler drop this import
   // (domain-monitor uses node:tls/http, which the edge runtime can't bundle).
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    if (process.env.MONITOR_SCHEDULER_DISABLED === "1") return;
-    const { startDomainMonitorScheduler } = await import("./lib/monitor-scheduler");
-    startDomainMonitorScheduler();
+    const schedulers = await import("./lib/monitor-scheduler");
+    if (process.env.MONITOR_SCHEDULER_DISABLED !== "1") {
+      schedulers.startDomainMonitorScheduler();
+    }
+    // Auto-sync GSC + GA4 (default every 3 hours) so the data stays current.
+    if (process.env.SYNC_SCHEDULER_DISABLED !== "1") {
+      schedulers.startGoogleSyncScheduler();
+    }
   }
 }
