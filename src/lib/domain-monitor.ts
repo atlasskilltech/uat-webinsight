@@ -4,26 +4,19 @@ import http from "node:http";
 import tls from "node:tls";
 import { execute, query } from "./db";
 import { createId } from "./id";
-import { getSettings } from "./settings";
 import type { ServerAsset } from "./models";
 
 /**
- * Domain monitoring for the Server Inventory.
- *
- *  - Discovery: subdomains of each configured root domain are enumerated from
- *    Certificate Transparency logs (crt.sh) — the standard way to find every
- *    host that has ever had a TLS certificate. New hosts are added to
- *    ServerAsset automatically (autoDiscovered = true).
- *  - Health checks: each monitored domain/subdomain is probed over HTTPS (with
- *    an HTTP fallback) to record whether it is up/degraded/down, the HTTP
- *    status, the response time and the live TLS certificate expiry.
+ * Domain monitoring for the Server Inventory. Only domains a user explicitly
+ * adds are monitored (no auto-discovery). Each monitored domain/subdomain is
+ * probed over HTTPS (with an HTTP fallback) to record whether it is
+ * up/degraded/down, the HTTP status, response time and live TLS cert expiry.
  *
  * Everything is best-effort and self-contained: a failure for one host never
  * affects another, and the whole run never throws to its caller.
  */
 
 const PROBE_TIMEOUT_MS = 10_000;
-const DISCOVERY_TIMEOUT_MS = 25_000;
 const CONCURRENCY = 10;
 const MAX_REDIRECTS = 5;
 const UA = "AtlasWebInsight-Monitor/1.0";
@@ -32,7 +25,6 @@ export type MonitorState = "up" | "degraded" | "down" | "unknown";
 
 export interface MonitorRunResult {
   ok: boolean;
-  discovered: number; // new hosts added this run
   checked: number;
   up: number;
   degraded: number;
@@ -43,23 +35,6 @@ export interface MonitorRunResult {
 // Module-level lock so the in-process scheduler and a manual/cron trigger can
 // never run two monitor passes at once (they share the same Node process).
 let running = false;
-
-/** Root domains to watch, from settings (newline/comma separated). */
-export async function getWatchDomains(): Promise<string[]> {
-  const settings = await getSettings();
-  return parseDomains(settings.watchDomains ?? "");
-}
-
-export function parseDomains(raw: string): string[] {
-  return [
-    ...new Set(
-      raw
-        .split(/[\n,\s]+/)
-        .map((d) => normaliseHost(d))
-        .filter((d): d is string => !!d),
-    ),
-  ];
-}
 
 /** Lowercase a host and strip protocol, path, port, wildcard and trailing dot. */
 export function normaliseHost(input: string): string | null {
@@ -85,39 +60,6 @@ export function normaliseHost(input: string): string | null {
 /** The host a ServerAsset points at, derived from its url or name. */
 function hostOfAsset(a: Pick<ServerAsset, "url" | "name">): string | null {
   return normaliseHost(a.url ?? "") ?? normaliseHost(a.name ?? "");
-}
-
-// --- Discovery (Certificate Transparency via crt.sh) ------------------------
-
-/**
- * Enumerate subdomains of a root domain from crt.sh. Returns the root itself
- * plus every discovered host. Never throws — returns [] on any failure.
- */
-export async function discoverSubdomains(root: string): Promise<string[]> {
-  const domain = normaliseHost(root);
-  if (!domain) return [];
-  const found = new Set<string>([domain]);
-  try {
-    const url = `https://crt.sh/?q=${encodeURIComponent("%." + domain)}&output=json`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
-    });
-    if (!res.ok) return [...found];
-    const rows = (await res.json()) as Array<{ name_value?: string; common_name?: string }>;
-    for (const row of rows) {
-      for (const field of [row.name_value, row.common_name]) {
-        if (!field) continue;
-        for (const part of String(field).split("\n")) {
-          const h = normaliseHost(part);
-          if (h && (h === domain || h.endsWith("." + domain))) found.add(h);
-        }
-      }
-    }
-  } catch {
-    /* crt.sh unreachable/slow/invalid — keep whatever we have (at least root) */
-  }
-  return [...found];
 }
 
 // --- Health checks ----------------------------------------------------------
@@ -258,53 +200,20 @@ async function pool<T>(items: T[], limit: number, worker: (item: T) => Promise<v
 // --- Orchestration ----------------------------------------------------------
 
 /**
- * Run one monitoring pass. When `discover` is true, re-enumerate subdomains of
- * every watched root from crt.sh and add any new hosts first. Then health-check
- * every auto-discovered asset and every manually-added domain/subdomain.
+ * Run one monitoring pass: health-check every monitored domain/subdomain
+ * (only the ones a user added). No auto-discovery.
  */
-export async function runDomainMonitor(opts: { discover?: boolean; staleMs?: number } = {}): Promise<MonitorRunResult> {
+export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise<MonitorRunResult> {
   if (running) {
-    return { ok: false, discovered: 0, checked: 0, up: 0, degraded: 0, down: 0, message: "A monitor run is already in progress." };
+    return { ok: false, checked: 0, up: 0, degraded: 0, down: 0, message: "A monitor run is already in progress." };
   }
   running = true;
   try {
-    let discovered = 0;
-
-    // Existing hosts (across all assets) so we never create duplicates.
-    const assets = await query<ServerAsset>("SELECT * FROM `ServerAsset`");
-    const knownHosts = new Set<string>();
-    for (const a of assets) {
-      const h = hostOfAsset(a);
-      if (h) knownHosts.add(h);
-    }
-
-    if (opts.discover) {
-      const roots = await getWatchDomains();
-      for (const root of roots) {
-        const hosts = await discoverSubdomains(root);
-        const newHosts = hosts.filter((h) => !knownHosts.has(h));
-        if (newHosts.length === 0) continue;
-        const values = newHosts.map((h) => {
-          knownHosts.add(h);
-          const type = h === root ? "domain" : "subdomain";
-          // id,type,name,url,autoDiscovered,monitorEnabled,status
-          return [createId(), type, h, `https://${h}`, true, true, "active"];
-        });
-        await execute(
-          "INSERT INTO `ServerAsset` (`id`,`type`,`name`,`url`,`autoDiscovered`,`monitorEnabled`,`status`) VALUES ?",
-          [values],
-        );
-        discovered += newHosts.length;
-      }
-    }
-
-    // Health-check every auto-discovered asset and every manual domain/subdomain.
     const all = await query<ServerAsset>(
-      "SELECT * FROM `ServerAsset` WHERE `autoDiscovered` = ? OR `type` IN ('domain','subdomain')",
-      [true],
+      "SELECT * FROM `ServerAsset` WHERE `monitorEnabled` = 1 OR `type` IN ('domain','subdomain')",
     );
     // When staleMs is set (frequent live polls), only re-check domains whose
-    // last check is older than that, so a 30-second poll doesn't redundantly
+    // last check is older than that, so a 10-second poll doesn't redundantly
     // re-probe everything each time.
     const toCheck = opts.staleMs
       ? all.filter((a) => !a.lastCheckedAt || Date.now() - new Date(a.lastCheckedAt).getTime() >= opts.staleMs!)
@@ -326,19 +235,9 @@ export async function runDomainMonitor(opts: { discover?: boolean; staleMs?: num
       );
     });
 
-    return {
-      ok: true,
-      discovered,
-      checked,
-      up,
-      degraded,
-      down,
-      message:
-        `Checked ${checked} domain(s): ${up} up, ${degraded} degraded, ${down} down` +
-        (opts.discover ? `; ${discovered} newly discovered.` : "."),
-    };
+    return { ok: true, checked, up, degraded, down, message: `Checked ${checked} domain(s): ${up} up, ${degraded} degraded, ${down} down.` };
   } catch (e) {
-    return { ok: false, discovered: 0, checked: 0, up: 0, degraded: 0, down: 0, message: e instanceof Error ? e.message : "Monitor run failed." };
+    return { ok: false, checked: 0, up: 0, degraded: 0, down: 0, message: e instanceof Error ? e.message : "Monitor run failed." };
   } finally {
     running = false;
   }
