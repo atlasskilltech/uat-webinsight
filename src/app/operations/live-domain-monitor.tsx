@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Globe, Plus, RefreshCw, Trash2, ExternalLink, LayoutGrid, List, Bell, BellOff } from "lucide-react";
+import { Globe, Plus, RefreshCw, Trash2, ExternalLink, LayoutGrid, List, Bell, BellOff, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +83,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const [refreshing, setRefreshing] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [addEnv, setAddEnv] = useState<Env>("uat");
+  const [search, setSearch] = useState("");
   const toast = useToast();
   const mounted = useRef(true);
 
@@ -195,14 +196,17 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     if (filter !== "all" && counts[filter] === 0) setFilter("all");
   }, [filter, rows.length, upCount, degradedCount, downCount, checkingCount]);
 
+  const q = search.trim().toLowerCase();
   const visibleRows = rows.filter((r) => {
-    switch (filter) {
-      case "up": return r.monitorState === "up";
-      case "degraded": return r.monitorState === "degraded";
-      case "down": return r.monitorState === "down";
-      case "checking": return isChecking(r.monitorState);
-      default: return true;
-    }
+    const statusOk =
+      filter === "up" ? r.monitorState === "up"
+      : filter === "degraded" ? r.monitorState === "degraded"
+      : filter === "down" ? r.monitorState === "down"
+      : filter === "checking" ? isChecking(r.monitorState)
+      : true;
+    if (!statusOk) return false;
+    if (q && !`${r.name} ${r.url ?? ""}`.toLowerCase().includes(q)) return false;
+    return true;
   });
 
   // Always show Production and UAT as their own sections; add Unspecified only
@@ -295,7 +299,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         </Button>
       </div>
 
-      {/* Filter + view toggle */}
+      {/* Filter + search + view toggle */}
       {rows.length > 0 && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <Segmented
@@ -303,6 +307,26 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
             value={filter}
             onChange={(v) => setFilter(v as Filter)}
           />
+          <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-2" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search domains…"
+              className="pl-8 pr-8"
+              aria-label="Search domains"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-2 hover:bg-surface-hover hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <Segmented
             options={[
               { value: "cards", label: "Cards", icon: <LayoutGrid className="h-4 w-4" /> },
@@ -319,7 +343,11 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         {rows.length === 0 ? (
           <EmptyState icon={Globe} title="No domains monitored yet" description="Add a domain URL above and choose Production or UAT to start tracking its up/down status live." />
         ) : visibleRows.length === 0 ? (
-          <EmptyState icon={Globe} title={`No ${filter} domains`} description="Switch the filter to see the others." />
+          <EmptyState
+            icon={Globe}
+            title={q ? `No domains match “${search.trim()}”` : `No ${filter} domains`}
+            description={q ? "Try a different search or clear it." : "Switch the filter to see the others."}
+          />
         ) : (
           sections.map((sec) => (
             <div key={sec.key}>
