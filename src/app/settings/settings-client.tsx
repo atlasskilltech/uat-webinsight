@@ -15,7 +15,7 @@ import {
   Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Field, Input, Select, Options } from "@/components/ui/form";
+import { Field, Input, Select, Options, Textarea } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Badge, StatusBadge } from "@/components/ui/badge";
@@ -67,6 +67,7 @@ export function SettingsClient({
   settings: {
     siteUrl: string; siteName: string; ownerName: string; ownerEmail: string;
     timezone: string; gscProperty: string; ga4Property: string;
+    alertRecipients: string; downAlertSeconds: number;
   };
   integrations: IntegrationView[];
   batches: BatchRow[];
@@ -165,6 +166,34 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
                 <Input name="ga4Property" defaultValue={settings.ga4Property} placeholder="123456789" />
               </Field>
             </div>
+          </div>
+          <div className="border-t border-border pt-4">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-2">Downtime alerts</p>
+            <Field
+              label="Alert recipients"
+              hint="Who gets emailed when a monitored site stays down. One email per line (or comma-separated)."
+              error={err("alertRecipients")}
+            >
+              <Textarea
+                name="alertRecipients"
+                defaultValue={settings.alertRecipients}
+                rows={4}
+                placeholder={"person1@atlasuniversity.edu.in\nperson2@atlasuniversity.edu.in\nperson3@atlasuniversity.edu.in\nperson4@atlasuniversity.edu.in"}
+              />
+            </Field>
+            <div className="mt-4 max-w-xs">
+              <Field
+                label="Alert after (seconds)"
+                hint="How long a site must stay down before the email is sent. Default 120 (2 minutes)."
+                error={err("downAlertSeconds")}
+              >
+                <Input name="downAlertSeconds" type="number" min={10} max={3600} defaultValue={settings.downAlertSeconds} />
+              </Field>
+            </div>
+            <p className="mt-2 text-xs text-muted-2">
+              Emails are sent from the server, so they work even when the dashboard is closed. The email service
+              is configured on the server (EMAIL_PROVIDER, EMAIL_API_KEY, EMAIL_FROM).
+            </p>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
             <SubmitButton>Save settings</SubmitButton>

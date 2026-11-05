@@ -224,6 +224,8 @@ export interface ServerAsset {
   lastHttpStatus: number | null;
   responseTimeMs: number | null;
   lastCheckedAt: Date | null;
+  downSince: Date | null;
+  downAlertSentAt: Date | null;
   status: string;
   sslExpiry: Date | null;
   details: JsonValue | null;
@@ -368,5 +370,7 @@ export interface AppSettings {
   gscProperty: string;
   ga4Property: string;
   watchDomains: string | null;
+  alertRecipients: string | null;
+  downAlertSeconds: number;
   updatedAt: Date;
 }

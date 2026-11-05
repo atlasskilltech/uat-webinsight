@@ -455,6 +455,17 @@ ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `lastCheckedAt` DATETIME(3) N
 -- Root domains the monitor discovers subdomains under (newline/comma separated).
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `watchDomains` TEXT NULL AFTER `ga4Property`;
 
+-- Downtime email alerts (added 2026-11). downSince: when the current ongoing
+-- outage of a domain began (NULL when up). downAlertSentAt: when the "down for
+-- N seconds" email was sent for that outage (NULL until sent / after recovery),
+-- so each outage emails the team at most once.
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `downSince` DATETIME(3) NULL AFTER `lastCheckedAt`;
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `downAlertSentAt` DATETIME(3) NULL AFTER `downSince`;
+-- Recipients for downtime alerts (newline/comma separated) and how long a site
+-- must stay down before the email is sent (seconds; default 120 = 2 minutes).
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `alertRecipients` TEXT NULL AFTER `watchDomains`;
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `downAlertSeconds` INTEGER NOT NULL DEFAULT 120 AFTER `alertRecipients`;
+
 -- Auto-discovery of subdomains was removed — only domains a user explicitly
 -- adds are monitored now. Remove any previously auto-discovered entries. Safe
 -- and idempotent: user-added domains have autoDiscovered = 0 and are kept.

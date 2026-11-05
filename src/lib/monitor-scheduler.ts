@@ -10,7 +10,10 @@ import "server-only";
  * can trigger it too; runDomainMonitor holds a lock so the two never overlap.
  */
 
-const CHECK_INTERVAL_MS = 30 * 60 * 1000; // health checks every 30 minutes
+// Health checks run frequently so a short outage is caught server-side (needed
+// for the "down for N seconds" email alert). Default 60s; override with
+// MONITOR_INTERVAL_SECONDS. Kept >= 20s to avoid hammering hosts.
+const CHECK_INTERVAL_MS = Math.max(20, Number(process.env.MONITOR_INTERVAL_SECONDS) || 60) * 1000;
 const FIRST_RUN_DELAY_MS = 45_000; // let the server settle before the first pass
 
 // Google (GSC + GA4) auto-sync interval. Defaults to 3 hours; override with
@@ -39,7 +42,7 @@ export function startDomainMonitorScheduler(): void {
   setTimeout(() => void run(), FIRST_RUN_DELAY_MS);
   setInterval(() => void run(), CHECK_INTERVAL_MS);
 
-  console.log("[domain-monitor] scheduler started (health checks every 30m).");
+  console.log(`[domain-monitor] scheduler started (health checks every ${CHECK_INTERVAL_MS / 1000}s).`);
 }
 
 /**
