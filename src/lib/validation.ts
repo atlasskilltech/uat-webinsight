@@ -164,6 +164,8 @@ export const settingsSchema = z.object({
   timezone: optionalString,
   gscProperty: optionalString,
   ga4Property: optionalString,
+  alertRecipients: optionalString,
+  downAlertSeconds: z.preprocess(emptyToUndef, z.coerce.number().int().min(10).max(3600)).default(120),
 });
 
 /** Split a textarea of URLs (newline/comma separated) into a clean array. */

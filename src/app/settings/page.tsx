@@ -64,6 +64,8 @@ export default async function SettingsPage() {
             timezone: settings.timezone,
             gscProperty: settings.gscProperty,
             ga4Property: settings.ga4Property,
+            alertRecipients: settings.alertRecipients ?? "",
+            downAlertSeconds: settings.downAlertSeconds ?? 120,
           }}
           integrations={integrations}
           batches={batches}

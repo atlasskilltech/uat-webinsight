@@ -12,6 +12,8 @@ const DEFAULTS: AppSettings = {
   gscProperty: "",
   ga4Property: "",
   watchDomains: "",
+  alertRecipients: "",
+  downAlertSeconds: 120,
   updatedAt: new Date(),
 };
 

@@ -5,6 +5,8 @@ import tls from "node:tls";
 import { execute, query } from "./db";
 import { createId } from "./id";
 import type { ServerAsset } from "./models";
+import { getSettings } from "./settings";
+import { sendEmail, parseRecipients } from "./email";
 
 /**
  * Domain monitoring for the Server Inventory. Only domains a user explicitly
@@ -18,6 +20,87 @@ import type { ServerAsset } from "./models";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const CONCURRENCY = 10;
+
+/** Human-readable duration like "2m 15s". */
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return m > 0 ? `${m}m ${rem}s` : `${rem}s`;
+}
+
+function fmtTime(d: Date, tz: string): string {
+  try {
+    return d.toLocaleString("en-GB", { timeZone: tz, dateStyle: "medium", timeStyle: "medium" });
+  } catch {
+    return d.toISOString();
+  }
+}
+
+function targetUrl(asset: ServerAsset, host: string): string {
+  return asset.url || `https://${host}`;
+}
+
+/** Email the team that a monitored site has been down past the threshold. */
+async function sendDownAlertEmail(
+  asset: ServerAsset,
+  host: string,
+  downSince: Date,
+  now: Date,
+  httpStatus: number | null,
+  recipients: string[],
+  tz: string,
+) {
+  const url = targetUrl(asset, host);
+  const forStr = fmtDuration(now.getTime() - downSince.getTime());
+  const subject = `🔴 DOWN: ${asset.name} has been down for ${forStr}`;
+  const statusLine = httpStatus ? `HTTP status: ${httpStatus}` : "No response (connection failed)";
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111">
+      <h2 style="color:#b91c1c;margin:0 0 8px">Site down alert</h2>
+      <p><strong>${escapeHtml(asset.name)}</strong> is not responding.</p>
+      <table style="border-collapse:collapse;margin:12px 0">
+        <tr><td style="padding:2px 12px 2px 0;color:#555">URL</td><td><a href="${escapeHtml(url)}">${escapeHtml(url)}</a></td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#555">Environment</td><td>${escapeHtml(asset.environment || "—")}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#555">Down since</td><td>${escapeHtml(fmtTime(downSince, tz))}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#555">Down for</td><td>${escapeHtml(forStr)}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#555">Detail</td><td>${escapeHtml(statusLine)}</td></tr>
+      </table>
+      <p style="color:#555;font-size:12px">You are receiving this because you are listed as a downtime-alert recipient in Atlas Web Insight.</p>
+    </div>`;
+  const text = `SITE DOWN: ${asset.name}\nURL: ${url}\nEnvironment: ${asset.environment || "-"}\nDown since: ${fmtTime(downSince, tz)}\nDown for: ${forStr}\n${statusLine}`;
+  return sendEmail({ to: recipients, subject, html, text });
+}
+
+/** Email the team that a site that had been reported down is back up. */
+async function sendRecoveryEmail(
+  asset: ServerAsset,
+  host: string,
+  downSince: Date,
+  now: Date,
+  recipients: string[],
+  tz: string,
+) {
+  const url = targetUrl(asset, host);
+  const outage = fmtDuration(now.getTime() - downSince.getTime());
+  const subject = `✅ RECOVERED: ${asset.name} is back up`;
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111">
+      <h2 style="color:#15803d;margin:0 0 8px">Site recovered</h2>
+      <p><strong>${escapeHtml(asset.name)}</strong> is responding again.</p>
+      <table style="border-collapse:collapse;margin:12px 0">
+        <tr><td style="padding:2px 12px 2px 0;color:#555">URL</td><td><a href="${escapeHtml(url)}">${escapeHtml(url)}</a></td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#555">Total downtime</td><td>${escapeHtml(outage)}</td></tr>
+        <tr><td style="padding:2px 12px 2px 0;color:#555">Recovered at</td><td>${escapeHtml(fmtTime(now, tz))}</td></tr>
+      </table>
+    </div>`;
+  const text = `RECOVERED: ${asset.name}\nURL: ${url}\nTotal downtime: ${outage}\nRecovered at: ${fmtTime(now, tz)}`;
+  return sendEmail({ to: recipients, subject, html, text });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
 const MAX_REDIRECTS = 5;
 const UA = "AtlasWebInsight-Monitor/1.0";
 
@@ -220,6 +303,12 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
       : all;
     let up = 0, degraded = 0, down = 0, checked = 0;
 
+    // Downtime-alert config (read once per run).
+    const settings = await getSettings();
+    const recipients = parseRecipients(settings.alertRecipients);
+    const thresholdMs = Math.max(10, Number(settings.downAlertSeconds) || 120) * 1000;
+    const tz = settings.timezone || "Asia/Kolkata";
+
     await pool(toCheck, CONCURRENCY, async (asset) => {
       const host = hostOfAsset(asset);
       if (!host) return;
@@ -228,10 +317,38 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
       if (r.state === "up") up++;
       else if (r.state === "degraded") degraded++;
       else if (r.state === "down") down++;
+
+      const now = new Date();
+      let downSince: Date | null = asset.downSince ? new Date(asset.downSince) : null;
+      let downAlertSentAt: Date | null = asset.downAlertSentAt ? new Date(asset.downAlertSentAt) : null;
+
+      if (r.state === "down") {
+        if (!downSince) downSince = now; // outage just started
+        const elapsedMs = now.getTime() - downSince.getTime();
+        // Email once, after it has stayed down past the threshold.
+        if (elapsedMs >= thresholdMs && !downAlertSentAt && recipients.length > 0) {
+          const res = await sendDownAlertEmail(asset, host, downSince, now, r.httpStatus, recipients, tz);
+          if (res.ok) {
+            downAlertSentAt = now;
+            console.log(`[domain-monitor] down-alert emailed for ${host}: ${res.message}`);
+          } else {
+            console.error(`[domain-monitor] down-alert email failed for ${host}: ${res.message}`);
+          }
+        }
+      } else {
+        // Not down any more. If we had emailed an outage, send a recovery note.
+        if (downSince && downAlertSentAt && recipients.length > 0) {
+          const res = await sendRecoveryEmail(asset, host, downSince, now, recipients, tz);
+          if (!res.ok) console.error(`[domain-monitor] recovery email failed for ${host}: ${res.message}`);
+        }
+        downSince = null;
+        downAlertSentAt = null;
+      }
+
       // Keep an existing sslExpiry if this probe couldn't read one.
       await execute(
-        "UPDATE `ServerAsset` SET `monitorState`=?, `lastHttpStatus`=?, `responseTimeMs`=?, `lastCheckedAt`=?, `monitorEnabled`=?, `sslExpiry`=COALESCE(?, `sslExpiry`) WHERE `id`=?",
-        [r.state, r.httpStatus, r.responseTimeMs, new Date(), true, r.sslExpiry, asset.id],
+        "UPDATE `ServerAsset` SET `monitorState`=?, `lastHttpStatus`=?, `responseTimeMs`=?, `lastCheckedAt`=?, `monitorEnabled`=?, `sslExpiry`=COALESCE(?, `sslExpiry`), `downSince`=?, `downAlertSentAt`=? WHERE `id`=?",
+        [r.state, r.httpStatus, r.responseTimeMs, new Date(), true, r.sslExpiry, downSince, downAlertSentAt, asset.id],
       );
     });
 
