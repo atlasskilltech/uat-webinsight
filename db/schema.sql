@@ -465,6 +465,8 @@ ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `downAlertSentAt` DATETIME(3)
 -- must stay down before the email is sent (seconds; default 120 = 2 minutes).
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `alertRecipients` TEXT NULL AFTER `watchDomains`;
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `downAlertSeconds` INTEGER NOT NULL DEFAULT 120 AFTER `alertRecipients`;
+-- CC recipients for downtime alerts (newline/comma separated).
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `alertCc` TEXT NULL AFTER `downAlertSeconds`;
 
 -- Auto-discovery of subdomains was removed — only domains a user explicitly
 -- adds are monitored now. Remove any previously auto-discovered entries. Safe

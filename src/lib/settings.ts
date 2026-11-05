@@ -14,6 +14,7 @@ const DEFAULTS: AppSettings = {
   watchDomains: "",
   alertRecipients: "",
   downAlertSeconds: 120,
+  alertCc: "",
   updatedAt: new Date(),
 };
 

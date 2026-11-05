@@ -67,7 +67,7 @@ export function SettingsClient({
   settings: {
     siteUrl: string; siteName: string; ownerName: string; ownerEmail: string;
     timezone: string; gscProperty: string; ga4Property: string;
-    alertRecipients: string; downAlertSeconds: number;
+    alertRecipients: string; alertCc: string; downAlertSeconds: number;
   };
   integrations: IntegrationView[];
   batches: BatchRow[];
@@ -179,6 +179,18 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
                 defaultValue={settings.alertRecipients}
                 rows={4}
                 placeholder={"person1@atlasuniversity.edu.in\nperson2@atlasuniversity.edu.in\nperson3@atlasuniversity.edu.in\nperson4@atlasuniversity.edu.in"}
+              />
+            </Field>
+            <Field
+              label="CC (optional)"
+              hint="Also copied on every downtime/recovery email. One per line (or comma-separated)."
+              error={err("alertCc")}
+            >
+              <Textarea
+                name="alertCc"
+                defaultValue={settings.alertCc}
+                rows={2}
+                placeholder={"manager@atlasuniversity.edu.in"}
               />
             </Field>
             <div className="mt-4 max-w-xs">

@@ -165,6 +165,7 @@ export const settingsSchema = z.object({
   gscProperty: optionalString,
   ga4Property: optionalString,
   alertRecipients: optionalString,
+  alertCc: optionalString,
   downAlertSeconds: z.preprocess(emptyToUndef, z.coerce.number().int().min(10).max(3600)).default(120),
 });
 

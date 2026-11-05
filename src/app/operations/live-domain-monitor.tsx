@@ -100,6 +100,17 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     setSoundOn(isAlertsOn());
   }, []);
 
+  // Pre-fill the search from a ?domain= query param so the "View domain report"
+  // button in alert emails lands on that specific domain.
+  useEffect(() => {
+    try {
+      const d = new URLSearchParams(window.location.search).get("domain");
+      if (d) setSearch(d);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Toggle alerts on/off. Persisting via setAlertsPref also notifies the global
   // DomainAlertWatcher (same tab) so it starts/stops immediately. Turning on is
   // a user gesture, so we unlock audio, play a confirmation blip, and request

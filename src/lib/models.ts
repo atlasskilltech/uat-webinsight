@@ -372,5 +372,6 @@ export interface AppSettings {
   watchDomains: string | null;
   alertRecipients: string | null;
   downAlertSeconds: number;
+  alertCc: string | null;
   updatedAt: Date;
 }
