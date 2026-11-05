@@ -32,17 +32,23 @@ const REFRESH_MS = 10_000;
 type Filter = "all" | "up" | "degraded" | "down" | "checking";
 type View = "cards" | "list";
 
-// Which environment a monitored domain belongs to. "unspecified" is for
-// existing domains added before environments existed — shown so they can be
-// classified.
 type Env = "production" | "uat";
-type EnvKey = Env | "unspecified";
+type EnvFilter = "all" | Env;
 
-function envKey(environment: string | null | undefined): EnvKey {
-  const v = (environment ?? "").trim().toLowerCase();
-  if (v === "production" || v === "prod" || v === "live") return "production";
-  if (v === "uat" || v === "staging" || v === "stage" || v === "test") return "uat";
-  return "unspecified";
+// Match "uat" only as a real subdomain token (uat-crm, uat.foo, foo-uat) — not
+// the letters "uat" inside a word (examevalUATion is NOT a uat domain).
+const UAT_TOKEN = /(?:^|[^a-z0-9])uat(?:[^a-z0-9]|$)/;
+
+/**
+ * The environment a domain belongs to. An explicit Prod/UAT tag always wins;
+ * with no tag, a "uat" subdomain is UAT and everything else is Production — so
+ * every domain lands in one of the two sections (no "unspecified").
+ */
+function effectiveEnv(r: DomainStatusRow): Env {
+  const stored = (r.environment ?? "").trim().toLowerCase();
+  if (stored === "production" || stored === "prod" || stored === "live") return "production";
+  if (stored === "uat" || stored === "staging" || stored === "stage" || stored === "test") return "uat";
+  return UAT_TOKEN.test(`${r.name} ${r.url ?? ""}`.toLowerCase()) ? "uat" : "production";
 }
 
 /** A domain that hasn't produced a concrete up/down/degraded state yet. */
@@ -84,6 +90,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const [soundOn, setSoundOn] = useState(false);
   const [addEnv, setAddEnv] = useState<Env>("uat");
   const [search, setSearch] = useState("");
+  const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const toast = useToast();
   const mounted = useRef(true);
 
@@ -176,9 +183,8 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const degradedCount = rows.filter((r) => r.monitorState === "degraded").length;
   const downCount = rows.filter((r) => r.monitorState === "down").length;
   const checkingCount = rows.filter((r) => isChecking(r.monitorState)).length;
-  const prodCount = rows.filter((r) => envKey(r.environment) === "production").length;
-  const uatCount = rows.filter((r) => envKey(r.environment) === "uat").length;
-  const unspecCount = rows.filter((r) => envKey(r.environment) === "unspecified").length;
+  const prodCount = rows.filter((r) => effectiveEnv(r) === "production").length;
+  const uatCount = rows.filter((r) => effectiveEnv(r) === "uat").length;
 
   // Status filter tabs appear only for states that currently have domains.
   const filterTabs = [
@@ -209,14 +215,12 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     return true;
   });
 
-  // Always show Production and UAT as their own sections; add Unspecified only
-  // when there are still-unclassified domains to assign.
-  const sections: { key: EnvKey; label: string; rows: DomainStatusRow[] }[] = [
-    { key: "production", label: "Production", rows: visibleRows.filter((r) => envKey(r.environment) === "production") },
-    { key: "uat", label: "UAT", rows: visibleRows.filter((r) => envKey(r.environment) === "uat") },
+  // Production and UAT sections, honouring the environment filter.
+  const allSections: { key: Env; label: string; rows: DomainStatusRow[] }[] = [
+    { key: "production", label: "Production", rows: visibleRows.filter((r) => effectiveEnv(r) === "production") },
+    { key: "uat", label: "UAT", rows: visibleRows.filter((r) => effectiveEnv(r) === "uat") },
   ];
-  const unspecifiedRows = visibleRows.filter((r) => envKey(r.environment) === "unspecified");
-  if (unspecifiedRows.length) sections.push({ key: "unspecified", label: "Unspecified", rows: unspecifiedRows });
+  const sections = envFilter === "all" ? allSections : allSections.filter((s) => s.key === envFilter);
 
   const renderBody = (list: DomainStatusRow[]) =>
     view === "cards" ? (
@@ -243,8 +247,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
           <div>
             <h3 className="text-sm font-semibold text-foreground">Live domain monitor</h3>
             <p className="text-xs text-muted">
-              {rows.length} monitored · Production {prodCount} · UAT {uatCount}
-              {unspecCount ? ` · Unspecified ${unspecCount}` : ""} · {upCount} up · {downCount} down
+              {rows.length} monitored · Production {prodCount} · UAT {uatCount} · {upCount} up · {downCount} down
               {degradedCount ? ` · ${degradedCount} degraded` : ""}
             </p>
           </div>
@@ -302,11 +305,22 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
       {/* Filter + search + view toggle */}
       {rows.length > 0 && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-          <Segmented
-            options={filterTabs}
-            value={filter}
-            onChange={(v) => setFilter(v as Filter)}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented
+              options={[
+                { value: "all", label: "All" },
+                { value: "production", label: `Production (${prodCount})` },
+                { value: "uat", label: `UAT (${uatCount})` },
+              ]}
+              value={envFilter}
+              onChange={(v) => setEnvFilter(v as EnvFilter)}
+            />
+            <Segmented
+              options={filterTabs}
+              value={filter}
+              onChange={(v) => setFilter(v as Filter)}
+            />
+          </div>
           <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-2" />
             <Input
@@ -373,16 +387,14 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
 }
 
 /** Tint for a section heading chip by environment. */
-function envHeaderClass(key: EnvKey): string {
-  switch (key) {
-    case "production": return "bg-accent-soft text-accent-soft-foreground";
-    case "uat": return "bg-warning-soft text-warning";
-    default: return "bg-surface-hover text-muted";
-  }
+function envHeaderClass(key: Env): string {
+  return key === "production"
+    ? "bg-accent-soft text-accent-soft-foreground"
+    : "bg-warning-soft text-warning";
 }
 
 /** Compact Production/UAT switch shown on each domain to (re)classify it. */
-function EnvToggle({ value, onChange }: { value: EnvKey; onChange: (e: Env) => void }) {
+function EnvToggle({ value, onChange }: { value: Env; onChange: (e: Env) => void }) {
   return (
     <div className="inline-flex overflow-hidden rounded-md border border-border">
       {(["production", "uat"] as const).map((e) => {
@@ -453,7 +465,7 @@ function DomainCard({
       </div>
       <div className="mt-2.5 flex items-center gap-2">
         <span className="text-[11px] text-muted-2">Environment</span>
-        <EnvToggle value={envKey(r.environment)} onChange={(e) => onSetEnv(r.id, e)} />
+        <EnvToggle value={effectiveEnv(r)} onChange={(e) => onSetEnv(r.id, e)} />
       </div>
     </div>
   );
@@ -487,7 +499,7 @@ function DomainListRow({
         {r.lastHttpStatus ? <span>HTTP {r.lastHttpStatus}</span> : null}
         {r.responseTimeMs != null ? <span>{r.responseTimeMs} ms</span> : null}
         {r.lastCheckedAt ? <span>checked {fmtRelative(r.lastCheckedAt)}</span> : <span>not checked yet</span>}
-        <EnvToggle value={envKey(r.environment)} onChange={(e) => onSetEnv(r.id, e)} />
+        <EnvToggle value={effectiveEnv(r)} onChange={(e) => onSetEnv(r.id, e)} />
         <Tooltip content="Stop monitoring">
           <button
             onClick={() => onRemove(r.id, r.name)}
