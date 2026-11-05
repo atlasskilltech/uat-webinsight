@@ -65,6 +65,7 @@ export default async function SettingsPage() {
             gscProperty: settings.gscProperty,
             ga4Property: settings.ga4Property,
             alertRecipients: settings.alertRecipients ?? "",
+            alertCc: settings.alertCc ?? "",
             downAlertSeconds: settings.downAlertSeconds ?? 120,
           }}
           integrations={integrations}
