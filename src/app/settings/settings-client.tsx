@@ -209,8 +209,9 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
               </Field>
             </div>
             <p className="mt-2 text-xs text-muted-2">
-              Emails are sent from the server, so they work even when the dashboard is closed. The email service
-              is configured on the server (EMAIL_PROVIDER, EMAIL_API_KEY, EMAIL_FROM).
+              Only <strong>Production</strong> domains trigger emails — a UAT site going down does not send mail
+              (its status still shows in the monitor). Emails are sent from the server, so they work even when the
+              dashboard is closed. The email service is configured on the server (EMAIL_PROVIDER, EMAIL_API_KEY, EMAIL_FROM).
             </p>
             <div className="mt-3">
               <Button type="button" variant="outline" onClick={onTest} disabled={testing}>
