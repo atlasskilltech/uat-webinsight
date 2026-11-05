@@ -250,6 +250,7 @@ export interface DomainStatusRow {
   name: string;
   url: string | null;
   type: string;
+  environment: string | null;
   monitorState: string | null;
   lastHttpStatus: number | null;
   responseTimeMs: number | null;
@@ -261,10 +262,18 @@ export interface DomainStatusRow {
 /** Every monitored domain/subdomain, for the live status panel. */
 export async function getMonitoredDomains(): Promise<DomainStatusRow[]> {
   return query<DomainStatusRow>(
-    "SELECT `id`,`name`,`url`,`type`,`monitorState`,`lastHttpStatus`,`responseTimeMs`,`sslExpiry`,`lastCheckedAt`,`autoDiscovered` " +
+    "SELECT `id`,`name`,`url`,`type`,`environment`,`monitorState`,`lastHttpStatus`,`responseTimeMs`,`sslExpiry`,`lastCheckedAt`,`autoDiscovered` " +
       "FROM `ServerAsset` WHERE `monitorEnabled` = 1 OR `type` IN ('domain','subdomain') " +
       "ORDER BY (`monitorState` = 'down') DESC, (`monitorState` = 'degraded') DESC, `name` ASC",
   );
+}
+
+/** Normalise a free-form environment value to the two we track (else null). */
+export function normaliseEnvironment(input: string | null | undefined): "production" | "uat" | null {
+  const v = (input ?? "").trim().toLowerCase();
+  if (v === "production" || v === "prod" || v === "live") return "production";
+  if (v === "uat" || v === "staging" || v === "stage" || v === "test") return "uat";
+  return null;
 }
 
 export type AddHostResult =
@@ -277,7 +286,10 @@ export type AddHostResult =
  * already exists (so the same URL can't be added twice), and "invalid" if the
  * input isn't a valid domain.
  */
-export async function addMonitoredHost(input: string): Promise<AddHostResult> {
+export async function addMonitoredHost(
+  input: string,
+  environment?: string | null,
+): Promise<AddHostResult> {
   const host = normaliseHost(input);
   if (!host) return { ok: false, reason: "invalid" };
   const existing = await query<{ id: string; url: string | null; name: string }>(
@@ -287,8 +299,19 @@ export async function addMonitoredHost(input: string): Promise<AddHostResult> {
     return { ok: false, reason: "duplicate", host };
   }
   await execute(
-    "INSERT INTO `ServerAsset` (`id`,`type`,`name`,`url`,`autoDiscovered`,`monitorEnabled`,`status`) VALUES (?,?,?,?,?,?,?)",
-    [createId(), "domain", host, `https://${host}`, false, true, "active"],
+    "INSERT INTO `ServerAsset` (`id`,`type`,`name`,`url`,`environment`,`autoDiscovered`,`monitorEnabled`,`status`) VALUES (?,?,?,?,?,?,?,?)",
+    [createId(), "domain", host, `https://${host}`, normaliseEnvironment(environment), false, true, "active"],
   );
   return { ok: true, host };
+}
+
+/** Change which environment (production/uat) a monitored domain belongs to. */
+export async function setMonitoredDomainEnvironment(
+  id: string,
+  environment: string | null,
+): Promise<void> {
+  await execute("UPDATE `ServerAsset` SET `environment` = ? WHERE `id` = ?", [
+    normaliseEnvironment(environment),
+    id,
+  ]);
 }

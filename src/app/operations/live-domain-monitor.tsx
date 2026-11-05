@@ -13,7 +13,12 @@ import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { fmtRelative } from "@/lib/dates";
 import { idleState } from "@/lib/form-state";
-import { addMonitoredDomain, checkMonitoredDomainsAction, deleteServerAsset } from "./actions";
+import {
+  addMonitoredDomain,
+  checkMonitoredDomainsAction,
+  deleteServerAsset,
+  setMonitoredDomainEnvironmentAction,
+} from "./actions";
 import type { DomainStatusRow } from "@/lib/domain-monitor";
 import {
   ensureNotificationReady,
@@ -26,6 +31,19 @@ import {
 const REFRESH_MS = 10_000;
 type Filter = "all" | "up" | "degraded" | "down" | "checking";
 type View = "cards" | "list";
+
+// Which environment a monitored domain belongs to. "unspecified" is for
+// existing domains added before environments existed — shown so they can be
+// classified.
+type Env = "production" | "uat";
+type EnvKey = Env | "unspecified";
+
+function envKey(environment: string | null | undefined): EnvKey {
+  const v = (environment ?? "").trim().toLowerCase();
+  if (v === "production" || v === "prod" || v === "live") return "production";
+  if (v === "uat" || v === "staging" || v === "stage" || v === "test") return "uat";
+  return "unspecified";
+}
 
 /** A domain that hasn't produced a concrete up/down/degraded state yet. */
 function isChecking(state?: string | null): boolean {
@@ -64,6 +82,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
+  const [addEnv, setAddEnv] = useState<Env>("uat");
   const toast = useToast();
   const mounted = useRef(true);
 
@@ -124,6 +143,7 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     startTransition(async () => {
       const fd = new FormData();
       fd.set("domain", value);
+      fd.set("environment", addEnv);
       const res = await addMonitoredDomain(idleState, fd);
       if (res.status === "error") {
         toast(res.message ?? "Could not add that domain.", "error");
@@ -143,10 +163,21 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     });
   };
 
+  // Move a domain between Production and UAT — optimistic, then persisted.
+  const onSetEnv = (id: string, env: Env) => {
+    setRows((r) => r.map((x) => (x.id === id ? { ...x, environment: env } : x)));
+    startTransition(async () => {
+      await setMonitoredDomainEnvironmentAction(id, env);
+    });
+  };
+
   const upCount = rows.filter((r) => r.monitorState === "up").length;
   const degradedCount = rows.filter((r) => r.monitorState === "degraded").length;
   const downCount = rows.filter((r) => r.monitorState === "down").length;
   const checkingCount = rows.filter((r) => isChecking(r.monitorState)).length;
+  const prodCount = rows.filter((r) => envKey(r.environment) === "production").length;
+  const uatCount = rows.filter((r) => envKey(r.environment) === "uat").length;
+  const unspecCount = rows.filter((r) => envKey(r.environment) === "unspecified").length;
 
   // Status filter tabs appear only for states that currently have domains.
   const filterTabs = [
@@ -174,6 +205,30 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
     }
   });
 
+  // Always show Production and UAT as their own sections; add Unspecified only
+  // when there are still-unclassified domains to assign.
+  const sections: { key: EnvKey; label: string; rows: DomainStatusRow[] }[] = [
+    { key: "production", label: "Production", rows: visibleRows.filter((r) => envKey(r.environment) === "production") },
+    { key: "uat", label: "UAT", rows: visibleRows.filter((r) => envKey(r.environment) === "uat") },
+  ];
+  const unspecifiedRows = visibleRows.filter((r) => envKey(r.environment) === "unspecified");
+  if (unspecifiedRows.length) sections.push({ key: "unspecified", label: "Unspecified", rows: unspecifiedRows });
+
+  const renderBody = (list: DomainStatusRow[]) =>
+    view === "cards" ? (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {list.map((r) => (
+          <DomainCard key={r.id} r={r} onRemove={onRemove} onSetEnv={onSetEnv} />
+        ))}
+      </div>
+    ) : (
+      <div className="divide-y divide-border rounded-lg border border-border">
+        {list.map((r) => (
+          <DomainListRow key={r.id} r={r} onRemove={onRemove} onSetEnv={onSetEnv} />
+        ))}
+      </div>
+    );
+
   return (
     <Card className="mb-6 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -184,8 +239,9 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
           <div>
             <h3 className="text-sm font-semibold text-foreground">Live domain monitor</h3>
             <p className="text-xs text-muted">
-              {rows.length} monitored · {upCount} up · {degradedCount} degraded · {downCount} down
-              {checkingCount ? ` · ${checkingCount} checking` : ""}
+              {rows.length} monitored · Production {prodCount} · UAT {uatCount}
+              {unspecCount ? ` · Unspecified ${unspecCount}` : ""} · {upCount} up · {downCount} down
+              {degradedCount ? ` · ${degradedCount} degraded` : ""}
             </p>
           </div>
         </div>
@@ -226,6 +282,14 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
             inputMode="url"
           />
         </div>
+        <Segmented
+          options={[
+            { value: "production", label: "Production" },
+            { value: "uat", label: "UAT" },
+          ]}
+          value={addEnv}
+          onChange={(v) => setAddEnv(v as Env)}
+        />
         <Button onClick={onAdd} disabled={pending || !input.trim()}>
           <Plus className="h-4 w-4" /> Add domain
         </Button>
@@ -250,55 +314,71 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
         </div>
       )}
 
-      {/* Content */}
-      <div className="mt-4">
+      {/* Content — split into Production / UAT sections */}
+      <div className="mt-4 space-y-5">
         {rows.length === 0 ? (
-          <EmptyState icon={Globe} title="No domains monitored yet" description="Add a domain URL above to start tracking its up/down status live." />
+          <EmptyState icon={Globe} title="No domains monitored yet" description="Add a domain URL above and choose Production or UAT to start tracking its up/down status live." />
         ) : visibleRows.length === 0 ? (
           <EmptyState icon={Globe} title={`No ${filter} domains`} description="Switch the filter to see the others." />
-        ) : view === "cards" ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {visibleRows.map((r) => (
-              <DomainCard key={r.id} r={r} onRemove={onRemove} />
-            ))}
-          </div>
         ) : (
-          <div className="divide-y divide-border rounded-lg border border-border">
-            {visibleRows.map((r) => {
-              const s = stateTone(r.monitorState);
-              return (
-                <div key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
-                  <Badge tone={s.tone} dot>{s.label}</Badge>
-                  <a
-                    href={hostHref(r.url, r.name)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex min-w-0 items-center gap-1 text-sm font-medium text-foreground hover:text-accent hover:underline"
-                  >
-                    <span className="truncate">{r.name}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0 text-muted-2" />
-                  </a>
-                  {r.autoDiscovered && <Badge tone="neutral">Auto</Badge>}
-                  <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-2">
-                    {r.lastHttpStatus ? <span>HTTP {r.lastHttpStatus}</span> : null}
-                    {r.responseTimeMs != null ? <span>{r.responseTimeMs} ms</span> : null}
-                    {r.lastCheckedAt ? <span>checked {fmtRelative(r.lastCheckedAt)}</span> : <span>not checked yet</span>}
-                    <Tooltip content="Stop monitoring">
-                      <button
-                        onClick={() => onRemove(r.id, r.name)}
-                        className="rounded-md p-1 text-muted hover:bg-danger-soft hover:text-danger"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </Tooltip>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          sections.map((sec) => (
+            <div key={sec.key}>
+              <div className="mb-2 flex items-center gap-2">
+                <span className={cn("inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold", envHeaderClass(sec.key))}>
+                  {sec.label}
+                </span>
+                <span className="text-xs text-muted-2">{sec.rows.length} {sec.rows.length === 1 ? "domain" : "domains"}</span>
+              </div>
+              {sec.rows.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-2">
+                  No {sec.label} domains in this view.
+                </p>
+              ) : (
+                renderBody(sec.rows)
+              )}
+            </div>
+          ))
         )}
       </div>
     </Card>
+  );
+}
+
+/** Tint for a section heading chip by environment. */
+function envHeaderClass(key: EnvKey): string {
+  switch (key) {
+    case "production": return "bg-accent-soft text-accent-soft-foreground";
+    case "uat": return "bg-warning-soft text-warning";
+    default: return "bg-surface-hover text-muted";
+  }
+}
+
+/** Compact Production/UAT switch shown on each domain to (re)classify it. */
+function EnvToggle({ value, onChange }: { value: EnvKey; onChange: (e: Env) => void }) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border border-border">
+      {(["production", "uat"] as const).map((e) => {
+        const active = value === e;
+        return (
+          <button
+            key={e}
+            type="button"
+            onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); onChange(e); }}
+            className={cn(
+              "px-2 py-0.5 text-[11px] font-medium transition-colors",
+              active
+                ? e === "production"
+                  ? "bg-accent-soft text-accent-soft-foreground"
+                  : "bg-warning-soft text-warning"
+                : "text-muted-2 hover:bg-surface-hover hover:text-foreground",
+            )}
+            aria-pressed={active}
+          >
+            {e === "production" ? "Prod" : "UAT"}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -306,9 +386,11 @@ export function LiveDomainMonitor({ initial }: { initial: DomainStatusRow[] }) {
 function DomainCard({
   r,
   onRemove,
+  onSetEnv,
 }: {
   r: DomainStatusRow;
   onRemove: (id: string, name: string) => void;
+  onSetEnv: (id: string, env: Env) => void;
 }) {
   const s = stateTone(r.monitorState);
   return (
@@ -340,6 +422,52 @@ function DomainCard({
         {r.lastHttpStatus ? <span>HTTP {r.lastHttpStatus}</span> : null}
         {r.responseTimeMs != null ? <span>{r.responseTimeMs} ms</span> : null}
         {r.lastCheckedAt ? <span>checked {fmtRelative(r.lastCheckedAt)}</span> : <span>not checked yet</span>}
+      </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        <span className="text-[11px] text-muted-2">Environment</span>
+        <EnvToggle value={envKey(r.environment)} onChange={(e) => onSetEnv(r.id, e)} />
+      </div>
+    </div>
+  );
+}
+
+/** One domain as a row (list view). */
+function DomainListRow({
+  r,
+  onRemove,
+  onSetEnv,
+}: {
+  r: DomainStatusRow;
+  onRemove: (id: string, name: string) => void;
+  onSetEnv: (id: string, env: Env) => void;
+}) {
+  const s = stateTone(r.monitorState);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
+      <Badge tone={s.tone} dot>{s.label}</Badge>
+      <a
+        href={hostHref(r.url, r.name)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex min-w-0 items-center gap-1 text-sm font-medium text-foreground hover:text-accent hover:underline"
+      >
+        <span className="truncate">{r.name}</span>
+        <ExternalLink className="h-3 w-3 shrink-0 text-muted-2" />
+      </a>
+      {r.autoDiscovered && <Badge tone="neutral">Auto</Badge>}
+      <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-2">
+        {r.lastHttpStatus ? <span>HTTP {r.lastHttpStatus}</span> : null}
+        {r.responseTimeMs != null ? <span>{r.responseTimeMs} ms</span> : null}
+        {r.lastCheckedAt ? <span>checked {fmtRelative(r.lastCheckedAt)}</span> : <span>not checked yet</span>}
+        <EnvToggle value={envKey(r.environment)} onChange={(e) => onSetEnv(r.id, e)} />
+        <Tooltip content="Stop monitoring">
+          <button
+            onClick={() => onRemove(r.id, r.name)}
+            className="rounded-md p-1 text-muted hover:bg-danger-soft hover:text-danger"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </Tooltip>
       </div>
     </div>
   );
