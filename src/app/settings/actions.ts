@@ -88,6 +88,7 @@ export async function sendTestAlert(): Promise<FormState> {
   }
   const html = emailLayout({
     accent: "#2563eb",
+    icon: "✉️",
     badge: "TEST",
     title: "Test alert from Atlas WebInsight",
     intro: "This is a test of your downtime email alerts. If you received this, the email setup is working — real alerts will be sent automatically when a monitored site goes down.",
