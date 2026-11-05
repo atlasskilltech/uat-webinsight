@@ -58,6 +58,7 @@ async function sendDownAlertEmail(
   const statusLine = httpStatus ? `HTTP status ${httpStatus}` : "No response (connection failed)";
   const html = emailLayout({
     accent: "#dc2626",
+    icon: "⚠️",
     badge: "SITE DOWN",
     title: `${asset.name} is down`,
     intro: `${asset.name} has not been responding for ${forStr}.`,
@@ -90,7 +91,8 @@ async function sendRecoveryEmail(
   const outage = fmtDuration(now.getTime() - downSince.getTime());
   const html = emailLayout({
     accent: "#16a34a",
-    badge: "RECOVERED",
+    icon: "✅",
+    badge: "RESOLVED",
     title: `${asset.name} is back up`,
     intro: `${asset.name} is responding again.`,
     rows: [
