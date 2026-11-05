@@ -84,26 +84,40 @@ export function emailLayout(i: EmailLayoutInput): string {
     : "";
 
   return `<!doctype html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#eef2f7">
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light only">
+  <style>
+    @media only screen and (max-width:620px){
+      .ei-container{width:100%!important;border-radius:0!important}
+      .ei-px{padding-left:18px!important;padding-right:18px!important}
+      .ei-hero{padding-left:16px!important;padding-right:16px!important}
+      .ei-title{font-size:20px!important}
+      .ei-logo{height:44px!important}
+      .ei-icon{font-size:38px!important}
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#eef2f7;-webkit-text-size-adjust:100%">
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escapeHtml(i.intro)}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f7">
-    <tr><td align="center" style="padding:28px 12px">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.08)">
+    <tr><td align="center" style="padding:28px 14px">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="ei-container" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.08)">
         <!-- brand header -->
-        <tr><td style="padding:22px 28px 18px;text-align:center;border-bottom:1px solid #eef2f7">
-          <img src="${EMAIL_LOGO_URL}" alt="WebInsight" height="34" style="height:34px;display:inline-block;border:0;outline:none">
+        <tr><td class="ei-px" style="padding:26px 28px 24px;text-align:center;border-bottom:1px solid #eef2f7">
+          <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" width="240" class="ei-logo" style="height:52px;width:auto;max-width:72%;display:inline-block;border:0;outline:none;text-decoration:none">
         </td></tr>
         <!-- status hero -->
-        <tr><td style="background:${i.accent};padding:30px 24px;text-align:center">
-          <div style="font-size:42px;line-height:1">${i.icon}</div>
-          <div style="margin-top:10px;font-family:${FONT};font-size:12px;font-weight:bold;letter-spacing:.12em;color:#ffffff;opacity:.9">${escapeHtml(i.badge)}</div>
-          <div style="margin-top:6px;font-family:${FONT};font-size:23px;line-height:1.3;font-weight:bold;color:#ffffff">${escapeHtml(i.title)}</div>
+        <tr><td class="ei-hero" style="background:${i.accent};padding:32px 24px;text-align:center">
+          <div class="ei-icon" style="font-size:44px;line-height:1">${i.icon}</div>
+          <div style="margin-top:12px;font-family:${FONT};font-size:12px;font-weight:bold;letter-spacing:.14em;color:#ffffff;opacity:.92">${escapeHtml(i.badge)}</div>
+          <div class="ei-title" style="margin-top:6px;font-family:${FONT};font-size:24px;line-height:1.3;font-weight:bold;color:#ffffff">${escapeHtml(i.title)}</div>
         </td></tr>
         <!-- body -->
-        <tr><td style="padding:26px 28px 8px">
-          <p style="margin:0 0 18px;font-family:${FONT};font-size:15px;line-height:1.6;color:#334155;text-align:center">${escapeHtml(i.intro)}</p>
+        <tr><td class="ei-px" style="padding:28px 28px 10px">
+          <p style="margin:0 0 20px;font-family:${FONT};font-size:15px;line-height:1.6;color:#334155;text-align:center">${escapeHtml(i.intro)}</p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8fafc;border:1px solid #eef2f7;border-radius:12px;font-family:${FONT}">
             ${rowsHtml}
           </table>
@@ -111,8 +125,8 @@ export function emailLayout(i: EmailLayoutInput): string {
           ${footerNoteHtml}
         </td></tr>
         <!-- footer -->
-        <tr><td style="padding:18px 28px 24px;border-top:1px solid #eef2f7;background:#ffffff;text-align:center">
-          <p style="margin:0;font-family:${FONT};font-size:12px;color:#94a3b8;line-height:1.6">Atlas <strong style="color:#64748b">WebInsight</strong> · automated uptime monitoring<br>This is an automated message — please do not reply.</p>
+        <tr><td class="ei-px" style="padding:20px 28px 26px;border-top:1px solid #eef2f7;background:#ffffff;text-align:center">
+          <p style="margin:0;font-family:${FONT};font-size:12px;color:#94a3b8;line-height:1.7">Atlas <strong style="color:#64748b">WebInsight</strong> &middot; automated uptime monitoring<br>This is an automated message — please do not reply.</p>
         </td></tr>
       </table>
     </td></tr>
