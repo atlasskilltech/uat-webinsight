@@ -14,6 +14,8 @@ import { importSeoCsv, importAnalyticsCsv } from "@/lib/csv-import";
 import { disconnect, type Provider } from "@/lib/integrations";
 import { runGoogleSync } from "@/lib/sync";
 import { requireAdmin, isAuthError } from "@/lib/auth/guard";
+import { getSettings } from "@/lib/settings";
+import { sendEmail, parseRecipients, emailLayout, escapeHtml } from "@/lib/email";
 
 /** Returns an error FormState if the caller is not an admin, else null. */
 async function assertAdmin(): Promise<FormState | null> {
@@ -67,6 +69,44 @@ export async function saveSettings(_prev: FormState, formData: FormData): Promis
   } catch {
     return errorState("Could not save settings.");
   }
+}
+
+/**
+ * Send a test downtime alert to the saved recipients, so the email pipeline can
+ * be verified without waiting for a real outage. Surfaces the exact provider
+ * result (success, "not configured", unverified sender, bad key, …) so setup
+ * problems are obvious. Admin-only.
+ */
+export async function sendTestAlert(): Promise<FormState> {
+  const denied = await assertAdmin();
+  if (denied) return denied;
+  const settings = await getSettings();
+  const recipients = parseRecipients(settings.alertRecipients);
+  const cc = parseRecipients(settings.alertCc);
+  if (recipients.length === 0) {
+    return errorState("Add at least one recipient above and click Save settings first, then send the test.");
+  }
+  const html = emailLayout({
+    accent: "#2563eb",
+    badge: "TEST",
+    title: "Test alert from Atlas WebInsight",
+    intro: "This is a test of your downtime email alerts. If you received this, the email setup is working — real alerts will be sent automatically when a monitored site goes down.",
+    rows: [
+      { label: "Recipients", value: escapeHtml(recipients.join(", ")) },
+      ...(cc.length ? [{ label: "CC", value: escapeHtml(cc.join(", ")) }] : []),
+    ],
+    footerNote: "Sent from Settings → Downtime alerts → Send test email.",
+  });
+  const res = await sendEmail({
+    to: recipients,
+    cc,
+    subject: "✅ Test alert — Atlas WebInsight",
+    html,
+    text: "This is a test of your Atlas WebInsight downtime alerts. If you received this, email is configured correctly.",
+  });
+  return res.ok
+    ? successState(`Test sent to ${recipients.length} recipient(s)${cc.length ? ` (+${cc.length} cc)` : ""}. Check inboxes/spam.`)
+    : errorState(`Could not send: ${res.message}`);
 }
 
 export async function importCsvAction(_prev: FormState, formData: FormData): Promise<FormState> {

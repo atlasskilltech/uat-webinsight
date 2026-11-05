@@ -27,7 +27,7 @@ import { DemoBadge } from "@/components/ui/demo-badge";
 import { idleState } from "@/lib/form-state";
 import { INTEGRATION_STATUSES } from "@/lib/enums";
 import { fmtDateTime, fmtDate } from "@/lib/dates";
-import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData } from "./actions";
+import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData, sendTestAlert } from "./actions";
 
 interface IntegrationView {
   provider: "gsc" | "ga4" | "psi";
@@ -126,6 +126,12 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
     else if (state.status === "error" && state.message && !state.fieldErrors) toast(state.message, "error");
   }, [state, toast, router]);
   const err = (f: string) => state.fieldErrors?.[f];
+  const [testing, startTest] = useTransition();
+  const onTest = () =>
+    startTest(async () => {
+      const res = await sendTestAlert();
+      toast(res.message ?? "Done.", res.status === "success" ? "success" : "error");
+    });
 
   return (
     <Card className="max-w-2xl">
@@ -206,6 +212,12 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
               Emails are sent from the server, so they work even when the dashboard is closed. The email service
               is configured on the server (EMAIL_PROVIDER, EMAIL_API_KEY, EMAIL_FROM).
             </p>
+            <div className="mt-3">
+              <Button type="button" variant="outline" onClick={onTest} disabled={testing}>
+                {testing ? "Sending…" : "Send test email"}
+              </Button>
+              <span className="ml-2 text-xs text-muted-2">Save first, then send a test to the recipients above.</span>
+            </div>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
             <SubmitButton>Save settings</SubmitButton>
