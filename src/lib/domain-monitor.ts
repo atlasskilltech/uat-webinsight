@@ -327,14 +327,17 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
       else if (r.state === "down") down++;
 
       const now = new Date();
+      // Downtime emails are for PRODUCTION domains only — a UAT site going down
+      // does not email anyone (its outage is still tracked/shown in the UI).
+      const isProd = effectiveEnvironment(asset, host) === "production";
       let downSince: Date | null = asset.downSince ? new Date(asset.downSince) : null;
       let downAlertSentAt: Date | null = asset.downAlertSentAt ? new Date(asset.downAlertSentAt) : null;
 
       if (r.state === "down") {
         if (!downSince) downSince = now; // outage just started
         const elapsedMs = now.getTime() - downSince.getTime();
-        // Email once, after it has stayed down past the threshold.
-        if (elapsedMs >= thresholdMs && !downAlertSentAt && recipients.length > 0) {
+        // Email once, after it has stayed down past the threshold (production only).
+        if (isProd && elapsedMs >= thresholdMs && !downAlertSentAt && recipients.length > 0) {
           const res = await sendDownAlertEmail(asset, host, downSince, now, r.httpStatus, recipients, cc, tz, ctaFor(host));
           if (res.ok) {
             downAlertSentAt = now;
@@ -399,6 +402,21 @@ export function normaliseEnvironment(input: string | null | undefined): "product
   if (v === "production" || v === "prod" || v === "live") return "production";
   if (v === "uat" || v === "staging" || v === "stage" || v === "test") return "uat";
   return null;
+}
+
+// "uat" only as a real subdomain token (uat-crm, uat.foo, foo-uat), not the
+// letters inside a word (examevalUATion is NOT uat). Mirrors the dashboard UI.
+const UAT_HOST_TOKEN = /(?:^|[^a-z0-9])uat(?:[^a-z0-9]|$)/;
+
+/**
+ * The environment a monitored domain belongs to. An explicit Prod/UAT tag
+ * wins; otherwise a "uat" subdomain is UAT and everything else is Production.
+ * Used to send downtime emails for Production domains only.
+ */
+export function effectiveEnvironment(asset: ServerAsset, host: string): "production" | "uat" {
+  const stored = normaliseEnvironment(asset.environment);
+  if (stored) return stored;
+  return UAT_HOST_TOKEN.test(`${asset.name} ${asset.url ?? ""} ${host}`.toLowerCase()) ? "uat" : "production";
 }
 
 export type AddHostResult =
