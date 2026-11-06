@@ -22,13 +22,9 @@ export interface SendEmailInput {
   text?: string;
 }
 
-/** WebInsight horizontal logo (dark, for light backgrounds). */
+/** WebInsight horizontal logo (dark), shown on the white header strip. */
 export const EMAIL_LOGO_URL =
   "https://atlasuniversity.edu.in/brands/assets/logos/webinsight/webinsight-horizontal.png";
-
-/** White/reversed WebInsight logo, used on the coloured hero header. */
-export const EMAIL_LOGO_URL_WHITE =
-  "https://atlasuniversity.edu.in/brands/assets/logos/webinsight/webinsight-horizontal-white.png";
 
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
@@ -114,21 +110,22 @@ export function emailLayout(i: EmailLayoutInput): string {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f7">
     <tr><td align="center" style="padding:26px 12px">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="ei-container" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 26px rgba(15,23,42,.10)">
-        <!-- gradient hero -->
-        <tr><td class="ei-hero" style="padding:28px 30px 30px;background-color:${i.accent};background-image:linear-gradient(135deg,${i.accent} 0%,${i.accentDark} 100%)">
+        <!-- white brand header -->
+        <tr><td class="ei-px" style="padding:22px 30px;background:#ffffff;border-bottom:1px solid #edf1f6">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
             <tr>
               <td style="vertical-align:middle">
-                <img src="${EMAIL_LOGO_URL_WHITE}" alt="Atlas WebInsight" height="42" class="ei-logo" style="height:42px;width:auto;max-width:70%;display:block;border:0;outline:none">
+                <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="38" class="ei-logo" style="height:38px;width:auto;max-width:72%;display:block;border:0;outline:none">
               </td>
               <td style="vertical-align:middle;text-align:right">
-                <span style="font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.12em;color:#ffffff;opacity:.8">UPTIME MONITOR</span>
+                <span style="font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.12em;color:#9aa4b2">UPTIME MONITOR</span>
               </td>
             </tr>
           </table>
-          <div style="margin-top:22px">
-            <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.18);font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.08em;color:#ffffff">${escapeHtml(i.pill)}</span>
-          </div>
+        </td></tr>
+        <!-- gradient hero -->
+        <tr><td class="ei-hero" style="padding:26px 30px 28px;background-color:${i.accent};background-image:linear-gradient(135deg,${i.accent} 0%,${i.accentDark} 100%)">
+          <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.18);font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.08em;color:#ffffff">${escapeHtml(i.pill)}</span>
           <div class="ei-title" style="margin-top:14px;font-family:${FONT};font-size:27px;line-height:1.25;font-weight:800;color:#ffffff">${escapeHtml(i.title)}</div>
           <div style="margin-top:6px;font-family:${FONT};font-size:14px;line-height:1.5;color:#ffffff;opacity:.9">${escapeHtml(i.subtitle)}</div>
         </td></tr>
