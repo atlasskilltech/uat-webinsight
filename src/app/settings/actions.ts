@@ -34,10 +34,11 @@ export async function saveSettings(_prev: FormState, formData: FormData): Promis
   if (!parsed.success) return parsed.state;
   const d = parsed.data;
   try {
-    // Upsert the AppSettings singleton (id = 'app'). Only the fields that were
-    // actually supplied are written, mirroring Prisma's skip-undefined behavior:
-    // a blank optional form field (undefined) leaves the existing value intact.
-    const entries = Object.entries(d).filter(([, v]) => v !== undefined);
+    // Upsert the AppSettings singleton (id = 'app'). This form submits every
+    // field, so a blank field means "clear it", not "leave unchanged". Zod turns
+    // blanks into undefined, which we persist as empty (rather than skipping) so
+    // e.g. clearing the alert recipients actually removes them.
+    const entries = Object.entries(d).map(([k, v]) => [k, v === undefined ? "" : v] as const);
     const cols = entries.map(([k]) => k);
     const vals = entries.map(([, v]) => v);
     const insertCols = ["id", ...cols].map((c) => `\`${c}\``).join(", ");
