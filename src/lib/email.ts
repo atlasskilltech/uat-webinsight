@@ -110,10 +110,10 @@ export function emailLayout(i: EmailLayoutInput): string {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f7">
     <tr><td align="center" style="padding:26px 12px">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="ei-container" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 26px rgba(15,23,42,.10)">
-        <!-- white brand header -->
-        <tr><td class="ei-px" style="padding:30px 30px 26px;background:#ffffff;border-bottom:1px solid #edf1f6;text-align:center">
+        <!-- brand header (brand green) -->
+        <tr><td class="ei-px" style="padding:30px 30px 26px;background:#449F80;text-align:center">
           <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="58" class="ei-logo" style="height:58px;width:auto;max-width:82%;display:inline-block;border:0;outline:none">
-          <div style="margin-top:12px;font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.16em;color:#9aa4b2">UPTIME MONITOR</div>
+          <div style="margin-top:12px;font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.16em;color:#eafaf3">UPTIME MONITOR</div>
         </td></tr>
         <!-- gradient hero -->
         <tr><td class="ei-hero" style="padding:26px 30px 28px;background-color:${i.accent};background-image:linear-gradient(135deg,${i.accent} 0%,${i.accentDark} 100%)">
