@@ -22,9 +22,13 @@ export interface SendEmailInput {
   text?: string;
 }
 
-/** WebInsight horizontal logo, shown in the email header. */
+/** WebInsight horizontal logo (dark, for light backgrounds). */
 export const EMAIL_LOGO_URL =
   "https://atlasuniversity.edu.in/brands/assets/logos/webinsight/webinsight-horizontal.png";
+
+/** White/reversed WebInsight logo, used on the coloured hero header. */
+export const EMAIL_LOGO_URL_WHITE =
+  "https://atlasuniversity.edu.in/brands/assets/logos/webinsight/webinsight-horizontal-white.png";
 
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
@@ -101,7 +105,7 @@ export function emailLayout(i: EmailLayoutInput): string {
       .ei-px{padding-left:20px!important;padding-right:20px!important}
       .ei-hero{padding:24px 20px!important}
       .ei-title{font-size:22px!important}
-      .ei-logo{height:24px!important}
+      .ei-logo{height:36px!important}
     }
   </style>
 </head>
@@ -115,12 +119,10 @@ export function emailLayout(i: EmailLayoutInput): string {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
             <tr>
               <td style="vertical-align:middle">
-                <span style="display:inline-block;background:#ffffff;border-radius:9px;padding:8px 13px;line-height:0">
-                  <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="26" class="ei-logo" style="height:26px;width:auto;display:block;border:0;outline:none">
-                </span>
+                <img src="${EMAIL_LOGO_URL_WHITE}" alt="Atlas WebInsight" height="42" class="ei-logo" style="height:42px;width:auto;max-width:70%;display:block;border:0;outline:none">
               </td>
               <td style="vertical-align:middle;text-align:right">
-                <span style="font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.12em;color:#ffffff;opacity:.85">UPTIME MONITOR</span>
+                <span style="font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.12em;color:#ffffff;opacity:.8">UPTIME MONITOR</span>
               </td>
             </tr>
           </table>
