@@ -31,19 +31,21 @@ export function escapeHtml(s: string): string {
 }
 
 export interface EmailLayoutInput {
-  /** Accent colour (hex) for the hero band, badge and CTA button. */
+  /** Strong status colour (hex) for the hero gradient start, pill and CTA. */
   accent: string;
-  /** Emoji shown large in the hero, e.g. "⚠️" / "✅". */
-  icon: string;
-  /** Short status word, e.g. "SITE DOWN" / "RESOLVED". */
-  badge: string;
-  /** Headline (plain text, escaped here). */
+  /** Darker shade (hex) for the hero gradient end. */
+  accentDark: string;
+  /** Status pill text in the hero, e.g. "SITE DOWN" / "RESOLVED". */
+  pill: string;
+  /** Big hero headline (plain text, escaped here). */
   title: string;
-  /** Intro sentence (plain text, escaped here). Also used as inbox preview. */
-  intro: string;
-  /** Detail rows; `value` is treated as trusted HTML (caller escapes/links). */
+  /** Hero subtitle under the headline (plain text, escaped here). */
+  subtitle: string;
+  /** Body intro line — trusted HTML (caller escapes; may include <strong>). */
+  introHtml: string;
+  /** Detail rows; `value` is trusted HTML (caller escapes/links/colours). */
   rows: { label: string; value: string }[];
-  /** Optional call-to-action button. */
+  /** Optional CTA button + paste-this-link fallback. */
   cta?: { label: string; url: string };
   /** Small print under the details. */
   footerNote?: string;
@@ -52,35 +54,39 @@ export interface EmailLayoutInput {
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 /**
- * Branded, email-client-safe HTML (tables + inline styles, 600px, dark text on
- * light). A coloured hero band carries the status; details sit in a soft card.
- * Used for the down, recovery and test emails.
+ * Branded, email-client-safe HTML (tables + inline styles, fluid 600px). A
+ * coloured gradient hero carries a white logo chip, a status pill and the
+ * headline; the body holds a detail card, a CTA button and a paste-this-link
+ * fallback. Mirrors the Atlas transactional-email look. Mobile-responsive.
  */
 export function emailLayout(i: EmailLayoutInput): string {
+  const preview = i.title;
   const rowsHtml = i.rows
     .map(
       (r, idx) => `
         <tr>
-          <td style="padding:10px 16px;border-top:${idx === 0 ? "0" : "1px solid #eef2f7"};color:#64748b;font-size:13px;white-space:nowrap;vertical-align:top;width:38%">${escapeHtml(r.label)}</td>
-          <td style="padding:10px 16px;border-top:${idx === 0 ? "0" : "1px solid #eef2f7"};color:#0f172a;font-size:14px;font-weight:600;vertical-align:top">${r.value}</td>
+          <td style="padding:11px 18px;border-top:${idx === 0 ? "0" : "1px solid #edf1f6"};color:#6b7280;font-size:13px;vertical-align:top;width:46%">${escapeHtml(r.label)}</td>
+          <td style="padding:11px 18px;border-top:${idx === 0 ? "0" : "1px solid #edf1f6"};color:#111827;font-size:14px;font-weight:700;text-align:right;vertical-align:top">${r.value}</td>
         </tr>`,
     )
     .join("");
 
   const ctaHtml = i.cta
     ? `
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:22px auto 4px">
-        <tr><td style="border-radius:10px;background:${i.accent};box-shadow:0 2px 6px rgba(15,23,42,.18)">
-          <a href="${escapeHtml(i.cta.url)}" target="_blank"
-             style="display:inline-block;padding:13px 28px;font-family:${FONT};font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:10px">
-            ${escapeHtml(i.cta.label)} &nbsp;&rarr;
-          </a>
-        </td></tr>
-      </table>`
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 2px">
+            <tr><td style="border-radius:10px;background:${i.accent}">
+              <a href="${escapeHtml(i.cta.url)}" target="_blank"
+                 style="display:inline-block;padding:14px 26px;font-family:${FONT};font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:10px">
+                ${escapeHtml(i.cta.label)}
+              </a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;font-family:${FONT};font-size:12px;line-height:1.5;color:#9aa4b2">If the button doesn't work, paste this link into your browser:</p>
+          <p style="margin:3px 0 0;font-family:${FONT};font-size:12px;line-height:1.5"><a href="${escapeHtml(i.cta.url)}" style="color:#2563eb;word-break:break-all">${escapeHtml(i.cta.url)}</a></p>`
     : "";
 
   const footerNoteHtml = i.footerNote
-    ? `<p style="margin:18px 0 0;color:#94a3b8;font-size:12px;line-height:1.6;text-align:center">${escapeHtml(i.footerNote)}</p>`
+    ? `<p style="margin:14px 0 0;color:#9aa4b2;font-size:12px;line-height:1.6">${escapeHtml(i.footerNote)}</p>`
     : "";
 
   return `<!doctype html>
@@ -92,41 +98,50 @@ export function emailLayout(i: EmailLayoutInput): string {
   <style>
     @media only screen and (max-width:620px){
       .ei-container{width:100%!important;border-radius:0!important}
-      .ei-px{padding-left:18px!important;padding-right:18px!important}
-      .ei-hero{padding-left:16px!important;padding-right:16px!important}
-      .ei-title{font-size:20px!important}
-      .ei-logo{height:44px!important}
-      .ei-icon{font-size:38px!important}
+      .ei-px{padding-left:20px!important;padding-right:20px!important}
+      .ei-hero{padding:24px 20px!important}
+      .ei-title{font-size:22px!important}
+      .ei-logo{height:24px!important}
     }
   </style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f7;-webkit-text-size-adjust:100%">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escapeHtml(i.intro)}</div>
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escapeHtml(preview)}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f7">
-    <tr><td align="center" style="padding:28px 14px">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="ei-container" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.08)">
-        <!-- brand header -->
-        <tr><td class="ei-px" style="padding:26px 28px 24px;text-align:center;border-bottom:1px solid #eef2f7">
-          <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" width="240" class="ei-logo" style="height:52px;width:auto;max-width:72%;display:inline-block;border:0;outline:none;text-decoration:none">
-        </td></tr>
-        <!-- status hero -->
-        <tr><td class="ei-hero" style="background:${i.accent};padding:32px 24px;text-align:center">
-          <div class="ei-icon" style="font-size:44px;line-height:1">${i.icon}</div>
-          <div style="margin-top:12px;font-family:${FONT};font-size:12px;font-weight:bold;letter-spacing:.14em;color:#ffffff;opacity:.92">${escapeHtml(i.badge)}</div>
-          <div class="ei-title" style="margin-top:6px;font-family:${FONT};font-size:24px;line-height:1.3;font-weight:bold;color:#ffffff">${escapeHtml(i.title)}</div>
+    <tr><td align="center" style="padding:26px 12px">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="ei-container" style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 26px rgba(15,23,42,.10)">
+        <!-- gradient hero -->
+        <tr><td class="ei-hero" style="padding:28px 30px 30px;background-color:${i.accent};background-image:linear-gradient(135deg,${i.accent} 0%,${i.accentDark} 100%)">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td style="vertical-align:middle">
+                <span style="display:inline-block;background:#ffffff;border-radius:9px;padding:8px 13px;line-height:0">
+                  <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="26" class="ei-logo" style="height:26px;width:auto;display:block;border:0;outline:none">
+                </span>
+              </td>
+              <td style="vertical-align:middle;text-align:right">
+                <span style="font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.12em;color:#ffffff;opacity:.85">UPTIME MONITOR</span>
+              </td>
+            </tr>
+          </table>
+          <div style="margin-top:22px">
+            <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.18);font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.08em;color:#ffffff">${escapeHtml(i.pill)}</span>
+          </div>
+          <div class="ei-title" style="margin-top:14px;font-family:${FONT};font-size:27px;line-height:1.25;font-weight:800;color:#ffffff">${escapeHtml(i.title)}</div>
+          <div style="margin-top:6px;font-family:${FONT};font-size:14px;line-height:1.5;color:#ffffff;opacity:.9">${escapeHtml(i.subtitle)}</div>
         </td></tr>
         <!-- body -->
-        <tr><td class="ei-px" style="padding:28px 28px 10px">
-          <p style="margin:0 0 20px;font-family:${FONT};font-size:15px;line-height:1.6;color:#334155;text-align:center">${escapeHtml(i.intro)}</p>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8fafc;border:1px solid #eef2f7;border-radius:12px;font-family:${FONT}">
+        <tr><td class="ei-px" style="padding:28px 30px 10px">
+          <p style="margin:0 0 20px;font-family:${FONT};font-size:15px;line-height:1.6;color:#374151">${i.introHtml}</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8fafc;border:1px solid #edf1f6;border-radius:12px;font-family:${FONT}">
             ${rowsHtml}
           </table>
           ${ctaHtml}
           ${footerNoteHtml}
         </td></tr>
         <!-- footer -->
-        <tr><td class="ei-px" style="padding:20px 28px 26px;border-top:1px solid #eef2f7;background:#ffffff;text-align:center">
-          <p style="margin:0;font-family:${FONT};font-size:12px;color:#94a3b8;line-height:1.7">Atlas <strong style="color:#64748b">WebInsight</strong> &middot; automated uptime monitoring<br>This is an automated message — please do not reply.</p>
+        <tr><td class="ei-px" style="padding:20px 30px 26px;border-top:1px solid #edf1f6;background:#ffffff">
+          <p style="margin:0;font-family:${FONT};font-size:12px;color:#9aa4b2;line-height:1.7">Atlas <strong style="color:#6b7280">WebInsight</strong> &middot; automated uptime monitoring<br>This is an automated message — please do not reply.</p>
         </td></tr>
       </table>
     </td></tr>

@@ -41,6 +41,77 @@ function targetUrl(asset: ServerAsset, host: string): string {
   return asset.url || `https://${host}`;
 }
 
+function urlLink(url: string): string {
+  return `<a href="${escapeHtml(url)}" style="color:#2563eb;text-decoration:none">${escapeHtml(url)}</a>`;
+}
+
+export interface DownAlertParams {
+  name: string;
+  url: string;
+  environment: string | null;
+  downSince: Date;
+  now: Date;
+  httpStatus: number | null;
+  ctaUrl: string;
+  tz: string;
+}
+
+/** Build the subject/html/text of a "site down" email. Shared by the live
+ *  monitor and the Settings test button, so the test looks exactly real. */
+export function buildDownAlertEmail(p: DownAlertParams): { subject: string; html: string; text: string } {
+  const forStr = fmtDuration(p.now.getTime() - p.downSince.getTime());
+  const statusLine = p.httpStatus ? `HTTP status ${p.httpStatus}` : "No response (connection failed)";
+  const html = emailLayout({
+    accent: "#dc2626",
+    accentDark: "#991b1b",
+    pill: "SITE DOWN",
+    title: `${p.name} is down`,
+    subtitle: `Not responding for ${forStr}`,
+    introHtml: `A monitored production site, <strong>${escapeHtml(p.name)}</strong>, is not responding. Here are the details.`,
+    rows: [
+      { label: "Site", value: urlLink(p.url) },
+      { label: "Environment", value: escapeHtml(p.environment || "Production") },
+      { label: "Down since", value: escapeHtml(fmtTime(p.downSince, p.tz)) },
+      { label: "Down for", value: `<span style="color:#dc2626">${escapeHtml(forStr)}</span>` },
+      { label: "Detail", value: escapeHtml(statusLine) },
+    ],
+    cta: p.ctaUrl ? { label: "View domain report", url: p.ctaUrl } : undefined,
+    footerNote: "You are receiving this because you are a downtime-alert recipient in Atlas WebInsight.",
+  });
+  const text = `SITE DOWN: ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDown since: ${fmtTime(p.downSince, p.tz)}\nDown for: ${forStr}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`;
+  return { subject: `🔴 DOWN: ${p.name} has been down for ${forStr}`, html, text };
+}
+
+export interface RecoveryParams {
+  name: string;
+  url: string;
+  downSince: Date;
+  now: Date;
+  ctaUrl: string;
+  tz: string;
+}
+
+/** Build the subject/html/text of a "resolved" email. */
+export function buildRecoveryEmail(p: RecoveryParams): { subject: string; html: string; text: string } {
+  const outage = fmtDuration(p.now.getTime() - p.downSince.getTime());
+  const html = emailLayout({
+    accent: "#16a34a",
+    accentDark: "#15803d",
+    pill: "RESOLVED",
+    title: `${p.name} is back up`,
+    subtitle: `Recovered after ${outage}`,
+    introHtml: `<strong>${escapeHtml(p.name)}</strong> is responding again. Here are the details.`,
+    rows: [
+      { label: "Site", value: urlLink(p.url) },
+      { label: "Total downtime", value: escapeHtml(outage) },
+      { label: "Recovered at", value: escapeHtml(fmtTime(p.now, p.tz)) },
+    ],
+    cta: p.ctaUrl ? { label: "View domain report", url: p.ctaUrl } : undefined,
+  });
+  const text = `RESOLVED: ${p.name}\nSite: ${p.url}\nTotal downtime: ${outage}\nRecovered at: ${fmtTime(p.now, p.tz)}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`;
+  return { subject: `✅ RESOLVED: ${p.name} is back up`, html, text };
+}
+
 /** Email the team that a monitored site has been down past the threshold. */
 async function sendDownAlertEmail(
   asset: ServerAsset,
@@ -53,27 +124,17 @@ async function sendDownAlertEmail(
   tz: string,
   ctaUrl: string,
 ) {
-  const url = targetUrl(asset, host);
-  const forStr = fmtDuration(now.getTime() - downSince.getTime());
-  const statusLine = httpStatus ? `HTTP status ${httpStatus}` : "No response (connection failed)";
-  const html = emailLayout({
-    accent: "#dc2626",
-    icon: "⚠️",
-    badge: "SITE DOWN",
-    title: `${asset.name} is down`,
-    intro: `${asset.name} has not been responding for ${forStr}.`,
-    rows: [
-      { label: "URL", value: `<a href="${escapeHtml(url)}" style="color:#2563eb;text-decoration:none">${escapeHtml(url)}</a>` },
-      { label: "Environment", value: escapeHtml(asset.environment || "—") },
-      { label: "Down since", value: escapeHtml(fmtTime(downSince, tz)) },
-      { label: "Down for", value: escapeHtml(forStr) },
-      { label: "Detail", value: escapeHtml(statusLine) },
-    ],
-    cta: ctaUrl ? { label: "View domain report", url: ctaUrl } : undefined,
-    footerNote: "You are receiving this because you are a downtime-alert recipient in Atlas WebInsight.",
+  const { subject, html, text } = buildDownAlertEmail({
+    name: asset.name,
+    url: targetUrl(asset, host),
+    environment: asset.environment,
+    downSince,
+    now,
+    httpStatus,
+    ctaUrl,
+    tz,
   });
-  const text = `SITE DOWN: ${asset.name}\nURL: ${url}\nEnvironment: ${asset.environment || "-"}\nDown since: ${fmtTime(downSince, tz)}\nDown for: ${forStr}\n${statusLine}${ctaUrl ? `\nReport: ${ctaUrl}` : ""}`;
-  return sendEmail({ to: recipients, cc, subject: `🔴 DOWN: ${asset.name} has been down for ${forStr}`, html, text });
+  return sendEmail({ to: recipients, cc, subject, html, text });
 }
 
 /** Email the team that a site that had been reported down is back up. */
@@ -87,23 +148,15 @@ async function sendRecoveryEmail(
   tz: string,
   ctaUrl: string,
 ) {
-  const url = targetUrl(asset, host);
-  const outage = fmtDuration(now.getTime() - downSince.getTime());
-  const html = emailLayout({
-    accent: "#16a34a",
-    icon: "✅",
-    badge: "RESOLVED",
-    title: `${asset.name} is back up`,
-    intro: `${asset.name} is responding again.`,
-    rows: [
-      { label: "URL", value: `<a href="${escapeHtml(url)}" style="color:#2563eb;text-decoration:none">${escapeHtml(url)}</a>` },
-      { label: "Total downtime", value: escapeHtml(outage) },
-      { label: "Recovered at", value: escapeHtml(fmtTime(now, tz)) },
-    ],
-    cta: ctaUrl ? { label: "View domain report", url: ctaUrl } : undefined,
+  const { subject, html, text } = buildRecoveryEmail({
+    name: asset.name,
+    url: targetUrl(asset, host),
+    downSince,
+    now,
+    ctaUrl,
+    tz,
   });
-  const text = `RECOVERED: ${asset.name}\nURL: ${url}\nTotal downtime: ${outage}\nRecovered at: ${fmtTime(now, tz)}${ctaUrl ? `\nReport: ${ctaUrl}` : ""}`;
-  return sendEmail({ to: recipients, cc, subject: `✅ RECOVERED: ${asset.name} is back up`, html, text });
+  return sendEmail({ to: recipients, cc, subject, html, text });
 }
 const MAX_REDIRECTS = 5;
 const UA = "AtlasWebInsight-Monitor/1.0";

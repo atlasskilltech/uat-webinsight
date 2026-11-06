@@ -15,7 +15,7 @@ import { disconnect, type Provider } from "@/lib/integrations";
 import { runGoogleSync } from "@/lib/sync";
 import { requireAdmin, isAuthError } from "@/lib/auth/guard";
 import { getSettings } from "@/lib/settings";
-import { sendEmail, parseRecipients, emailLayout, escapeHtml } from "@/lib/email";
+import { sendEmail, parseRecipients } from "@/lib/email";
 
 /** Returns an error FormState if the caller is not an admin, else null. */
 async function assertAdmin(): Promise<FormState | null> {
@@ -87,24 +87,30 @@ export async function sendTestAlert(): Promise<FormState> {
   if (recipients.length === 0) {
     return errorState("Add at least one recipient above and click Save settings first, then send the test.");
   }
-  const html = emailLayout({
-    accent: "#2563eb",
-    icon: "✉️",
-    badge: "TEST",
-    title: "Test alert from Atlas WebInsight",
-    intro: "This is a test of your downtime email alerts. If you received this, the email setup is working — real alerts will be sent automatically when a monitored site goes down.",
-    rows: [
-      { label: "Recipients", value: escapeHtml(recipients.join(", ")) },
-      ...(cc.length ? [{ label: "CC", value: escapeHtml(cc.join(", ")) }] : []),
-    ],
-    footerNote: "Sent from Settings → Downtime alerts → Send test email.",
+  // Build exactly the same email a real "site down" alert produces (with sample
+  // data), so the test shows the true design — only the subject marks it a test.
+  const { buildDownAlertEmail } = await import("@/lib/domain-monitor");
+  const now = new Date();
+  const downSince = new Date(now.getTime() - 130_000); // ~2m 10s
+  const appBase = (process.env.APP_URL || "").replace(/\/+$/, "");
+  let sampleHost = "atlasuniversity.edu.in";
+  try { sampleHost = new URL(settings.siteUrl).host || sampleHost; } catch { /* keep default */ }
+  const email = buildDownAlertEmail({
+    name: settings.siteName || sampleHost,
+    url: settings.siteUrl || `https://${sampleHost}`,
+    environment: "Production",
+    downSince,
+    now,
+    httpStatus: null,
+    ctaUrl: appBase ? `${appBase}/operations?domain=${encodeURIComponent(sampleHost)}` : "",
+    tz: settings.timezone || "Asia/Kolkata",
   });
   const res = await sendEmail({
     to: recipients,
     cc,
-    subject: "✅ Test alert — Atlas WebInsight",
-    html,
-    text: "This is a test of your Atlas WebInsight downtime alerts. If you received this, email is configured correctly.",
+    subject: `[TEST] ${email.subject}`,
+    html: email.html,
+    text: email.text,
   });
   return res.ok
     ? successState(`Test sent to ${recipients.length} recipient(s)${cc.length ? ` (+${cc.length} cc)` : ""}. Check inboxes/spam.`)
