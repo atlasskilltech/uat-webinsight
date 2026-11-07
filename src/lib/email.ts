@@ -99,7 +99,8 @@ export function emailLayout(i: EmailLayoutInput): string {
     @media only screen and (max-width:620px){
       .ei-container{width:100%!important;border-radius:0!important}
       .ei-px{padding-left:20px!important;padding-right:20px!important}
-      .ei-hero{padding:24px 20px!important}
+      .ei-herowrap{padding:16px 16px 2px!important}
+      .ei-hero{padding:22px 20px!important}
       .ei-title{font-size:22px!important}
       .ei-head{padding:18px 20px!important}
       .ei-logo{height:38px!important}
@@ -127,14 +128,18 @@ export function emailLayout(i: EmailLayoutInput): string {
             </tr>
           </table>
         </td></tr>
-        <!-- gradient hero -->
-        <tr><td class="ei-hero" style="padding:26px 30px 28px;background-color:${i.accent};background-image:linear-gradient(135deg,${i.accent} 0%,${i.accentDark} 100%)">
-          <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.18);font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.08em;color:#ffffff">${escapeHtml(i.pill)}</span>
-          <div class="ei-title" style="margin-top:14px;font-family:${FONT};font-size:27px;line-height:1.25;font-weight:800;color:#ffffff">${escapeHtml(i.title)}</div>
-          <div style="margin-top:6px;font-family:${FONT};font-size:14px;line-height:1.5;color:#ffffff;opacity:.9">${escapeHtml(i.subtitle)}</div>
+        <!-- inset rounded hero card (floats on white) -->
+        <tr><td class="ei-herowrap" style="padding:22px 24px 2px;background:#ffffff">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:16px;overflow:hidden">
+            <tr><td class="ei-hero" style="padding:26px 26px 28px;border-radius:16px;background-color:${i.accent};background-image:linear-gradient(135deg,${i.accent} 0%,${i.accentDark} 100%)">
+              <span style="display:inline-block;padding:6px 14px;border-radius:999px;background:#ffffff;font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.08em;color:${i.accent}"><span style="color:${i.accent}">&bull;</span>&nbsp;${escapeHtml(i.pill)}</span>
+              <div class="ei-title" style="margin-top:14px;font-family:${FONT};font-size:27px;line-height:1.25;font-weight:800;color:#ffffff">${escapeHtml(i.title)}</div>
+              <div style="margin-top:6px;font-family:${FONT};font-size:14px;line-height:1.5;color:#ffffff;opacity:.9">${escapeHtml(i.subtitle)}</div>
+            </td></tr>
+          </table>
         </td></tr>
         <!-- body -->
-        <tr><td class="ei-px" style="padding:28px 30px 10px">
+        <tr><td class="ei-px" style="padding:20px 30px 10px">
           <p style="margin:0 0 20px;font-family:${FONT};font-size:15px;line-height:1.6;color:#374151">${i.introHtml}</p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8fafc;border:1px solid #edf1f6;border-radius:12px;font-family:${FONT}">
             ${rowsHtml}
