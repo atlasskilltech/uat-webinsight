@@ -15,6 +15,7 @@ const DEFAULTS: AppSettings = {
   alertRecipients: "",
   downAlertSeconds: 120,
   alertCc: "",
+  instantAlertEmail: "",
   updatedAt: new Date(),
 };
 

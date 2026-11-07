@@ -54,6 +54,10 @@ export interface DownAlertParams {
   httpStatus: number | null;
   ctaUrl: string;
   tz: string;
+  /** When true, this is the immediate "on the spot" alert fired the moment the
+   *  outage is first detected (sent to the instant-alert address), so it reads
+   *  as just-detected rather than "down for N". */
+  instant?: boolean;
 }
 
 /** Build the subject/html/text of a "site down" email. Shared by the live
@@ -61,25 +65,41 @@ export interface DownAlertParams {
 export function buildDownAlertEmail(p: DownAlertParams): { subject: string; html: string; text: string } {
   const forStr = fmtDuration(p.now.getTime() - p.downSince.getTime());
   const statusLine = p.httpStatus ? `HTTP status ${p.httpStatus}` : "No response (connection failed)";
+  const rows = p.instant
+    ? [
+        { label: "Site", value: urlLink(p.url) },
+        { label: "Environment", value: escapeHtml(p.environment || "Production") },
+        { label: "Detected at", value: escapeHtml(fmtTime(p.now, p.tz)) },
+        { label: "Detail", value: escapeHtml(statusLine) },
+      ]
+    : [
+        { label: "Site", value: urlLink(p.url) },
+        { label: "Environment", value: escapeHtml(p.environment || "Production") },
+        { label: "Down since", value: escapeHtml(fmtTime(p.downSince, p.tz)) },
+        { label: "Down for", value: `<span style="color:#dc2626">${escapeHtml(forStr)}</span>` },
+        { label: "Detail", value: escapeHtml(statusLine) },
+      ];
   const html = emailLayout({
     accent: "#dc2626",
     accentDark: "#991b1b",
     pill: "SITE DOWN",
-    title: `${p.name} is down`,
-    subtitle: `Not responding for ${forStr}`,
+    title: p.instant ? `${p.name} just went down` : `${p.name} is down`,
+    subtitle: p.instant ? "Not responding — detected just now" : `Not responding for ${forStr}`,
     introHtml: `A monitored production site, <strong>${escapeHtml(p.name)}</strong>, is not responding. Here are the details.`,
-    rows: [
-      { label: "Site", value: urlLink(p.url) },
-      { label: "Environment", value: escapeHtml(p.environment || "Production") },
-      { label: "Down since", value: escapeHtml(fmtTime(p.downSince, p.tz)) },
-      { label: "Down for", value: `<span style="color:#dc2626">${escapeHtml(forStr)}</span>` },
-      { label: "Detail", value: escapeHtml(statusLine) },
-    ],
+    rows,
     cta: p.ctaUrl ? { label: "View domain report", url: p.ctaUrl } : undefined,
     footerNote: "You are receiving this because you are a downtime-alert recipient in Atlas WebInsight.",
   });
-  const text = `SITE DOWN: ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDown since: ${fmtTime(p.downSince, p.tz)}\nDown for: ${forStr}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`;
-  return { subject: `🔴 DOWN: ${p.name} has been down for ${forStr}`, html, text };
+  const text = p.instant
+    ? `SITE DOWN (just detected): ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDetected at: ${fmtTime(p.now, p.tz)}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`
+    : `SITE DOWN: ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDown since: ${fmtTime(p.downSince, p.tz)}\nDown for: ${forStr}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`;
+  return {
+    subject: p.instant
+      ? `🔴 DOWN: ${p.name} is not responding`
+      : `🔴 DOWN: ${p.name} has been down for ${forStr}`,
+    html,
+    text,
+  };
 }
 
 export interface RecoveryParams {
@@ -135,6 +155,32 @@ async function sendDownAlertEmail(
     tz,
   });
   return sendEmail({ to: recipients, cc, subject, html, text });
+}
+
+/** Email a single "instant" recipient the moment an outage is first detected,
+ *  before the down-for-N-seconds threshold. */
+async function sendInstantAlertEmail(
+  asset: ServerAsset,
+  host: string,
+  downSince: Date,
+  now: Date,
+  httpStatus: number | null,
+  to: string,
+  tz: string,
+  ctaUrl: string,
+) {
+  const { subject, html, text } = buildDownAlertEmail({
+    name: asset.name,
+    url: targetUrl(asset, host),
+    environment: asset.environment,
+    downSince,
+    now,
+    httpStatus,
+    ctaUrl,
+    tz,
+    instant: true,
+  });
+  return sendEmail({ to: [to], subject, html, text });
 }
 
 /** Email the team that a site that had been reported down is back up. */
@@ -364,6 +410,12 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
     const settings = await getSettings();
     const recipients = parseRecipients(settings.alertRecipients);
     const cc = parseRecipients(settings.alertCc);
+    // Single address notified the moment a production site is first detected
+    // down (before the threshold). Blank disables it.
+    const instantEmail = (settings.instantAlertEmail ?? "").trim();
+    const instantIsAlsoRecipient =
+      instantEmail.length > 0 &&
+      [...recipients, ...cc].some((a) => a.toLowerCase() === instantEmail.toLowerCase());
     const thresholdMs = Math.max(10, Number(settings.downAlertSeconds) || 120) * 1000;
     const tz = settings.timezone || "Asia/Kolkata";
     // Base URL of the dashboard for the email CTA ("View domain report").
@@ -385,11 +437,24 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
       const isProd = effectiveEnvironment(asset, host) === "production";
       let downSince: Date | null = asset.downSince ? new Date(asset.downSince) : null;
       let downAlertSentAt: Date | null = asset.downAlertSentAt ? new Date(asset.downAlertSentAt) : null;
+      let instantAlertSentAt: Date | null = asset.instantAlertSentAt ? new Date(asset.instantAlertSentAt) : null;
 
       if (r.state === "down") {
         if (!downSince) downSince = now; // outage just started
         const elapsedMs = now.getTime() - downSince.getTime();
-        // Email once, after it has stayed down past the threshold (production only).
+        // Instant "on the spot" alert the moment the outage is first detected
+        // (production only), independent of — and ahead of — the threshold below.
+        if (isProd && instantEmail && !instantAlertSentAt) {
+          const res = await sendInstantAlertEmail(asset, host, downSince, now, r.httpStatus, instantEmail, tz, ctaFor(host));
+          if (res.ok) {
+            instantAlertSentAt = now;
+            console.log(`[domain-monitor] instant-alert emailed for ${host}: ${res.message}`);
+          } else {
+            console.error(`[domain-monitor] instant-alert email failed for ${host}: ${res.message}`);
+          }
+        }
+        // Email the recipients list once, after it has stayed down past the
+        // threshold (production only).
         if (isProd && elapsedMs >= thresholdMs && !downAlertSentAt && recipients.length > 0) {
           const res = await sendDownAlertEmail(asset, host, downSince, now, r.httpStatus, recipients, cc, tz, ctaFor(host));
           if (res.ok) {
@@ -405,14 +470,21 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
           const res = await sendRecoveryEmail(asset, host, downSince, now, recipients, cc, tz, ctaFor(host));
           if (!res.ok) console.error(`[domain-monitor] recovery email failed for ${host}: ${res.message}`);
         }
+        // Recovery note to the instant recipient too, if they were alerted about
+        // this outage and aren't already on the recipients/cc list (avoid a dup).
+        if (downSince && instantAlertSentAt && instantEmail && !instantIsAlsoRecipient) {
+          const res = await sendRecoveryEmail(asset, host, downSince, now, [instantEmail], [], tz, ctaFor(host));
+          if (!res.ok) console.error(`[domain-monitor] instant recovery email failed for ${host}: ${res.message}`);
+        }
         downSince = null;
         downAlertSentAt = null;
+        instantAlertSentAt = null;
       }
 
       // Keep an existing sslExpiry if this probe couldn't read one.
       await execute(
-        "UPDATE `ServerAsset` SET `monitorState`=?, `lastHttpStatus`=?, `responseTimeMs`=?, `lastCheckedAt`=?, `monitorEnabled`=?, `sslExpiry`=COALESCE(?, `sslExpiry`), `downSince`=?, `downAlertSentAt`=? WHERE `id`=?",
-        [r.state, r.httpStatus, r.responseTimeMs, new Date(), true, r.sslExpiry, downSince, downAlertSentAt, asset.id],
+        "UPDATE `ServerAsset` SET `monitorState`=?, `lastHttpStatus`=?, `responseTimeMs`=?, `lastCheckedAt`=?, `monitorEnabled`=?, `sslExpiry`=COALESCE(?, `sslExpiry`), `downSince`=?, `downAlertSentAt`=?, `instantAlertSentAt`=? WHERE `id`=?",
+        [r.state, r.httpStatus, r.responseTimeMs, new Date(), true, r.sslExpiry, downSince, downAlertSentAt, instantAlertSentAt, asset.id],
       );
     });
 

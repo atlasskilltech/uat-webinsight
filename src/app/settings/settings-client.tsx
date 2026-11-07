@@ -68,6 +68,7 @@ export function SettingsClient({
     siteUrl: string; siteName: string; ownerName: string; ownerEmail: string;
     timezone: string; gscProperty: string; ga4Property: string;
     alertRecipients: string; alertCc: string; downAlertSeconds: number;
+    instantAlertEmail: string;
   };
   integrations: IntegrationView[];
   batches: BatchRow[];
@@ -175,6 +176,18 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
           </div>
           <div className="border-t border-border pt-4">
             <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-2">Downtime alerts</p>
+            <Field
+              label="Instant alert email"
+              hint="Notified the moment a Production site goes down — before the delay below. Leave blank to disable. One address."
+              error={err("instantAlertEmail")}
+            >
+              <Input
+                name="instantAlertEmail"
+                type="email"
+                defaultValue={settings.instantAlertEmail}
+                placeholder="oncall@atlasuniversity.edu.in"
+              />
+            </Field>
             <Field
               label="Alert recipients"
               hint="Who gets emailed when a monitored site stays down. One email per line (or comma-separated)."

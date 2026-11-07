@@ -167,6 +167,7 @@ export const settingsSchema = z.object({
   alertRecipients: optionalString,
   alertCc: optionalString,
   downAlertSeconds: z.preprocess(emptyToUndef, z.coerce.number().int().min(10).max(3600)).default(120),
+  instantAlertEmail: z.preprocess(emptyToUndef, z.string().trim().email("Enter a valid email")).optional(),
 });
 
 /** Split a textarea of URLs (newline/comma separated) into a clean array. */
