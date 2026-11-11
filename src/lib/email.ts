@@ -67,23 +67,19 @@ const EMAIL_RESPONSIVE_STYLE = `<style>
       .ei-herowrap{padding:16px 16px 2px!important}
       .ei-hero{padding:22px 20px!important}
       .ei-title{font-size:22px!important}
-      .ei-head{padding:18px 20px!important}
-      .ei-logo{height:38px!important}
+      .ei-head{padding:16px 20px!important}
+      .ei-logo{height:30px!important}
       .ei-uptime{font-size:10px!important;letter-spacing:.12em!important}
     }
   </style>`;
 
 /** Brand header row (green strip: logo left, "UPTIME MONITOR" right). */
 function emailHeaderRow(): string {
-  return `<tr><td class="ei-px ei-head" style="padding:22px 28px;background:#309e83">
+  return `<tr><td class="ei-px ei-head" style="padding:20px 28px;background:#309e83">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
             <tr>
               <td align="left" valign="middle" style="vertical-align:middle">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-                  <td style="padding:9px 15px;border-radius:12px;background:rgba(255,255,255,.12)">
-                    <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="44" class="ei-logo" style="height:44px;width:auto;display:block;border:0;outline:none">
-                  </td>
-                </tr></table>
+                <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="34" class="ei-logo" style="height:34px;width:auto;display:block;border:0;outline:none;background:transparent">
               </td>
               <td align="right" valign="middle" class="ei-uptime" style="vertical-align:middle;font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.18em;color:#d7f0e8;white-space:nowrap">UPTIME MONITOR</td>
             </tr>
@@ -262,7 +258,7 @@ export function dailyReportLayout(i: DailyReportInput): string {
     : "";
 
   const body = `<tr><td class="ei-px" style="padding:20px 30px 10px">
-          <p style="margin:0 0 18px;font-family:${FONT};font-size:15px;line-height:1.6;color:#374151">Here is today's uptime summary for all monitored sites, as of <strong>${escapeHtml(i.dateLabel)}</strong>.</p>
+          <p style="margin:0 0 18px;font-family:${FONT};font-size:15px;line-height:1.6;color:#374151">Here is today's uptime summary for all monitored production sites, as of <strong>${escapeHtml(i.dateLabel)}</strong>.</p>
           ${chipsRow}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8fafc;border:1px solid #edf1f6;border-radius:12px;font-family:${FONT}">
             ${rowsHtml}

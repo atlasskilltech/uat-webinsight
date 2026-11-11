@@ -396,6 +396,8 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
   }
   running = true;
   try {
+    // Give any raw-host-named domains a friendly name (once per process).
+    await backfillDomainNames();
     const all = await query<ServerAsset>(
       "SELECT * FROM `ServerAsset` WHERE `monitorEnabled` = 1 OR `type` IN ('domain','subdomain')",
     );
@@ -611,7 +613,8 @@ export async function sendDailyStatusReport(opts: { force?: boolean } = {}): Pro
     return { ok: false, skipped: true, message: "No recipients configured (add alert recipients in Settings)." };
   }
 
-  const rows = await getMonitoredDomains();
+  // The daily report covers Production sites only (UAT is excluded).
+  const rows = (await getMonitoredDomains()).filter((row) => reportEnvLabel(row) === "Production");
   let up = 0, down = 0, degraded = 0, unknown = 0;
   const sites: ReportSite[] = rows.map((row) => {
     const state = reportState(row.monitorState);
@@ -679,6 +682,87 @@ export function effectiveEnvironment(asset: ServerAsset, host: string): "product
   return UAT_HOST_TOKEN.test(`${asset.name} ${asset.url ?? ""} ${host}`.toLowerCase()) ? "uat" : "production";
 }
 
+// --- Friendly site names ----------------------------------------------------
+
+/** Public suffixes treated as the TLD when deriving a name (checked longest
+ *  first, so multi-label suffixes like "edu.in" win over "in"). */
+const NAME_PUBLIC_SUFFIXES = [
+  "co.in", "edu.in", "gov.in", "ac.in", "org.in", "net.in", "res.in", "gen.in",
+  "co.uk", "org.uk", "gov.uk", "ac.uk", "com.au", "co.nz",
+  "com", "net", "org", "app", "io", "dev", "ai", "co", "me", "info", "biz", "edu", "gov", "in", "uk",
+];
+
+function stripNameSuffix(labels: string[]): string[] {
+  for (const suf of NAME_PUBLIC_SUFFIXES) {
+    const parts = suf.split(".");
+    if (labels.length > parts.length && labels.slice(-parts.length).join(".") === suf) {
+      return labels.slice(0, -parts.length);
+    }
+  }
+  return labels.length > 1 ? labels.slice(0, -1) : labels;
+}
+
+const titleWord = (w: string): string => (w ? w[0].toUpperCase() + w.slice(1) : w);
+
+/** The brand word to prefix site names with (first word of the Site name). */
+export function brandWord(siteName: string | null | undefined): string {
+  const first = (siteName ?? "").trim().split(/\s+/)[0] ?? "";
+  return first ? first.toUpperCase() : "ATLAS";
+}
+
+/**
+ * Turn a hostname into a human-friendly site name. The brand prefix comes from
+ * the configured Site name (e.g. "Atlas University" -> brand "ATLAS"):
+ *   dev.atlasskilltech.app            -> "ATLAS Dev"
+ *   uat-admissions.atlasskilltech.app -> "ATLAS Uat Admissions"
+ *   atlasuniversity.edu.in            -> "ATLAS University"
+ *   webinsight.atlasskilltech.app     -> "ATLAS Webinsight"
+ */
+export function deriveSiteName(host: string, brand: string): string {
+  const h = (host || "").toLowerCase().replace(/^www\./, "");
+  const labels = h.split(".").filter(Boolean);
+  if (labels.length === 0) return host;
+  const core = stripNameSuffix(labels); // e.g. ["dev","atlasskilltech"]
+  const sld = core[core.length - 1] ?? h; // "atlasskilltech"
+  const subs = core.slice(0, -1); // ["dev"]
+  const words = subs.flatMap((s) => s.split(/[-_]/)).filter(Boolean).map(titleWord);
+  const brandLower = brand.toLowerCase();
+  if (words.length > 0) return `${brand} ${words.join(" ")}`.trim();
+  // Apex domain (no subdomain): drop the brand from the SLD if it leads with it.
+  if (sld.startsWith(brandLower) && sld.length > brandLower.length) {
+    return `${brand} ${titleWord(sld.slice(brandLower.length))}`.trim();
+  }
+  return titleWord(sld);
+}
+
+/**
+ * One-time (per process) backfill: give friendly names to monitored domains
+ * that are still labelled with their raw host, so existing entries read like
+ * "ATLAS Dev" instead of "dev.atlasskilltech.app". Idempotent and safe — it
+ * never touches a name that differs from the host (i.e. one a user set), and
+ * once renamed the name no longer equals the host so it is skipped thereafter.
+ */
+let namesBackfilled = false;
+async function backfillDomainNames(): Promise<void> {
+  if (namesBackfilled) return;
+  namesBackfilled = true;
+  try {
+    const settings = await getSettings();
+    const brand = brandWord(settings.siteName);
+    const rows = await query<ServerAsset>("SELECT * FROM `ServerAsset` WHERE `type` IN ('domain','subdomain')");
+    for (const a of rows) {
+      const host = hostOfAsset(a);
+      if (!host || a.name !== host) continue; // skip manually-named entries
+      const friendly = deriveSiteName(host, brand);
+      if (friendly && friendly !== a.name) {
+        await execute("UPDATE `ServerAsset` SET `name`=? WHERE `id`=?", [friendly, a.id]);
+      }
+    }
+  } catch (e) {
+    console.error("[domain-monitor] name backfill failed:", e instanceof Error ? e.message : e);
+  }
+}
+
 export type AddHostResult =
   | { ok: true; host: string }
   | { ok: false; reason: "invalid" }
@@ -701,9 +785,13 @@ export async function addMonitoredHost(
   if (existing.some((a) => hostOfAsset(a) === host)) {
     return { ok: false, reason: "duplicate", host };
   }
+  // Store a friendly name derived from the URL (e.g. "ATLAS Dev") rather than
+  // the raw host, so the Server Inventory and the daily report read cleanly.
+  const settings = await getSettings();
+  const name = deriveSiteName(host, brandWord(settings.siteName));
   await execute(
     "INSERT INTO `ServerAsset` (`id`,`type`,`name`,`url`,`environment`,`autoDiscovered`,`monitorEnabled`,`status`) VALUES (?,?,?,?,?,?,?,?)",
-    [createId(), "domain", host, `https://${host}`, normaliseEnvironment(environment), false, true, "active"],
+    [createId(), "domain", name, `https://${host}`, normaliseEnvironment(environment), false, true, "active"],
   );
   return { ok: true, host };
 }
