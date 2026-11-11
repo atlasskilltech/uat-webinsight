@@ -67,6 +67,9 @@ export default async function SettingsPage() {
             alertRecipients: settings.alertRecipients ?? "",
             alertCc: settings.alertCc ?? "",
             downAlertSeconds: settings.downAlertSeconds ?? 120,
+            instantAlertEmail: settings.instantAlertEmail ?? "",
+            dailyReportEnabled: settings.dailyReportEnabled ?? true,
+            dailyReportHour: settings.dailyReportHour ?? 9,
           }}
           integrations={integrations}
           batches={batches}

@@ -226,6 +226,7 @@ export interface ServerAsset {
   lastCheckedAt: Date | null;
   downSince: Date | null;
   downAlertSentAt: Date | null;
+  instantAlertSentAt: Date | null;
   status: string;
   sslExpiry: Date | null;
   details: JsonValue | null;
@@ -373,5 +374,9 @@ export interface AppSettings {
   alertRecipients: string | null;
   downAlertSeconds: number;
   alertCc: string | null;
+  instantAlertEmail: string | null;
+  dailyReportEnabled: boolean;
+  dailyReportHour: number;
+  dailyReportSentOn: string | null;
   updatedAt: Date;
 }

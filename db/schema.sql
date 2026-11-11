@@ -461,12 +461,27 @@ ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `watchDomains` TEXT NULL AFTE
 -- so each outage emails the team at most once.
 ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `downSince` DATETIME(3) NULL AFTER `lastCheckedAt`;
 ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `downAlertSentAt` DATETIME(3) NULL AFTER `downSince`;
+-- instantAlertSentAt: when the immediate ("on the spot") alert to the instant
+-- address was sent for the current outage (NULL until sent / after recovery),
+-- so the instant recipient is emailed at most once per outage.
+ALTER TABLE `ServerAsset` ADD COLUMN IF NOT EXISTS `instantAlertSentAt` DATETIME(3) NULL AFTER `downAlertSentAt`;
 -- Recipients for downtime alerts (newline/comma separated) and how long a site
 -- must stay down before the email is sent (seconds; default 120 = 2 minutes).
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `alertRecipients` TEXT NULL AFTER `watchDomains`;
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `downAlertSeconds` INTEGER NOT NULL DEFAULT 120 AFTER `alertRecipients`;
 -- CC recipients for downtime alerts (newline/comma separated).
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `alertCc` TEXT NULL AFTER `downAlertSeconds`;
+-- instantAlertEmail: a single address notified the moment a production site is
+-- first detected down (before the downAlertSeconds threshold). The recipients
+-- list above is still emailed only after that threshold.
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `instantAlertEmail` TEXT NULL AFTER `alertCc`;
+-- Daily status report (added 2026-11). dailyReportEnabled: send a once-a-day
+-- "which sites are up/down" digest to the alert recipients. dailyReportHour:
+-- the hour (0-23, in `timezone`) to send it. dailyReportSentOn: the last date
+-- (YYYY-MM-DD, in `timezone`) the digest was sent, so it goes out once per day.
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportEnabled` BOOLEAN NOT NULL DEFAULT true AFTER `instantAlertEmail`;
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportHour` INTEGER NOT NULL DEFAULT 9 AFTER `dailyReportEnabled`;
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportSentOn` VARCHAR(10) NULL AFTER `dailyReportHour`;
 
 -- Auto-discovery of subdomains was removed — only domains a user explicitly
 -- adds are monitored now. Remove any previously auto-discovered entries. Safe

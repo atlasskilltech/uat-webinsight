@@ -18,5 +18,10 @@ export async function register(): Promise<void> {
     if (process.env.SYNC_SCHEDULER_DISABLED !== "1") {
       schedulers.startGoogleSyncScheduler();
     }
+    // Daily "which sites are up/down" status report (once per day at the hour
+    // configured in Settings).
+    if (process.env.DAILY_REPORT_SCHEDULER_DISABLED !== "1") {
+      schedulers.startDailyReportScheduler();
+    }
   }
 }

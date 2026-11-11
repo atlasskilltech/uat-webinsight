@@ -6,7 +6,8 @@ import { execute, query } from "./db";
 import { createId } from "./id";
 import type { ServerAsset } from "./models";
 import { getSettings } from "./settings";
-import { sendEmail, parseRecipients, emailLayout, escapeHtml } from "./email";
+import { sendEmail, parseRecipients, emailLayout, dailyReportLayout, escapeHtml } from "./email";
+import type { ReportSite } from "./email";
 
 /**
  * Domain monitoring for the Server Inventory. Only domains a user explicitly
@@ -54,6 +55,10 @@ export interface DownAlertParams {
   httpStatus: number | null;
   ctaUrl: string;
   tz: string;
+  /** When true, this is the immediate "on the spot" alert fired the moment the
+   *  outage is first detected (sent to the instant-alert address), so it reads
+   *  as just-detected rather than "down for N". */
+  instant?: boolean;
 }
 
 /** Build the subject/html/text of a "site down" email. Shared by the live
@@ -61,25 +66,41 @@ export interface DownAlertParams {
 export function buildDownAlertEmail(p: DownAlertParams): { subject: string; html: string; text: string } {
   const forStr = fmtDuration(p.now.getTime() - p.downSince.getTime());
   const statusLine = p.httpStatus ? `HTTP status ${p.httpStatus}` : "No response (connection failed)";
+  const rows = p.instant
+    ? [
+        { label: "Site", value: urlLink(p.url) },
+        { label: "Environment", value: escapeHtml(p.environment || "Production") },
+        { label: "Detected at", value: escapeHtml(fmtTime(p.now, p.tz)) },
+        { label: "Detail", value: escapeHtml(statusLine) },
+      ]
+    : [
+        { label: "Site", value: urlLink(p.url) },
+        { label: "Environment", value: escapeHtml(p.environment || "Production") },
+        { label: "Down since", value: escapeHtml(fmtTime(p.downSince, p.tz)) },
+        { label: "Down for", value: `<span style="color:#dc2626">${escapeHtml(forStr)}</span>` },
+        { label: "Detail", value: escapeHtml(statusLine) },
+      ];
   const html = emailLayout({
     accent: "#dc2626",
     accentDark: "#991b1b",
     pill: "SITE DOWN",
-    title: `${p.name} is down`,
-    subtitle: `Not responding for ${forStr}`,
+    title: p.instant ? `${p.name} just went down` : `${p.name} is down`,
+    subtitle: p.instant ? "Not responding — detected just now" : `Not responding for ${forStr}`,
     introHtml: `A monitored production site, <strong>${escapeHtml(p.name)}</strong>, is not responding. Here are the details.`,
-    rows: [
-      { label: "Site", value: urlLink(p.url) },
-      { label: "Environment", value: escapeHtml(p.environment || "Production") },
-      { label: "Down since", value: escapeHtml(fmtTime(p.downSince, p.tz)) },
-      { label: "Down for", value: `<span style="color:#dc2626">${escapeHtml(forStr)}</span>` },
-      { label: "Detail", value: escapeHtml(statusLine) },
-    ],
+    rows,
     cta: p.ctaUrl ? { label: "View domain report", url: p.ctaUrl } : undefined,
     footerNote: "You are receiving this because you are a downtime-alert recipient in Atlas WebInsight.",
   });
-  const text = `SITE DOWN: ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDown since: ${fmtTime(p.downSince, p.tz)}\nDown for: ${forStr}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`;
-  return { subject: `🔴 DOWN: ${p.name} has been down for ${forStr}`, html, text };
+  const text = p.instant
+    ? `SITE DOWN (just detected): ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDetected at: ${fmtTime(p.now, p.tz)}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`
+    : `SITE DOWN: ${p.name}\nSite: ${p.url}\nEnvironment: ${p.environment || "Production"}\nDown since: ${fmtTime(p.downSince, p.tz)}\nDown for: ${forStr}\n${statusLine}${p.ctaUrl ? `\nReport: ${p.ctaUrl}` : ""}`;
+  return {
+    subject: p.instant
+      ? `🔴 DOWN: ${p.name} is not responding`
+      : `🔴 DOWN: ${p.name} has been down for ${forStr}`,
+    html,
+    text,
+  };
 }
 
 export interface RecoveryParams {
@@ -135,6 +156,32 @@ async function sendDownAlertEmail(
     tz,
   });
   return sendEmail({ to: recipients, cc, subject, html, text });
+}
+
+/** Email a single "instant" recipient the moment an outage is first detected,
+ *  before the down-for-N-seconds threshold. */
+async function sendInstantAlertEmail(
+  asset: ServerAsset,
+  host: string,
+  downSince: Date,
+  now: Date,
+  httpStatus: number | null,
+  to: string,
+  tz: string,
+  ctaUrl: string,
+) {
+  const { subject, html, text } = buildDownAlertEmail({
+    name: asset.name,
+    url: targetUrl(asset, host),
+    environment: asset.environment,
+    downSince,
+    now,
+    httpStatus,
+    ctaUrl,
+    tz,
+    instant: true,
+  });
+  return sendEmail({ to: [to], subject, html, text });
 }
 
 /** Email the team that a site that had been reported down is back up. */
@@ -364,6 +411,12 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
     const settings = await getSettings();
     const recipients = parseRecipients(settings.alertRecipients);
     const cc = parseRecipients(settings.alertCc);
+    // Single address notified the moment a production site is first detected
+    // down (before the threshold). Blank disables it.
+    const instantEmail = (settings.instantAlertEmail ?? "").trim();
+    const instantIsAlsoRecipient =
+      instantEmail.length > 0 &&
+      [...recipients, ...cc].some((a) => a.toLowerCase() === instantEmail.toLowerCase());
     const thresholdMs = Math.max(10, Number(settings.downAlertSeconds) || 120) * 1000;
     const tz = settings.timezone || "Asia/Kolkata";
     // Base URL of the dashboard for the email CTA ("View domain report").
@@ -385,11 +438,24 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
       const isProd = effectiveEnvironment(asset, host) === "production";
       let downSince: Date | null = asset.downSince ? new Date(asset.downSince) : null;
       let downAlertSentAt: Date | null = asset.downAlertSentAt ? new Date(asset.downAlertSentAt) : null;
+      let instantAlertSentAt: Date | null = asset.instantAlertSentAt ? new Date(asset.instantAlertSentAt) : null;
 
       if (r.state === "down") {
         if (!downSince) downSince = now; // outage just started
         const elapsedMs = now.getTime() - downSince.getTime();
-        // Email once, after it has stayed down past the threshold (production only).
+        // Instant "on the spot" alert the moment the outage is first detected
+        // (production only), independent of — and ahead of — the threshold below.
+        if (isProd && instantEmail && !instantAlertSentAt) {
+          const res = await sendInstantAlertEmail(asset, host, downSince, now, r.httpStatus, instantEmail, tz, ctaFor(host));
+          if (res.ok) {
+            instantAlertSentAt = now;
+            console.log(`[domain-monitor] instant-alert emailed for ${host}: ${res.message}`);
+          } else {
+            console.error(`[domain-monitor] instant-alert email failed for ${host}: ${res.message}`);
+          }
+        }
+        // Email the recipients list once, after it has stayed down past the
+        // threshold (production only).
         if (isProd && elapsedMs >= thresholdMs && !downAlertSentAt && recipients.length > 0) {
           const res = await sendDownAlertEmail(asset, host, downSince, now, r.httpStatus, recipients, cc, tz, ctaFor(host));
           if (res.ok) {
@@ -405,14 +471,21 @@ export async function runDomainMonitor(opts: { staleMs?: number } = {}): Promise
           const res = await sendRecoveryEmail(asset, host, downSince, now, recipients, cc, tz, ctaFor(host));
           if (!res.ok) console.error(`[domain-monitor] recovery email failed for ${host}: ${res.message}`);
         }
+        // Recovery note to the instant recipient too, if they were alerted about
+        // this outage and aren't already on the recipients/cc list (avoid a dup).
+        if (downSince && instantAlertSentAt && instantEmail && !instantIsAlsoRecipient) {
+          const res = await sendRecoveryEmail(asset, host, downSince, now, [instantEmail], [], tz, ctaFor(host));
+          if (!res.ok) console.error(`[domain-monitor] instant recovery email failed for ${host}: ${res.message}`);
+        }
         downSince = null;
         downAlertSentAt = null;
+        instantAlertSentAt = null;
       }
 
       // Keep an existing sslExpiry if this probe couldn't read one.
       await execute(
-        "UPDATE `ServerAsset` SET `monitorState`=?, `lastHttpStatus`=?, `responseTimeMs`=?, `lastCheckedAt`=?, `monitorEnabled`=?, `sslExpiry`=COALESCE(?, `sslExpiry`), `downSince`=?, `downAlertSentAt`=? WHERE `id`=?",
-        [r.state, r.httpStatus, r.responseTimeMs, new Date(), true, r.sslExpiry, downSince, downAlertSentAt, asset.id],
+        "UPDATE `ServerAsset` SET `monitorState`=?, `lastHttpStatus`=?, `responseTimeMs`=?, `lastCheckedAt`=?, `monitorEnabled`=?, `sslExpiry`=COALESCE(?, `sslExpiry`), `downSince`=?, `downAlertSentAt`=?, `instantAlertSentAt`=? WHERE `id`=?",
+        [r.state, r.httpStatus, r.responseTimeMs, new Date(), true, r.sslExpiry, downSince, downAlertSentAt, instantAlertSentAt, asset.id],
       );
     });
 
@@ -447,6 +520,140 @@ export async function getMonitoredDomains(): Promise<DomainStatusRow[]> {
       "FROM `ServerAsset` WHERE `monitorEnabled` = 1 OR `type` IN ('domain','subdomain') " +
       "ORDER BY (`monitorState` = 'down') DESC, (`monitorState` = 'degraded') DESC, `name` ASC",
   );
+}
+
+// --- Daily status report ----------------------------------------------------
+
+/** Date helpers that respect the configured display timezone. */
+function ymdInTz(d: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+}
+function hourInTz(d: Date, tz: string): number {
+  try {
+    const h = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(d);
+    return Number(h) || 0;
+  } catch {
+    return d.getUTCHours();
+  }
+}
+function dateLabelInTz(d: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(d);
+  } catch {
+    return d.toDateString();
+  }
+}
+
+/** Map a monitored-domain row to the up/degraded/down/unknown status. */
+function reportState(monitorState: string | null): ReportSite["state"] {
+  return monitorState === "up" || monitorState === "down" || monitorState === "degraded" ? monitorState : "unknown";
+}
+
+/** Human-readable detail for a site row (e.g. "HTTP 200 · 180 ms"). */
+function reportDetail(row: DomainStatusRow): string {
+  const state = reportState(row.monitorState);
+  if (state === "unknown") return "Not checked yet";
+  if (state === "down") return row.lastHttpStatus ? `HTTP ${row.lastHttpStatus}` : "No response";
+  const parts: string[] = [];
+  if (row.lastHttpStatus) parts.push(`HTTP ${row.lastHttpStatus}`);
+  if (row.responseTimeMs != null) parts.push(`${row.responseTimeMs.toLocaleString("en-US")} ms`);
+  return parts.join(" · ") || "Responding";
+}
+
+/** "Production" / "UAT" label for a monitored-domain row. */
+function reportEnvLabel(row: DomainStatusRow): string {
+  const norm = normaliseEnvironment(row.environment);
+  if (norm) return norm === "production" ? "Production" : "UAT";
+  return UAT_HOST_TOKEN.test(`${row.name} ${row.url ?? ""}`.toLowerCase()) ? "UAT" : "Production";
+}
+
+export interface DailyReportResult {
+  ok: boolean;
+  skipped?: boolean;
+  message: string;
+}
+
+/**
+ * Build and send the daily "which sites are up/down" digest to the alert
+ * recipients (+ cc). Covers every monitored site (all environments).
+ *
+ * Scheduled sends (force=false) are gated so the digest goes out once per day,
+ * at or after `dailyReportHour` in the configured timezone: they no-op unless
+ * the report is enabled, the local hour has reached the configured hour, and it
+ * has not already been sent today (tracked in AppSettings.dailyReportSentOn).
+ * A manual/test send (force=true) ignores those gates and does not consume the
+ * daily slot.
+ */
+export async function sendDailyStatusReport(opts: { force?: boolean } = {}): Promise<DailyReportResult> {
+  const settings = await getSettings();
+  const tz = settings.timezone || "Asia/Kolkata";
+  const now = new Date();
+  const todayStr = ymdInTz(now, tz);
+
+  if (!opts.force) {
+    if (!settings.dailyReportEnabled) return { ok: false, skipped: true, message: "Daily report is disabled." };
+    const reportHour = Math.min(23, Math.max(0, Number(settings.dailyReportHour ?? 9)));
+    if (hourInTz(now, tz) < reportHour) {
+      return { ok: false, skipped: true, message: `Before report hour (${reportHour}:00 ${tz}).` };
+    }
+    if (settings.dailyReportSentOn === todayStr) {
+      return { ok: false, skipped: true, message: "Daily report already sent today." };
+    }
+  }
+
+  const recipients = parseRecipients(settings.alertRecipients);
+  const cc = parseRecipients(settings.alertCc);
+  if (recipients.length === 0) {
+    return { ok: false, skipped: true, message: "No recipients configured (add alert recipients in Settings)." };
+  }
+
+  const rows = await getMonitoredDomains();
+  let up = 0, down = 0, degraded = 0, unknown = 0;
+  const sites: ReportSite[] = rows.map((row) => {
+    const state = reportState(row.monitorState);
+    if (state === "up") up++;
+    else if (state === "down") down++;
+    else if (state === "degraded") degraded++;
+    else unknown++;
+    return { name: row.name, url: row.url, environment: reportEnvLabel(row), state, detail: reportDetail(row) };
+  });
+
+  const dateLabel = dateLabelInTz(now, tz);
+  const appBase = (process.env.APP_URL || "").replace(/\/+$/, "");
+  const html = dailyReportLayout({
+    dateLabel,
+    up, down, degraded, unknown,
+    total: sites.length,
+    sites,
+    cta: appBase ? { label: "Open live monitor", url: `${appBase}/operations` } : undefined,
+  });
+  const subject =
+    down > 0
+      ? `🔴 Daily uptime: ${down} of ${sites.length} down — ${dateLabel}`
+      : degraded > 0
+        ? `🟠 Daily uptime: all reachable, ${degraded} degraded — ${dateLabel}`
+        : `🟢 Daily uptime: all ${sites.length} up — ${dateLabel}`;
+  const text =
+    `Daily uptime report — ${dateLabel}\n` +
+    `${up} up, ${down} down, ${degraded} degraded${unknown ? `, ${unknown} unknown` : ""} (of ${sites.length}).\n\n` +
+    sites.map((s) => `[${s.state.toUpperCase()}] ${s.name}${s.url ? ` — ${s.url}` : ""} (${s.environment}) · ${s.detail}`).join("\n") +
+    (appBase ? `\n\nLive monitor: ${appBase}/operations` : "");
+
+  const res = await sendEmail({ to: recipients, cc, subject, html, text });
+  if (res.ok && !opts.force) {
+    // Record the send so the scheduler fires it only once for this day.
+    await execute("UPDATE `AppSettings` SET `dailyReportSentOn`=? WHERE `id`='app'", [todayStr]);
+  }
+  return {
+    ok: res.ok,
+    message: res.ok
+      ? `Daily report sent to ${recipients.length} recipient(s)${cc.length ? ` (+${cc.length} cc)` : ""}.`
+      : res.message,
+  };
 }
 
 /** Normalise a free-form environment value to the two we track (else null). */

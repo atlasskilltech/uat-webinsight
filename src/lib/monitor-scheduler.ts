@@ -24,6 +24,12 @@ const SYNC_FIRST_DELAY_MS = 60_000;
 
 let started = false;
 let syncStarted = false;
+let reportStarted = false;
+
+// How often the daily-report scheduler wakes to check whether the digest is due
+// (the send itself is gated to once per day, at/after the configured hour).
+const REPORT_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const REPORT_FIRST_DELAY_MS = 90_000;
 
 export function startDomainMonitorScheduler(): void {
   if (started) return;
@@ -72,4 +78,32 @@ export function startGoogleSyncScheduler(): void {
   setInterval(() => void run(), SYNC_INTERVAL_MS);
 
   console.log(`[auto-sync] scheduler started (every ${SYNC_INTERVAL_MS / 3_600_000}h).`);
+}
+
+/**
+ * Send the daily "which sites are up/down" digest once per day. Wakes every 15
+ * minutes and asks sendDailyStatusReport whether it is due — the send is gated
+ * (enabled, at/after the configured hour, not already sent today) and records
+ * the date in the DB, so restarts never double-send and a restart later in the
+ * day still catches up. The same work is exposed at /api/cron/daily-report.
+ */
+export function startDailyReportScheduler(): void {
+  if (reportStarted) return;
+  reportStarted = true;
+
+  const run = async () => {
+    try {
+      const { sendDailyStatusReport } = await import("./domain-monitor");
+      const r = await sendDailyStatusReport();
+      if (r.ok) console.log(`[daily-report] ${r.message}`);
+      else if (!r.skipped) console.error(`[daily-report] ${r.message}`);
+    } catch (e) {
+      console.error("[daily-report] run failed:", e instanceof Error ? e.message : e);
+    }
+  };
+
+  setTimeout(() => void run(), REPORT_FIRST_DELAY_MS);
+  setInterval(() => void run(), REPORT_CHECK_INTERVAL_MS);
+
+  console.log(`[daily-report] scheduler started (checks every ${REPORT_CHECK_INTERVAL_MS / 60000}m).`);
 }
