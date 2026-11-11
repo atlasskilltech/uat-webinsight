@@ -168,6 +168,8 @@ export const settingsSchema = z.object({
   alertCc: optionalString,
   downAlertSeconds: z.preprocess(emptyToUndef, z.coerce.number().int().min(10).max(3600)).default(120),
   instantAlertEmail: z.preprocess(emptyToUndef, z.string().trim().email("Enter a valid email")).optional(),
+  dailyReportEnabled: z.preprocess((v) => v === "on" || v === "true" || v === true, z.boolean()).default(false),
+  dailyReportHour: z.preprocess(emptyToUndef, z.coerce.number().int().min(0).max(23)).default(9),
 });
 
 /** Split a textarea of URLs (newline/comma separated) into a clean array. */

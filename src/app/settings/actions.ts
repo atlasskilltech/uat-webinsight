@@ -117,6 +117,22 @@ export async function sendTestAlert(): Promise<FormState> {
     : errorState(`Could not send: ${res.message}`);
 }
 
+/**
+ * Send today's daily status report right now to the saved recipients, so the
+ * digest can be verified without waiting for the scheduled hour. Ignores the
+ * once-a-day gate and does not consume the daily slot. Admin-only.
+ */
+export async function sendTestReport(): Promise<FormState> {
+  const denied = await assertAdmin();
+  if (denied) return denied;
+  const { sendDailyStatusReport } = await import("@/lib/domain-monitor");
+  const res = await sendDailyStatusReport({ force: true });
+  if (res.ok) return successState(`${res.message} Check inboxes/spam.`);
+  return errorState(
+    res.skipped ? res.message : `Could not send: ${res.message}`,
+  );
+}
+
 export async function importCsvAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const denied = await assertAdmin();
   if (denied) return denied;

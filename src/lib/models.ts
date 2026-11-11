@@ -375,5 +375,8 @@ export interface AppSettings {
   downAlertSeconds: number;
   alertCc: string | null;
   instantAlertEmail: string | null;
+  dailyReportEnabled: boolean;
+  dailyReportHour: number;
+  dailyReportSentOn: string | null;
   updatedAt: Date;
 }

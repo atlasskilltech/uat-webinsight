@@ -475,6 +475,13 @@ ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `alertCc` TEXT NULL AFTER `do
 -- first detected down (before the downAlertSeconds threshold). The recipients
 -- list above is still emailed only after that threshold.
 ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `instantAlertEmail` TEXT NULL AFTER `alertCc`;
+-- Daily status report (added 2026-11). dailyReportEnabled: send a once-a-day
+-- "which sites are up/down" digest to the alert recipients. dailyReportHour:
+-- the hour (0-23, in `timezone`) to send it. dailyReportSentOn: the last date
+-- (YYYY-MM-DD, in `timezone`) the digest was sent, so it goes out once per day.
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportEnabled` BOOLEAN NOT NULL DEFAULT true AFTER `instantAlertEmail`;
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportHour` INTEGER NOT NULL DEFAULT 9 AFTER `dailyReportEnabled`;
+ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportSentOn` VARCHAR(10) NULL AFTER `dailyReportHour`;
 
 -- Auto-discovery of subdomains was removed — only domains a user explicitly
 -- adds are monitored now. Remove any previously auto-discovered entries. Safe

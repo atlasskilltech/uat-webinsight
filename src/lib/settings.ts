@@ -16,6 +16,9 @@ const DEFAULTS: AppSettings = {
   downAlertSeconds: 120,
   alertCc: "",
   instantAlertEmail: "",
+  dailyReportEnabled: true,
+  dailyReportHour: 9,
+  dailyReportSentOn: null,
   updatedAt: new Date(),
 };
 

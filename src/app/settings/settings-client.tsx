@@ -27,7 +27,7 @@ import { DemoBadge } from "@/components/ui/demo-badge";
 import { idleState } from "@/lib/form-state";
 import { INTEGRATION_STATUSES } from "@/lib/enums";
 import { fmtDateTime, fmtDate } from "@/lib/dates";
-import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData, sendTestAlert } from "./actions";
+import { saveSettings, importCsvAction, disconnectProvider, syncProvider, backfillProvider, clearDemoData, sendTestAlert, sendTestReport } from "./actions";
 
 interface IntegrationView {
   provider: "gsc" | "ga4" | "psi";
@@ -69,6 +69,7 @@ export function SettingsClient({
     timezone: string; gscProperty: string; ga4Property: string;
     alertRecipients: string; alertCc: string; downAlertSeconds: number;
     instantAlertEmail: string;
+    dailyReportEnabled: boolean; dailyReportHour: number;
   };
   integrations: IntegrationView[];
   batches: BatchRow[];
@@ -131,6 +132,12 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
   const onTest = () =>
     startTest(async () => {
       const res = await sendTestAlert();
+      toast(res.message ?? "Done.", res.status === "success" ? "success" : "error");
+    });
+  const [testingReport, startTestReport] = useTransition();
+  const onTestReport = () =>
+    startTestReport(async () => {
+      const res = await sendTestReport();
       toast(res.message ?? "Done.", res.status === "success" ? "success" : "error");
     });
 
@@ -231,6 +238,39 @@ function PropertyForm({ settings }: { settings: SettingsClientProps["settings"] 
                 {testing ? "Sending…" : "Send test email"}
               </Button>
               <span className="ml-2 text-xs text-muted-2">Save first, then send a test to the recipients above.</span>
+            </div>
+          </div>
+          <div className="border-t border-border pt-4">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-2">Daily status report</p>
+            <label className="flex items-start gap-2 rounded-lg border border-border bg-surface-2 p-3">
+              <input
+                type="checkbox"
+                name="dailyReportEnabled"
+                defaultChecked={settings.dailyReportEnabled}
+                className="mt-0.5 h-4 w-4 rounded border-border-strong accent-[var(--accent)]"
+              />
+              <span className="text-sm text-foreground">
+                Email a daily report of which sites are up and down
+                <span className="mt-0.5 block text-xs text-muted">
+                  A once-a-day digest of every monitored site&apos;s current status, sent to the alert recipients above
+                  (and CC). Covers all environments, not just Production.
+                </span>
+              </span>
+            </label>
+            <div className="mt-4 max-w-xs">
+              <Field
+                label="Send report at (hour, 24h)"
+                hint="Hour of day in your timezone to send the digest. 0–23. Default 9 (9:00 AM)."
+                error={err("dailyReportHour")}
+              >
+                <Input name="dailyReportHour" type="number" min={0} max={23} defaultValue={settings.dailyReportHour} />
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Button type="button" variant="outline" onClick={onTestReport} disabled={testingReport}>
+                {testingReport ? "Sending…" : "Send test report"}
+              </Button>
+              <span className="ml-2 text-xs text-muted-2">Save first, then send today&apos;s report now to the recipients above.</span>
             </div>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border pt-4">

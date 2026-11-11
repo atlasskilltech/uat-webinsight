@@ -6,7 +6,8 @@ import { execute, query } from "./db";
 import { createId } from "./id";
 import type { ServerAsset } from "./models";
 import { getSettings } from "./settings";
-import { sendEmail, parseRecipients, emailLayout, escapeHtml } from "./email";
+import { sendEmail, parseRecipients, emailLayout, dailyReportLayout, escapeHtml } from "./email";
+import type { ReportSite } from "./email";
 
 /**
  * Domain monitoring for the Server Inventory. Only domains a user explicitly
@@ -519,6 +520,140 @@ export async function getMonitoredDomains(): Promise<DomainStatusRow[]> {
       "FROM `ServerAsset` WHERE `monitorEnabled` = 1 OR `type` IN ('domain','subdomain') " +
       "ORDER BY (`monitorState` = 'down') DESC, (`monitorState` = 'degraded') DESC, `name` ASC",
   );
+}
+
+// --- Daily status report ----------------------------------------------------
+
+/** Date helpers that respect the configured display timezone. */
+function ymdInTz(d: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+}
+function hourInTz(d: Date, tz: string): number {
+  try {
+    const h = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(d);
+    return Number(h) || 0;
+  } catch {
+    return d.getUTCHours();
+  }
+}
+function dateLabelInTz(d: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(d);
+  } catch {
+    return d.toDateString();
+  }
+}
+
+/** Map a monitored-domain row to the up/degraded/down/unknown status. */
+function reportState(monitorState: string | null): ReportSite["state"] {
+  return monitorState === "up" || monitorState === "down" || monitorState === "degraded" ? monitorState : "unknown";
+}
+
+/** Human-readable detail for a site row (e.g. "HTTP 200 · 180 ms"). */
+function reportDetail(row: DomainStatusRow): string {
+  const state = reportState(row.monitorState);
+  if (state === "unknown") return "Not checked yet";
+  if (state === "down") return row.lastHttpStatus ? `HTTP ${row.lastHttpStatus}` : "No response";
+  const parts: string[] = [];
+  if (row.lastHttpStatus) parts.push(`HTTP ${row.lastHttpStatus}`);
+  if (row.responseTimeMs != null) parts.push(`${row.responseTimeMs.toLocaleString("en-US")} ms`);
+  return parts.join(" · ") || "Responding";
+}
+
+/** "Production" / "UAT" label for a monitored-domain row. */
+function reportEnvLabel(row: DomainStatusRow): string {
+  const norm = normaliseEnvironment(row.environment);
+  if (norm) return norm === "production" ? "Production" : "UAT";
+  return UAT_HOST_TOKEN.test(`${row.name} ${row.url ?? ""}`.toLowerCase()) ? "UAT" : "Production";
+}
+
+export interface DailyReportResult {
+  ok: boolean;
+  skipped?: boolean;
+  message: string;
+}
+
+/**
+ * Build and send the daily "which sites are up/down" digest to the alert
+ * recipients (+ cc). Covers every monitored site (all environments).
+ *
+ * Scheduled sends (force=false) are gated so the digest goes out once per day,
+ * at or after `dailyReportHour` in the configured timezone: they no-op unless
+ * the report is enabled, the local hour has reached the configured hour, and it
+ * has not already been sent today (tracked in AppSettings.dailyReportSentOn).
+ * A manual/test send (force=true) ignores those gates and does not consume the
+ * daily slot.
+ */
+export async function sendDailyStatusReport(opts: { force?: boolean } = {}): Promise<DailyReportResult> {
+  const settings = await getSettings();
+  const tz = settings.timezone || "Asia/Kolkata";
+  const now = new Date();
+  const todayStr = ymdInTz(now, tz);
+
+  if (!opts.force) {
+    if (!settings.dailyReportEnabled) return { ok: false, skipped: true, message: "Daily report is disabled." };
+    const reportHour = Math.min(23, Math.max(0, Number(settings.dailyReportHour ?? 9)));
+    if (hourInTz(now, tz) < reportHour) {
+      return { ok: false, skipped: true, message: `Before report hour (${reportHour}:00 ${tz}).` };
+    }
+    if (settings.dailyReportSentOn === todayStr) {
+      return { ok: false, skipped: true, message: "Daily report already sent today." };
+    }
+  }
+
+  const recipients = parseRecipients(settings.alertRecipients);
+  const cc = parseRecipients(settings.alertCc);
+  if (recipients.length === 0) {
+    return { ok: false, skipped: true, message: "No recipients configured (add alert recipients in Settings)." };
+  }
+
+  const rows = await getMonitoredDomains();
+  let up = 0, down = 0, degraded = 0, unknown = 0;
+  const sites: ReportSite[] = rows.map((row) => {
+    const state = reportState(row.monitorState);
+    if (state === "up") up++;
+    else if (state === "down") down++;
+    else if (state === "degraded") degraded++;
+    else unknown++;
+    return { name: row.name, url: row.url, environment: reportEnvLabel(row), state, detail: reportDetail(row) };
+  });
+
+  const dateLabel = dateLabelInTz(now, tz);
+  const appBase = (process.env.APP_URL || "").replace(/\/+$/, "");
+  const html = dailyReportLayout({
+    dateLabel,
+    up, down, degraded, unknown,
+    total: sites.length,
+    sites,
+    cta: appBase ? { label: "Open live monitor", url: `${appBase}/operations` } : undefined,
+  });
+  const subject =
+    down > 0
+      ? `🔴 Daily uptime: ${down} of ${sites.length} down — ${dateLabel}`
+      : degraded > 0
+        ? `🟠 Daily uptime: all reachable, ${degraded} degraded — ${dateLabel}`
+        : `🟢 Daily uptime: all ${sites.length} up — ${dateLabel}`;
+  const text =
+    `Daily uptime report — ${dateLabel}\n` +
+    `${up} up, ${down} down, ${degraded} degraded${unknown ? `, ${unknown} unknown` : ""} (of ${sites.length}).\n\n` +
+    sites.map((s) => `[${s.state.toUpperCase()}] ${s.name}${s.url ? ` — ${s.url}` : ""} (${s.environment}) · ${s.detail}`).join("\n") +
+    (appBase ? `\n\nLive monitor: ${appBase}/operations` : "");
+
+  const res = await sendEmail({ to: recipients, cc, subject, html, text });
+  if (res.ok && !opts.force) {
+    // Record the send so the scheduler fires it only once for this day.
+    await execute("UPDATE `AppSettings` SET `dailyReportSentOn`=? WHERE `id`='app'", [todayStr]);
+  }
+  return {
+    ok: res.ok,
+    message: res.ok
+      ? `Daily report sent to ${recipients.length} recipient(s)${cc.length ? ` (+${cc.length} cc)` : ""}.`
+      : res.message,
+  };
 }
 
 /** Normalise a free-form environment value to the two we track (else null). */
