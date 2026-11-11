@@ -68,18 +68,18 @@ const EMAIL_RESPONSIVE_STYLE = `<style>
       .ei-hero{padding:22px 20px!important}
       .ei-title{font-size:22px!important}
       .ei-head{padding:16px 20px!important}
-      .ei-logo{height:30px!important}
+      .ei-logo{height:44px!important}
       .ei-uptime{font-size:10px!important;letter-spacing:.12em!important}
     }
   </style>`;
 
 /** Brand header row (green strip: logo left, "UPTIME MONITOR" right). */
 function emailHeaderRow(): string {
-  return `<tr><td class="ei-px ei-head" style="padding:20px 28px;background:#309e83">
+  return `<tr><td class="ei-px ei-head" style="padding:20px 28px;background:#449F80">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
             <tr>
               <td align="left" valign="middle" style="vertical-align:middle">
-                <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="34" class="ei-logo" style="height:34px;width:auto;display:block;border:0;outline:none;background:transparent">
+                <img src="${EMAIL_LOGO_URL}" alt="Atlas WebInsight" height="52" class="ei-logo" style="height:52px;width:auto;display:block;border:0;outline:none;background:transparent">
               </td>
               <td align="right" valign="middle" class="ei-uptime" style="vertical-align:middle;font-family:${FONT};font-size:11px;font-weight:bold;letter-spacing:.18em;color:#d7f0e8;white-space:nowrap">UPTIME MONITOR</td>
             </tr>
