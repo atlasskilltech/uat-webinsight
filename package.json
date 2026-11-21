@@ -11,7 +11,8 @@
     "sync": "node scripts/daily-sync.mjs",
     "grant-admin": "tsx scripts/grant-admin.ts",
     "db:init": "tsx scripts/db-init.ts",
-    "setup": "tsx scripts/db-init.ts"
+    "setup": "tsx scripts/db-init.ts",
+    "invoice:db:init": "tsx scripts/invoice-db-init.ts"
   },
   "dependencies": {
     "@next/env": "15.5.28",

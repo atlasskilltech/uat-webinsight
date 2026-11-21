@@ -10,6 +10,8 @@ import {
   FileText,
   Settings,
   Users,
+  Receipt,
+  SlidersHorizontal,
 } from "lucide-react";
 
 export interface NavItem {
@@ -17,7 +19,7 @@ export interface NavItem {
   label: string;
   icon: LucideIcon;
   description: string;
-  group: "overview" | "work" | "website" | "ops" | "system" | "admin";
+  group: "overview" | "work" | "website" | "ops" | "finance" | "system" | "admin";
   /** Only shown to admins (server-side authorization is enforced separately). */
   adminOnly?: boolean;
 }
@@ -80,6 +82,21 @@ export const NAV_ITEMS: NavItem[] = [
     group: "ops",
   },
   {
+    href: "/invoices",
+    label: "Invoice Overview",
+    icon: Receipt,
+    description: "AP & AR invoice dashboard, processing and payments.",
+    group: "finance",
+  },
+  {
+    href: "/invoices/settings",
+    label: "Invoice Settings",
+    icon: SlidersHorizontal,
+    description: "Invoice Agent organization, providers and policies.",
+    group: "finance",
+    adminOnly: true,
+  },
+  {
     href: "/settings",
     label: "Settings & Integrations",
     icon: Settings,
@@ -102,6 +119,7 @@ export const NAV_GROUPS: { key: NavItem["group"]; label: string }[] = [
   { key: "work", label: "Work" },
   { key: "website", label: "Website" },
   { key: "ops", label: "Operations" },
+  { key: "finance", label: "Invoice Agent" },
   { key: "system", label: "System" },
   { key: "admin", label: "Administration" },
 ];
