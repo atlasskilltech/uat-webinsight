@@ -23,6 +23,7 @@ import {
   Workflow,
   FileSearch,
   Mail,
+  Bot,
 } from "lucide-react";
 
 export interface NavItem {
@@ -174,6 +175,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Due Dates",
     icon: CalendarClock,
     description: "Upcoming and overdue payables and receivables.",
+    group: "finance",
+  },
+  {
+    href: "/invoices/assistant",
+    label: "AI Invoice Assistant",
+    icon: Bot,
+    description: "Ask questions and run invoice operations in natural language.",
     group: "finance",
   },
   {
