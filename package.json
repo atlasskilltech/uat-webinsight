@@ -13,7 +13,9 @@
     "db:init": "tsx scripts/db-init.ts",
     "setup": "tsx scripts/db-init.ts",
     "invoice:db:init": "tsx scripts/invoice-db-init.ts",
-    "invoice:worker": "node scripts/invoice-worker.mjs"
+    "invoice:worker": "node scripts/invoice-worker.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@next/env": "15.5.28",
@@ -42,6 +44,7 @@
     "eslint-config-next": "15.5.28",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

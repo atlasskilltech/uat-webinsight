@@ -26,11 +26,10 @@ const percent = z
   .regex(/^\d{1,3}(\.\d{1,2})?$/, "Enter a valid rate (0–100).")
   .refine((v) => Number(v) <= 100, "Rate cannot exceed 100%.");
 const gstin = z
-  .string()
-  .trim()
-  .max(20)
-  .optional()
-  .or(z.literal("").transform(() => undefined))
+  .preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(20).optional(),
+  )
   .refine((v) => !v || /^[0-9A-Z]{15}$/.test(v), "GSTIN must be 15 alphanumeric characters.");
 
 export const partySchema = z.object({
@@ -39,11 +38,10 @@ export const partySchema = z.object({
   legalName: z.string().trim().max(191).optional().or(z.literal("").transform(() => undefined)),
   gstin,
   pan: z
-    .string()
-    .trim()
-    .max(16)
-    .optional()
-    .or(z.literal("").transform(() => undefined))
+    .preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      z.string().trim().max(16).optional(),
+    )
     .refine((v) => !v || /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v), "PAN must look like ABCDE1234F."),
   email: z
     .string()
