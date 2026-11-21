@@ -113,7 +113,7 @@ export async function claimJobs(workerId: string, limit = 1): Promise<JobRow[]> 
   });
 }
 
-export async function completeJob(id: string, result?: Record<string, unknown>): Promise<void> {
+export async function completeJob(id: string, result?: unknown): Promise<void> {
   await iExecute(
     "UPDATE `processing_jobs` SET `status`='succeeded', `result`=?, `last_error`=NULL, " +
       "`locked_at`=NULL, `locked_by`=NULL WHERE `id`=?",
@@ -150,6 +150,14 @@ export async function failJob(id: string, error: string): Promise<"retry" | "dea
     [truncated, backoffSeconds, id],
   );
   return "retry";
+}
+
+/** Recent jobs for the processing-queue view. */
+export async function listRecentJobs(organizationId: string, limit = 50): Promise<JobRow[]> {
+  return iQuery<JobRow>(
+    "SELECT * FROM `processing_jobs` WHERE organization_id=? ORDER BY `updated_at` DESC LIMIT ?",
+    [organizationId, limit],
+  );
 }
 
 /** Counts by status for a given org (dashboard / processing queue). */
