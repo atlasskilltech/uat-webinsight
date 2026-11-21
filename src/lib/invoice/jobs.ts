@@ -152,6 +152,14 @@ export async function failJob(id: string, error: string): Promise<"retry" | "dea
   return "retry";
 }
 
+/** Recent jobs for the processing-queue view. */
+export async function listRecentJobs(organizationId: string, limit = 50): Promise<JobRow[]> {
+  return iQuery<JobRow>(
+    "SELECT * FROM `processing_jobs` WHERE organization_id=? ORDER BY `updated_at` DESC LIMIT ?",
+    [organizationId, limit],
+  );
+}
+
 /** Counts by status for a given org (dashboard / processing queue). */
 export async function jobCounts(organizationId: string): Promise<Record<JobStatus, number>> {
   const rows = await iQuery<{ status: JobStatus; c: number }>(

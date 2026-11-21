@@ -2,7 +2,7 @@ import "server-only";
 import { iQuery, iQueryOne, iTransaction } from "../db";
 import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
-import { computeInvoiceTotals, computeLine } from "../money";
+import { computeInvoiceTotals, computeLine, toCents, fromCents } from "../money";
 import { currentFinancialYear } from "../format";
 import { allocateInvoiceNumber } from "./sequences";
 import type { InvoiceHeaderInput, LineItemInput } from "../validation";
@@ -264,6 +264,127 @@ export async function getInvoice(organizationId: string, id: string): Promise<In
     [id],
   );
   return { invoice, lines };
+}
+
+export interface ReviewUpdateInput {
+  partyId?: string | null;
+  invoiceNumber?: string | null;
+  poNumber?: string | null;
+  invoiceDate?: string | null;
+  dueDate?: string | null;
+  currency: string;
+  interState: boolean;
+  otherCharges?: string;
+  notes?: string | null;
+  lines: {
+    description: string;
+    hsnSac?: string;
+    quantity: string;
+    unit?: string;
+    unitPrice: string;
+    discount?: string;
+    gstRate: string;
+  }[];
+}
+
+/**
+ * Apply human corrections from the Needs-Review screen: recompute totals
+ * deterministically, replace line items, recompute payment status, clear the
+ * review flag and (for AP) move to READY_FOR_APPROVAL. A changed amount cancels
+ * any pending approval (material change).
+ */
+export async function updateInvoiceFromReview(
+  organizationId: string,
+  actor: { id: string; email: string },
+  invoiceId: string,
+  input: ReviewUpdateInput,
+): Promise<void> {
+  const existing = await iQueryOne<InvoiceRow>(
+    "SELECT * FROM `invoices` WHERE organization_id=? AND id=? AND deleted_at IS NULL",
+    [organizationId, invoiceId],
+  );
+  if (!existing) throw new Error("Invoice not found.");
+
+  const engineLines = input.lines.map((l) => ({
+    quantity: l.quantity,
+    unitPrice: l.unitPrice,
+    discount: l.discount ?? "0",
+    gstRate: l.gstRate,
+    interState: input.interState,
+  }));
+  const totals = computeInvoiceTotals({ lines: engineLines, otherCharges: input.otherCharges ?? "0", roundTotal: false });
+
+  const paid = toCents(existing.amount_paid);
+  const grand = toCents(totals.grandTotal);
+  const balance = grand - paid;
+  const paymentStatus = balance <= 0n && paid > 0n ? "PAID" : paid > 0n ? "PARTIALLY_PAID" : "UNPAID";
+  const amountChanged = existing.grand_total !== totals.grandTotal;
+  const processing = existing.direction === "incoming" ? "READY_FOR_APPROVAL" : existing.processing_status;
+
+  await iTransaction(async (conn) => {
+    await conn.query(
+      "UPDATE `invoices` SET `party_id`=?,`invoice_number`=?,`po_number`=?,`invoice_date`=?,`due_date`=?," +
+        "`currency`=?,`subtotal`=?,`discount_total`=?,`taxable_amount`=?,`cgst`=?,`sgst`=?,`igst`=?,`tax_total`=?," +
+        "`other_charges`=?,`grand_total`=?,`balance_due`=?,`payment_status`=?,`processing_status`=?,`notes`=? " +
+        "WHERE organization_id=? AND id=?",
+      [
+        input.partyId ?? null, input.invoiceNumber ?? null, input.poNumber ?? null,
+        input.invoiceDate ?? null, input.dueDate ?? null, input.currency,
+        totals.subtotal, totals.discountTotal, totals.taxableAmount, totals.cgst, totals.sgst, totals.igst,
+        totals.taxTotal, totals.otherCharges, totals.grandTotal, fromCents(balance), paymentStatus, processing,
+        input.notes ?? null, organizationId, invoiceId,
+      ],
+    );
+    await conn.query("DELETE FROM `invoice_line_items` WHERE invoice_id=?", [invoiceId]);
+    let lineNo = 1;
+    for (const l of input.lines) {
+      const c = computeLine({
+        quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount ?? "0", gstRate: l.gstRate, interState: input.interState,
+      });
+      await conn.query(
+        "INSERT INTO `invoice_line_items` " +
+          "(`id`,`invoice_id`,`organization_id`,`line_no`,`description`,`hsn_sac`,`quantity`,`unit`,`unit_price`," +
+          "`discount`,`taxable_value`,`gst_rate`,`cgst`,`sgst`,`igst`,`line_total`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          createId(), invoiceId, organizationId, lineNo++, l.description, l.hsnSac ?? null, l.quantity, l.unit ?? null,
+          l.unitPrice, l.discount ?? "0.00", c.taxableValue, l.gstRate, c.cgst, c.sgst, c.igst, c.lineTotal,
+        ],
+      );
+    }
+    await conn.query("UPDATE `invoice_extractions` SET `needs_review`=0 WHERE invoice_id=?", [invoiceId]);
+    if (amountChanged) {
+      await conn.query(
+        "UPDATE `invoice_approvals` SET `status`='cancelled', `completed_at`=NOW(3) WHERE organization_id=? AND invoice_id=? AND status='pending'",
+        [organizationId, invoiceId],
+      );
+    }
+    await logInvoiceAudit(
+      {
+        organizationId, actorUserId: actor.id, actorLabel: actor.email,
+        action: "invoice.reviewed", entityType: "invoice", entityId: invoiceId,
+        before: { grandTotal: existing.grand_total }, after: { grandTotal: totals.grandTotal },
+      },
+      conn,
+    );
+  });
+}
+
+export interface ReviewListRow extends InvoiceListRow {
+  overall_confidence: string | null;
+  duplicate_count: number;
+}
+
+/** Invoices awaiting human review (low confidence, failed math, or duplicates). */
+export async function listNeedsReview(organizationId: string): Promise<ReviewListRow[]> {
+  return iQuery<ReviewListRow>(
+    "SELECT i.*, p.business_name AS party_name, " +
+      "(SELECT e.overall_confidence FROM `invoice_extractions` e WHERE e.invoice_id=i.id ORDER BY e.created_at DESC LIMIT 1) AS overall_confidence, " +
+      "(SELECT COUNT(*) FROM `invoice_duplicate_matches` d WHERE d.invoice_id=i.id AND d.resolution='open') AS duplicate_count " +
+      "FROM `invoices` i LEFT JOIN `invoice_parties` p ON p.id=i.party_id " +
+      "WHERE i.organization_id=? AND i.deleted_at IS NULL AND i.processing_status IN ('NEEDS_REVIEW','DUPLICATE') " +
+      "ORDER BY i.created_at DESC LIMIT 300",
+    [organizationId],
+  );
 }
 
 /** Count invoices for dashboard-style callers. */

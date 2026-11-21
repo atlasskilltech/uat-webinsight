@@ -20,6 +20,8 @@ import {
   Wallet,
   BadgeCheck,
   CalendarClock,
+  Workflow,
+  FileSearch,
 } from "lucide-react";
 
 export interface NavItem {
@@ -115,6 +117,20 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Outgoing Invoices",
     icon: ArrowUpFromLine,
     description: "Customer invoices — accounts receivable.",
+    group: "finance",
+  },
+  {
+    href: "/invoices/processing",
+    label: "Processing Queue",
+    icon: Workflow,
+    description: "Upload documents and watch AI processing.",
+    group: "finance",
+  },
+  {
+    href: "/invoices/needs-review",
+    label: "Needs Review",
+    icon: FileSearch,
+    description: "Low-confidence or duplicate invoices to verify.",
     group: "finance",
   },
   {
