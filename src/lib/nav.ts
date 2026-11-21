@@ -22,6 +22,7 @@ import {
   CalendarClock,
   Workflow,
   FileSearch,
+  Mail,
 } from "lucide-react";
 
 export interface NavItem {
@@ -117,6 +118,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Outgoing Invoices",
     icon: ArrowUpFromLine,
     description: "Customer invoices — accounts receivable.",
+    group: "finance",
+  },
+  {
+    href: "/invoices/email-accounts",
+    label: "Email Accounts",
+    icon: Mail,
+    description: "Connect company Gmail inboxes for invoice intake.",
     group: "finance",
   },
   {

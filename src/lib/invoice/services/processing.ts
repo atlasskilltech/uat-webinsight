@@ -20,6 +20,10 @@ export interface ProcessInput {
   filename: string;
   mimeType: string;
   buffer: Buffer;
+  /** Provenance — defaults to a manual upload. */
+  source?: "upload" | "gmail";
+  sourceEmailMessageId?: string | null;
+  emailAttachmentId?: string | null;
 }
 
 export interface ProcessResult {
@@ -166,8 +170,8 @@ export async function processUploadedDocument(input: ProcessInput): Promise<Proc
           "(`id`,`organization_id`,`direction`,`party_id`,`party_name_raw`,`invoice_number`,`po_number`," +
           "`invoice_date`,`due_date`,`currency`,`subtotal`,`discount_total`,`taxable_amount`,`cgst`,`sgst`,`igst`," +
           "`tax_total`,`other_charges`,`grand_total`,`amount_paid`,`balance_due`,`processing_status`,`payment_status`," +
-          "`source`,`document_fingerprint`,`extraction_confidence`,`created_by`) " +
-          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          "`source`,`source_email_message_id`,`document_fingerprint`,`extraction_confidence`,`created_by`) " +
+          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           invoiceId,
           organizationId,
@@ -192,7 +196,8 @@ export async function processUploadedDocument(input: ProcessInput): Promise<Proc
           totals.grandTotal,
           needsReview ? "NEEDS_REVIEW" : "READY_FOR_APPROVAL",
           "UNPAID",
-          "upload",
+          input.source ?? "upload",
+          input.sourceEmailMessageId ?? null,
           fingerprint,
           confidence != null ? confidence.toFixed(2) : null,
           actor.id,
@@ -223,9 +228,9 @@ export async function processUploadedDocument(input: ProcessInput): Promise<Proc
 
       await conn.query(
         "INSERT INTO `invoice_attachments` " +
-          "(`id`,`organization_id`,`invoice_id`,`role`,`filename`,`mime_type`,`size_bytes`,`storage_provider`,`storage_key`,`sha256`) " +
-          "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        [createId(), organizationId, invoiceId, "primary", input.filename, v.mime, input.buffer.length, getStorage().provider, key, fingerprint],
+          "(`id`,`organization_id`,`invoice_id`,`email_attachment_id`,`role`,`filename`,`mime_type`,`size_bytes`,`storage_provider`,`storage_key`,`sha256`) " +
+          "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [createId(), organizationId, invoiceId, input.emailAttachmentId ?? null, "primary", input.filename, v.mime, input.buffer.length, getStorage().provider, key, fingerprint],
       );
 
       await conn.query(
