@@ -39,6 +39,9 @@ yarn-error.log*
 /prisma/*.db-journal
 /prisma/dev.db*
 
+# invoice agent — local private document storage (never commit stored documents)
+/.invoice-storage/
+
 # vercel
 .vercel
 

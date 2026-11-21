@@ -1,0 +1,78 @@
+/**
+ * Atlas Invoice Agent — environment configuration.
+ *
+ * The Invoice Agent uses a DEDICATED MySQL database (`atlas_invoice` by default)
+ * on the same server as the main app. Connection parts default to the main app's
+ * DB_* credentials (same server) but ALWAYS a different database name, so the
+ * existing `atlas_dashboard` schema is never touched by invoice migrations.
+ *
+ * This module reads env only; it never connects. It is safe to import anywhere.
+ */
+
+export interface InvoiceDbConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+}
+
+/** Resolve invoice DB connection settings (INVOICE_* → fallback to main DB_*). */
+export function getInvoiceDbConfig(): InvoiceDbConfig {
+  const host = process.env.ATLAS_INVOICE_DB_HOST?.trim() || process.env.DB_HOST?.trim();
+  const user = process.env.ATLAS_INVOICE_DB_USER?.trim() || process.env.DB_USER?.trim();
+  const password =
+    process.env.ATLAS_INVOICE_DB_PASSWORD ?? process.env.DB_PASSWORD ?? "";
+  const database =
+    process.env.ATLAS_INVOICE_DB_NAME?.trim() || "atlas_invoice";
+  const port = Number(
+    process.env.ATLAS_INVOICE_DB_PORT?.trim() || process.env.DB_PORT?.trim() || "3306",
+  );
+
+  if (!host || !user) {
+    throw new Error(
+      "Invoice database is not configured. Set ATLAS_INVOICE_DB_HOST/USER/PASSWORD/NAME " +
+        "(or reuse the main DB_HOST/DB_USER/DB_PASSWORD with ATLAS_INVOICE_DB_NAME).",
+    );
+  }
+  return { host, port, user, password, database };
+}
+
+/** Feature/provider availability — used to render honest "connected/not set up" states. */
+export interface InvoiceFeatureFlags {
+  encryptionConfigured: boolean;
+  aiConfigured: boolean;
+  ocrConfigured: boolean;
+  gmailConfigured: boolean;
+  storageProvider: "local" | "s3";
+  s3Configured: boolean;
+}
+
+export function getInvoiceFeatureFlags(): InvoiceFeatureFlags {
+  const storageProvider =
+    (process.env.INVOICE_STORAGE_PROVIDER?.trim().toLowerCase() === "s3" ? "s3" : "local") as
+      | "local"
+      | "s3";
+  return {
+    encryptionConfigured: Boolean(process.env.INVOICE_ENCRYPTION_KEY?.trim()),
+    aiConfigured: Boolean(process.env.AI_API_KEY?.trim() && process.env.AI_PROVIDER?.trim()),
+    ocrConfigured: Boolean(process.env.OCR_PROVIDER?.trim()),
+    gmailConfigured: Boolean(
+      process.env.GMAIL_CLIENT_ID?.trim() && process.env.GMAIL_CLIENT_SECRET?.trim(),
+    ),
+    storageProvider,
+    s3Configured: Boolean(
+      process.env.S3_BUCKET?.trim() &&
+        process.env.S3_REGION?.trim() &&
+        process.env.S3_ACCESS_KEY_ID?.trim() &&
+        process.env.S3_SECRET_ACCESS_KEY?.trim(),
+    ),
+  };
+}
+
+/** Worker tuning. */
+export const WORKER_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.INVOICE_WORKER_CONCURRENCY) || 2,
+);
+export const JOB_RETRY_LIMIT = Math.max(1, Number(process.env.INVOICE_JOB_RETRY_LIMIT) || 5);
