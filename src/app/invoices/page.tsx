@@ -18,6 +18,10 @@ import { Button } from "@/components/ui/button";
 import { getInvoiceContext } from "@/lib/invoice/org";
 import { getInvoiceDbStatus } from "@/lib/invoice/status";
 import { getOverviewMetrics } from "@/lib/invoice/overview";
+import { getDashboardAnalytics } from "@/lib/invoice/services/analytics";
+import { listNotifications } from "@/lib/invoice/services/notifications";
+import { InvoiceAnalytics } from "./dashboard-analytics";
+import { fmtDate } from "@/lib/invoice/format";
 
 export const metadata: Metadata = { title: "Invoice Overview" };
 export const dynamic = "force-dynamic";
@@ -85,7 +89,11 @@ export default async function InvoiceOverviewPage() {
   }
 
   // 3) Normal dashboard — real records only.
-  const m = await getOverviewMetrics(ctx.organizationId);
+  const [m, analytics, notifications] = await Promise.all([
+    getOverviewMetrics(ctx.organizationId),
+    getDashboardAnalytics(ctx.organizationId),
+    listNotifications(ctx.organizationId, ctx.user.id, 6),
+  ]);
   const currency = ctx.organization?.base_currency ?? "INR";
   const hasAny = m.incoming.totalInvoices > 0 || m.outgoing.totalInvoices > 0;
 
@@ -141,20 +149,53 @@ export default async function InvoiceOverviewPage() {
         <StatCard label="Issued" value={m.outgoing.issued} state={m.outgoing.issued ? "ok" : "empty"} />
       </div>
 
-      {/* Processing queue (DB-backed jobs) */}
-      <Card>
-        <CardHeader>
-          <CardTitle>AI processing queue</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {(["queued", "running", "succeeded", "failed", "dead"] as const).map((s) => (
-            <div key={s} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
-              <p className="text-lg font-semibold tabular-nums">{m.jobs[s]}</p>
-              <p className="text-xs capitalize text-muted">{s}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+      {/* Analytics (charts from real records) */}
+      {hasAny && (
+        <InvoiceAnalytics
+          monthly={analytics.monthly}
+          topVendors={analytics.topVendors}
+          topCustomers={analytics.topCustomers}
+          currency={currency}
+        />
+      )}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Processing queue (DB-backed jobs) */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>AI processing queue</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            {(["queued", "running", "succeeded", "failed", "dead"] as const).map((s) => (
+              <div key={s} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
+                <p className="text-lg font-semibold tabular-nums">{m.jobs[s]}</p>
+                <p className="text-xs capitalize text-muted">{s}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* Recent notifications */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent notifications</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {notifications.length === 0 ? (
+              <p className="text-sm text-muted">No notifications yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {notifications.map((n) => (
+                  <li key={n.id} className="text-sm">
+                    <p className={n.read_at ? "text-muted" : "font-medium text-foreground"}>{n.title}</p>
+                    <p className="text-xs text-muted-2">{fmtDate(n.created_at)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

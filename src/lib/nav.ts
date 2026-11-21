@@ -24,6 +24,7 @@ import {
   FileSearch,
   Mail,
   Bot,
+  BarChart3,
 } from "lucide-react";
 
 export interface NavItem {
@@ -175,6 +176,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Due Dates",
     icon: CalendarClock,
     description: "Upcoming and overdue payables and receivables.",
+    group: "finance",
+  },
+  {
+    href: "/invoices/reports",
+    label: "Financial Reports",
+    icon: BarChart3,
+    description: "Payables, receivables, GST, overdue and monthly summaries.",
     group: "finance",
   },
   {

@@ -113,7 +113,7 @@ export async function claimJobs(workerId: string, limit = 1): Promise<JobRow[]> 
   });
 }
 
-export async function completeJob(id: string, result?: Record<string, unknown>): Promise<void> {
+export async function completeJob(id: string, result?: unknown): Promise<void> {
   await iExecute(
     "UPDATE `processing_jobs` SET `status`='succeeded', `result`=?, `last_error`=NULL, " +
       "`locked_at`=NULL, `locked_by`=NULL WHERE `id`=?",

@@ -22,5 +22,22 @@ module.exports = {
         PORT: "9091",
       },
     },
+    {
+      // Atlas Invoice Agent background worker. Thin loop that drives the
+      // bearer-protected /api/invoices/cron/* endpoints on the app above, so
+      // Gmail sync, due-date reminders, recurring drafts and queued jobs run
+      // without a human. Needs INVOICE_CRON_SECRET (or CRON_SECRET) and APP_URL
+      // in the project's .env. Safe to omit if you drive the cron endpoints with
+      // an external scheduler instead.
+      name: "uat-invoice-worker",
+      cwd: "/home/ubuntu/uat-webinsight",
+      script: "scripts/invoice-worker.mjs",
+      instances: 1,
+      autorestart: true,
+      max_restarts: 10,
+      env: {
+        NODE_ENV: "production",
+      },
+    },
   ],
 };

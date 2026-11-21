@@ -12,7 +12,8 @@
     "grant-admin": "tsx scripts/grant-admin.ts",
     "db:init": "tsx scripts/db-init.ts",
     "setup": "tsx scripts/db-init.ts",
-    "invoice:db:init": "tsx scripts/invoice-db-init.ts"
+    "invoice:db:init": "tsx scripts/invoice-db-init.ts",
+    "invoice:worker": "node scripts/invoice-worker.mjs"
   },
   "dependencies": {
     "@next/env": "15.5.28",
