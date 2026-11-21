@@ -111,11 +111,11 @@ export default async function InvoiceOverviewPage() {
       </h2>
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Supplier invoices" value={m.incoming.totalInvoices} icon={Receipt}
-          state={m.incoming.totalInvoices ? "ok" : "empty"} href="/invoices?dir=incoming" />
+          state={m.incoming.totalInvoices ? "ok" : "empty"} href="/invoices/incoming" />
         <StatCard label="Total payable" value={fmtMoney(m.incoming.totalPayable, currency)} icon={ArrowDownCircle}
           state={m.incoming.totalInvoices ? "ok" : "empty"} tone="warning" />
         <StatCard label="Needs review" value={m.incoming.needsReview} icon={AlertTriangle}
-          state={m.incoming.needsReview ? "ok" : "empty"} tone="warning" href="/invoices?view=needs-review" />
+          state={m.incoming.needsReview ? "ok" : "empty"} tone="warning" href="/invoices/list?view=needs-review" />
         <StatCard label="Awaiting approval" value={m.incoming.awaitingApproval} icon={Clock}
           state={m.incoming.awaitingApproval ? "ok" : "empty"} />
         <StatCard label="Unpaid" value={m.incoming.unpaid} state={m.incoming.unpaid ? "ok" : "empty"} />
@@ -130,7 +130,7 @@ export default async function InvoiceOverviewPage() {
       </h2>
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Customer invoices" value={m.outgoing.totalInvoices} icon={Receipt}
-          state={m.outgoing.totalInvoices ? "ok" : "empty"} href="/invoices?dir=outgoing" />
+          state={m.outgoing.totalInvoices ? "ok" : "empty"} href="/invoices/outgoing" />
         <StatCard label="Total receivable" value={fmtMoney(m.outgoing.totalReceivable, currency)} icon={ArrowUpCircle}
           state={m.outgoing.totalInvoices ? "ok" : "empty"} tone="success" />
         <StatCard label="Draft" value={m.outgoing.draft} state={m.outgoing.draft ? "ok" : "empty"} />
