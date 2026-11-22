@@ -74,6 +74,7 @@ function every(ms, fn) {
 console.log(`[invoice-worker] started → ${appUrl} (drain ${DRAIN_MS / 1000}s, sync ${SYNC_MS / 60000}m, periodic ${PERIODIC_MS / 60000}m)`);
 every(DRAIN_MS, () => call("drain"));
 every(SYNC_MS, () => call("sync"));
+every(SYNC_MS, () => call("forward"));
 every(PERIODIC_MS, () => call("reminders"));
 every(PERIODIC_MS, () => call("recurring"));
 

@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/toast";
 import { idleState } from "@/lib/form-state";
 import { fmtDate } from "@/lib/invoice/format";
 import { syncGmailAction, disconnectGmailAction } from "./actions";
+import { setAutoForwardAction } from "../forwarding-actions";
 
 export interface GmailAccountView {
   id: string;
@@ -20,6 +21,7 @@ export interface GmailAccountView {
   invoiceCount: number;
   lastSyncAt: string | null;
   consecutiveFailures: number;
+  autoForward: boolean;
 }
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
@@ -86,6 +88,9 @@ export function EmailAccountsClient({
                   <Mail className="h-4 w-4 text-accent" />
                   <span className="truncate font-medium">{a.email}</span>
                   <Badge tone={STATUS_TONE[a.status] ?? "neutral"}>{a.status.replace("_", " ")}</Badge>
+                  <Badge tone={a.autoForward ? "success" : "neutral"}>
+                    Auto-forward {a.autoForward ? "on" : "off"}
+                  </Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted">
                   {a.messageCount} email(s) · {a.invoiceCount} invoice(s) imported ·{" "}
@@ -107,6 +112,20 @@ export function EmailAccountsClient({
                     <RefreshCw className="h-3.5 w-3.5" /> Sync now
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant={a.autoForward ? "secondary" : "primary"}
+                  disabled={pending}
+                  onClick={() =>
+                    startTransition(async () => {
+                      const res = await setAutoForwardAction({ integrationId: a.id, enabled: !a.autoForward });
+                      toast(res.message, res.ok ? "success" : "error");
+                      if (res.ok) router.refresh();
+                    })
+                  }
+                >
+                  {a.autoForward ? "Turn off auto-forward" : "Enable auto-forward"}
+                </Button>
                 <Button size="sm" variant="ghost" disabled={pending} onClick={() => act(disconnectGmailAction, a.id, "Disconnected.")}>
                   Disconnect
                 </Button>

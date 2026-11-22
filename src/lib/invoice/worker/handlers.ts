@@ -4,6 +4,7 @@ import { listOrganizationIds } from "../services/orgs";
 import { generateAndSendReminders } from "../services/reminders";
 import { runRecurring } from "../services/recurring";
 import { syncGmailAccount, renewDueWatches } from "../services/gmail";
+import { runForwarding } from "../services/forwarding";
 import { claimJobs, completeJob, failJob, type JobRow } from "../jobs";
 
 const SYSTEM_ACTOR = { id: "system", email: "worker@invoice-agent" };
@@ -25,6 +26,19 @@ export async function runRemindersAll(): Promise<TaskSummary> {
     emails += s.emailsSent;
   }
   return { task: "reminders", ran: orgs.length, detail: { inapp, emails } };
+}
+
+/** Forward approved invoice emails across all organizations. */
+export async function runForwardingAll(): Promise<TaskSummary> {
+  const orgs = await listOrganizationIds();
+  let forwarded = 0;
+  let failed = 0;
+  for (const org of orgs) {
+    const r = await runForwarding(org);
+    forwarded += r.forwarded;
+    failed += r.failed;
+  }
+  return { task: "forward", ran: orgs.length, detail: { forwarded, failed } };
 }
 
 /** Recurring invoice drafts across all organizations. */
@@ -69,6 +83,9 @@ async function dispatchJob(job: JobRow): Promise<unknown> {
         await syncGmailAccount(String(p.organizationId), String(p.integrationId), SYSTEM_ACTOR);
       }
       return { handled: "gmail_sync" };
+    case "forward":
+      if (p.organizationId) return await runForwarding(String(p.organizationId));
+      return await runForwardingAll();
     case "reminder":
       if (p.organizationId) return await generateAndSendReminders(String(p.organizationId));
       return await runRemindersAll();

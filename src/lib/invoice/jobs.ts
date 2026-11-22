@@ -20,6 +20,7 @@ export type JobType =
   | "ai_extract"
   | "validate"
   | "dedupe"
+  | "forward"
   | "reminder"
   | "recurring"
   | "report"

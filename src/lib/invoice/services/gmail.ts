@@ -34,6 +34,7 @@ export interface GmailIntegrationRow {
   scopes: string | null;
   history_id: string | null;
   status: string;
+  auto_forward: boolean;
   last_error: string | null;
   created_at: Date;
   updated_at: Date;
@@ -175,7 +176,7 @@ export function classifyEmail(input: {
   from: string;
   snippet: string;
   hasAttachment: boolean;
-}): { classification: EmailClassification; isInvoiceCandidate: boolean } {
+}): { classification: EmailClassification; isInvoiceCandidate: boolean; confidence: number } {
   const t = `${input.subject} ${input.snippet}`.toLowerCase();
   const has = (...k: string[]) => k.some((w) => t.includes(w));
 
@@ -190,7 +191,18 @@ export function classifyEmail(input: {
 
   const isInvoiceCandidate =
     input.hasAttachment && (classification === "supplier_invoice" || has("invoice", "bill", "tax invoice"));
-  return { classification, isInvoiceCandidate };
+
+  // Heuristic confidence (0..1). Stronger invoice signals + an attachment score
+  // higher; the forwarding threshold decides auto vs review.
+  let confidence: number;
+  if (isInvoiceCandidate) {
+    confidence = has("tax invoice", "gst invoice", "gstin") ? 0.92 : has("invoice", "bill") ? 0.78 : 0.62;
+  } else if (classification === "supplier_invoice") {
+    confidence = 0.4;
+  } else {
+    confidence = 0.1;
+  }
+  return { classification, isInvoiceCandidate, confidence };
 }
 
 export interface SyncSummary {
@@ -223,6 +235,14 @@ export async function syncGmailAccount(
     const { refs: messages, nextHistoryId } = await selectMessageRefs(token, integration, opts.maxMessages ?? 25);
     summary.scanned = messages.length;
 
+    // Forwarding config for this org (review-first: queue tasks, forward later).
+    const fwd = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
+      "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
+      [organizationId],
+    );
+    const minConf = Number(fwd?.min_confidence ?? 70);
+    const destination = fwd?.enabled && fwd.finance_destination ? fwd.finance_destination : null;
+
     for (const ref of messages) {
       try {
         const exists = await iQueryOne<{ id: string }>(
@@ -236,26 +256,38 @@ export async function syncGmailAccount(
         const from = getHeader(msg, "From") ?? "";
         const to = getHeader(msg, "To") ?? "";
         const atts = collectAttachments(msg).filter(isSupportedAttachment);
-        const { classification, isInvoiceCandidate } = classifyEmail({
+        const { classification, isInvoiceCandidate, confidence } = classifyEmail({
           subject,
           from,
           snippet: msg.snippet ?? "",
           hasAttachment: atts.length > 0,
         });
+        const confPct = Math.round(confidence * 100);
 
         const emailMessageId = createId();
         const receivedAt = msg.internalDate ? new Date(Number(msg.internalDate)) : null;
         await iExecute(
           "INSERT INTO `email_messages` (`id`,`organization_id`,`gmail_integration_id`,`gmail_message_id`,`thread_id`," +
-            "`from_address`,`to_address`,`subject`,`snippet`,`received_at`,`classification`,`is_invoice_candidate`,`processing_status`) " +
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "`from_address`,`to_address`,`subject`,`snippet`,`received_at`,`classification`,`classification_confidence`,`is_invoice_candidate`,`processing_status`) " +
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           [
             emailMessageId, organizationId, integrationId, ref.id, msg.threadId ?? null,
             from.slice(0, 320), to.slice(0, 320), subject, (msg.snippet ?? "").slice(0, 2000), receivedAt,
-            classification, isInvoiceCandidate, isInvoiceCandidate ? "pending" : "skipped",
+            classification, confPct, isInvoiceCandidate, isInvoiceCandidate ? "pending" : "skipped",
           ],
         );
         summary.newMessages += 1;
+
+        // Queue a forward task for invoice candidates (review-first).
+        if (isInvoiceCandidate && destination) {
+          const forwardStatus = confPct >= minConf ? (integration.auto_forward ? "approved" : "pending") : "review";
+          await iExecute(
+            "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
+              "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
+              "ON DUPLICATE KEY UPDATE `id`=`id`",
+            [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
+          );
+        }
 
         if (!isInvoiceCandidate) continue;
 
@@ -413,4 +445,27 @@ export async function findConnectedIntegrationByEmail(
     "SELECT id, organization_id FROM `gmail_integrations` WHERE email=? AND status='connected' LIMIT 1",
     [email.toLowerCase()],
   );
+}
+
+/** Return a valid access token for an account (used by the forwarding service). */
+export async function getAccountAccessToken(organizationId: string, integrationId: string): Promise<string> {
+  const integration = await iQueryOne<GmailIntegrationRow>(
+    "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
+    [organizationId, integrationId],
+  );
+  if (!integration) throw new Error("Gmail account not found.");
+  return getValidAccessToken(integration);
+}
+
+/** Toggle per-account auto-forward (review-first default is off). */
+export async function setAccountAutoForward(
+  organizationId: string,
+  integrationId: string,
+  enabled: boolean,
+): Promise<void> {
+  await iExecute("UPDATE `gmail_integrations` SET `auto_forward`=? WHERE organization_id=? AND id=?", [
+    enabled,
+    organizationId,
+    integrationId,
+  ]);
 }

@@ -34,6 +34,7 @@ export default async function EmailAccountsPage({
     invoiceCount: Number(g.invoice_count),
     lastSyncAt: g.last_sync_at ? new Date(g.last_sync_at).toISOString() : null,
     consecutiveFailures: Number(g.consecutive_failures),
+    autoForward: Boolean(g.auto_forward),
   }));
 
   return (

@@ -173,6 +173,21 @@ export async function gmailGetAttachment(
   return Buffer.from(json.data, "base64url");
 }
 
+/** Fetch the full original message as RFC822 (base64url), for .eml forwarding. */
+export async function gmailGetRaw(token: string, id: string): Promise<string> {
+  const res = await gfetch(token, `/messages/${id}?format=raw`);
+  const j = (await res.json()) as { raw?: string };
+  if (!j.raw) throw new GmailApiError("Message has no raw content.", 404, true);
+  return j.raw; // base64url RFC822
+}
+
+/** Send a message (raw is a base64url-encoded RFC822 MIME message). */
+export async function gmailSend(token: string, rawBase64Url: string): Promise<{ id: string; threadId: string }> {
+  const res = await gpost(token, "/messages/send", { raw: rawBase64Url });
+  const j = (await res.json()) as { id?: string; threadId?: string };
+  return { id: j.id ?? "", threadId: j.threadId ?? "" };
+}
+
 export function getHeader(msg: GmailMessage, name: string): string | null {
   const h = msg.payload?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase());
   return h?.value ?? null;

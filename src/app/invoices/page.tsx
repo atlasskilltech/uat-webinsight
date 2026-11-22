@@ -9,7 +9,10 @@ import { Button } from "@/components/ui/button";
 import { getInvoiceContext } from "@/lib/invoice/org";
 import { getInvoiceDbStatus } from "@/lib/invoice/status";
 import { listGmailAccounts } from "@/lib/invoice/services/gmail";
+import { listForwards, forwardCounts } from "@/lib/invoice/services/forwarding";
+import { hasCapability } from "@/lib/invoice/permissions";
 import { iQueryOne } from "@/lib/invoice/db";
+import { ForwardingReview, type ForwardView } from "./forwarding-review";
 
 export const metadata: Metadata = { title: "Invoice Agent" };
 export const dynamic = "force-dynamic";
@@ -61,14 +64,29 @@ export default async function InvoiceAgentHome() {
   }
 
   const org = ctx.organizationId;
-  const [accounts, emailsSeen, candidates, forwarded] = await Promise.all([
+  const [accounts, emailsSeen, candidates, counts, allForwards, canApprove] = await Promise.all([
     listGmailAccounts(org),
     count("SELECT COUNT(*) c FROM `email_messages` WHERE organization_id=?", [org]),
     count("SELECT COUNT(*) c FROM `email_messages` WHERE organization_id=? AND is_invoice_candidate=1", [org]),
-    // Forwarding is recorded once the forwarding engine runs (later milestone).
-    count("SELECT COUNT(*) c FROM `email_messages` WHERE organization_id=? AND processing_status='processed'", [org]),
+    forwardCounts(org),
+    listForwards(org, { limit: 100 }),
+    hasCapability("email.send"),
   ]);
   const connected = accounts.filter((a) => a.status === "connected").length;
+  const forwarded = counts.forwarded ?? 0;
+
+  const toView = (f: (typeof allForwards)[number]): ForwardView => ({
+    id: f.id,
+    subject: f.subject ?? "",
+    from: f.from_address ?? "",
+    account: f.account_email ?? "",
+    destination: f.destination,
+    confidence: f.confidence != null ? Math.round(Number(f.confidence)) : null,
+    status: f.status,
+    error: f.last_error,
+  });
+  const needsAttention = allForwards.filter((f) => f.status === "pending" || f.status === "review").map(toView);
+  const recent = allForwards.filter((f) => ["forwarded", "failed", "skipped"].includes(f.status)).slice(0, 10).map(toView);
 
   return (
     <div>
@@ -87,7 +105,7 @@ export default async function InvoiceAgentHome() {
           state={accounts.length ? "ok" : "empty"} href="/invoices/email-accounts" />
         <StatCard label="Emails monitored" value={emailsSeen} icon={Inbox} state={emailsSeen ? "ok" : "empty"} />
         <StatCard label="Invoices identified" value={candidates} icon={FileCheck2} tone="success" state={candidates ? "ok" : "empty"} />
-        <StatCard label="Processed" value={forwarded} icon={Send} state={forwarded ? "ok" : "empty"} />
+        <StatCard label="Forwarded to Finance" value={forwarded} icon={Send} tone="success" state={forwarded ? "ok" : "empty"} />
       </div>
 
       {accounts.length === 0 ? (
@@ -107,6 +125,12 @@ export default async function InvoiceAgentHome() {
             <Link href="/invoices/assistant"><Button variant="secondary"><Bot className="h-4 w-4" /> Talk to the agent</Button></Link>
           </CardContent>
         </Card>
+      )}
+
+      {accounts.length > 0 && (
+        <div className="mt-6">
+          <ForwardingReview needsAttention={needsAttention} recent={recent} canApprove={canApprove} />
+        </div>
       )}
     </div>
   );
