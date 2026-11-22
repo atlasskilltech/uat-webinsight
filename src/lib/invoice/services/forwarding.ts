@@ -96,6 +96,18 @@ export async function listForwards(
   );
 }
 
+/** Fetch a single forward task (with the joined fields sendForward needs). */
+async function getForward(organizationId: string, forwardId: string): Promise<ForwardRow | null> {
+  return iQueryOne<ForwardRow>(
+    "SELECT f.*, m.subject, m.from_address, m.received_at, g.email AS account_email " +
+      "FROM `invoice_forwards` f " +
+      "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
+      "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
+      "WHERE f.organization_id=? AND f.id=?",
+    [organizationId, forwardId],
+  );
+}
+
 export async function forwardCounts(organizationId: string): Promise<Record<string, number>> {
   const rows = await iQuery<{ status: string; c: number }>(
     "SELECT status, COUNT(*) c FROM `invoice_forwards` WHERE organization_id=? GROUP BY status",
@@ -110,6 +122,12 @@ export async function forwardCounts(organizationId: string): Promise<Record<stri
 
 function cleanHeader(v: string): string {
   return v.replace(/[\r\n]+/g, " ").slice(0, 900);
+}
+
+/** RFC 2047-encode a header value when it contains non-ASCII (UTF-8 subjects). */
+function encodeHeaderWord(v: string): string {
+  if (/^[\x00-\x7F]*$/.test(v)) return v;
+  return `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=`;
 }
 
 function wrap76(b64: string): string {
@@ -137,12 +155,12 @@ export function buildForwardMime(input: {
 
   return (
     `To: ${cleanHeader(input.destination)}\r\n` +
-    `Subject: Fwd: ${cleanHeader(input.subject || "(no subject)")}\r\n` +
+    `Subject: ${encodeHeaderWord("Fwd: " + cleanHeader(input.subject || "(no subject)"))}\r\n` +
     "MIME-Version: 1.0\r\n" +
     `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
     `--${boundary}\r\n` +
     'Content-Type: text/plain; charset="UTF-8"\r\n' +
-    "Content-Transfer-Encoding: 7bit\r\n\r\n" +
+    "Content-Transfer-Encoding: 8bit\r\n\r\n" +
     `${text}\r\n` +
     `--${boundary}\r\n` +
     "Content-Type: message/rfc822\r\n" +
@@ -153,9 +171,25 @@ export function buildForwardMime(input: {
   );
 }
 
-/** Send one approved forward. Idempotent: a forwarded row is never re-sent. */
-async function sendForward(organizationId: string, forward: ForwardRow): Promise<"forwarded" | "failed"> {
+/**
+ * Send one approved forward. Idempotent AND concurrency-safe: the task is first
+ * atomically claimed (approved -> sending) so that two runners (worker loop,
+ * cron, sync cadence) can never send the same email twice. A task not in the
+ * 'approved' state is skipped.
+ */
+async function sendForward(
+  organizationId: string,
+  forward: ForwardRow,
+): Promise<"forwarded" | "failed" | "skipped"> {
   if (forward.status === "forwarded") return "forwarded";
+
+  // Atomic claim — only the runner whose UPDATE flips 'approved' -> 'sending' proceeds.
+  const claim = await iExecute(
+    "UPDATE `invoice_forwards` SET `status`='sending', `attempts`=`attempts`+1, `last_error`=NULL WHERE id=? AND `status`='approved'",
+    [forward.id],
+  );
+  if (claim.affectedRows === 0) return "skipped"; // already claimed/sent by another runner
+
   try {
     const token = await getAccountAccessToken(organizationId, forward.gmail_integration_id);
     const raw = await gmailGetRaw(token, forward.source_gmail_message_id);
@@ -198,7 +232,8 @@ export async function runForwarding(organizationId: string): Promise<{ forwarded
   for (const f of approved) {
     const r = await sendForward(organizationId, f);
     if (r === "forwarded") forwarded += 1;
-    else failed += 1;
+    else if (r === "failed") failed += 1;
+    // "skipped" => another runner claimed it; don't count.
   }
   const pendingRow = await iQueryOne<{ c: number }>(
     "SELECT COUNT(*) c FROM `invoice_forwards` WHERE organization_id=? AND status IN ('pending','review')",
@@ -213,14 +248,24 @@ export async function approveAndForward(
   actor: { id: string; email: string },
   forwardId: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const row = (await listForwards(organizationId, {})).find((f) => f.id === forwardId);
+  const row = await getForward(organizationId, forwardId);
   if (!row) return { ok: false, message: "Forward task not found." };
   if (row.status === "forwarded") return { ok: true, message: "Already forwarded." };
-  await iExecute("UPDATE `invoice_forwards` SET `status`='approved', `approved_by`=? WHERE id=?", [actor.id, forwardId]);
+  // Only move to 'approved' from a non-terminal state (never re-open a forwarded one).
+  await iExecute(
+    "UPDATE `invoice_forwards` SET `status`='approved', `approved_by`=? WHERE id=? AND `status` IN ('pending','review','failed','approved')",
+    [actor.id, forwardId],
+  );
   const result = await sendForward(organizationId, { ...row, status: "approved" });
-  return result === "forwarded"
-    ? { ok: true, message: "Forwarded to Finance & Accounts." }
-    : { ok: false, message: "Forwarding failed — see the exception." };
+  if (result === "forwarded") return { ok: true, message: "Forwarded to Finance & Accounts." };
+  if (result === "skipped") {
+    // Another runner was mid-send or finished; report the real outcome.
+    const now = await iQueryOne<{ status: string }>("SELECT status FROM `invoice_forwards` WHERE id=?", [forwardId]);
+    return now?.status === "forwarded"
+      ? { ok: true, message: "Already forwarded to Finance & Accounts." }
+      : { ok: true, message: "Forwarding is already in progress." };
+  }
+  return { ok: false, message: "Forwarding failed — see the exception." };
 }
 
 /**

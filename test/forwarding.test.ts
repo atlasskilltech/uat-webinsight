@@ -38,6 +38,23 @@ describe("forwarding: .eml MIME builder", () => {
     expect(Buffer.from(b64, "base64").toString("utf8")).toBe(original);
   });
 
+  it("RFC2047-encodes a non-ASCII subject and uses an 8bit body", () => {
+    const mime = buildForwardMime({
+      destination: "fa@uni.edu",
+      subject: "Invoice ₹1,180 — Müller & Co",
+      from: "v@acme.com",
+      date: "",
+      confidence: null,
+      rawOriginalBase64Url: rawB64Url,
+    });
+    expect(mime).toMatch(/Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=/);
+    expect(mime).not.toContain("Subject: Fwd: Invoice ₹"); // raw non-ASCII not in header
+    expect(mime).toContain("Content-Transfer-Encoding: 8bit");
+    // The encoded subject decodes back to the original text.
+    const m = mime.match(/Subject: =\?UTF-8\?B\?([A-Za-z0-9+/=]+)\?=/);
+    expect(Buffer.from(m![1], "base64").toString("utf8")).toBe("Fwd: Invoice ₹1,180 — Müller & Co");
+  });
+
   it("strips CR/LF from header values (no header injection)", () => {
     const mime = buildForwardMime({
       destination: "fa@uni.edu",
