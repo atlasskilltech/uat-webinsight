@@ -38,6 +38,46 @@ export function getInvoiceDbConfig(): InvoiceDbConfig {
   return { host, port, user, password, database };
 }
 
+// --- OCR provider configuration ---------------------------------------------
+// Pure env reads (no server-only, fs or network) so this stays safe to import
+// anywhere, including client components that render provider status.
+
+export interface DocAiConfig {
+  projectId: string;
+  location: string;
+  processorId: string;
+}
+
+/** Document AI processor coordinates, or null when any part is missing. */
+export function getDocAiConfig(): DocAiConfig | null {
+  const projectId = process.env.DOCAI_PROJECT_ID?.trim();
+  const location = process.env.DOCAI_LOCATION?.trim();
+  const processorId = process.env.DOCAI_PROCESSOR_ID?.trim();
+  if (!projectId || !location || !processorId) return null;
+  return { projectId, location, processorId };
+}
+
+/** Is a service-account credential pointer present for Document AI? */
+export function docAiCredentialsConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim());
+}
+
+/**
+ * Accurately validate that the SELECTED OCR provider has everything it needs.
+ * - no OCR_PROVIDER            -> false (OCR off, honest)
+ * - "tesseract"               -> true (local; no env config required)
+ * - "documentai"             -> requires DOCAI_PROJECT_ID/LOCATION/PROCESSOR_ID
+ *                                 and GOOGLE_APPLICATION_CREDENTIALS
+ * - any other / unknown name  -> false (no implementation; never faked)
+ */
+export function ocrProviderConfigured(): boolean {
+  const name = process.env.OCR_PROVIDER?.trim().toLowerCase();
+  if (!name) return false;
+  if (name === "tesseract") return true;
+  if (name === "documentai") return getDocAiConfig() !== null && docAiCredentialsConfigured();
+  return false;
+}
+
 /** Feature/provider availability — used to render honest "connected/not set up" states. */
 export interface InvoiceFeatureFlags {
   encryptionConfigured: boolean;
@@ -56,7 +96,7 @@ export function getInvoiceFeatureFlags(): InvoiceFeatureFlags {
   return {
     encryptionConfigured: Boolean(process.env.INVOICE_ENCRYPTION_KEY?.trim()),
     aiConfigured: Boolean(process.env.AI_API_KEY?.trim() && process.env.AI_PROVIDER?.trim()),
-    ocrConfigured: Boolean(process.env.OCR_PROVIDER?.trim()),
+    ocrConfigured: ocrProviderConfigured(),
     gmailConfigured: Boolean(
       process.env.GMAIL_CLIENT_ID?.trim() && process.env.GMAIL_CLIENT_SECRET?.trim(),
     ),

@@ -170,7 +170,7 @@ export default async function InvoiceSettingsPage() {
             icon={ScanLine}
             label="OCR"
             ok={flags.ocrConfigured}
-            hint="Set OCR_PROVIDER (and OCR_API_KEY if cloud) to read scanned PDFs and images."
+            hint="Set OCR_PROVIDER=tesseract, or =documentai with the DOCAI_* service-account vars, to read scanned PDFs and images."
           />
           <StateRow
             icon={Mail}
