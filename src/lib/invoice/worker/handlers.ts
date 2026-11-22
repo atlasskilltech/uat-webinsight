@@ -1,10 +1,8 @@
 import "server-only";
 import { iQuery } from "../db";
-import { listOrganizationIds } from "../services/orgs";
-import { generateAndSendReminders } from "../services/reminders";
-import { runRecurring } from "../services/recurring";
 import { syncGmailAccount, renewDueWatches } from "../services/gmail";
 import { runForwarding } from "../services/forwarding";
+import { listOrganizationIds } from "../services/orgs";
 import { claimJobs, completeJob, failJob, type JobRow } from "../jobs";
 
 const SYSTEM_ACTOR = { id: "system", email: "worker@invoice-agent" };
@@ -13,19 +11,6 @@ export interface TaskSummary {
   task: string;
   ran: number;
   detail: Record<string, unknown>;
-}
-
-/** Reminders across all organizations. */
-export async function runRemindersAll(): Promise<TaskSummary> {
-  const orgs = await listOrganizationIds();
-  let inapp = 0;
-  let emails = 0;
-  for (const org of orgs) {
-    const s = await generateAndSendReminders(org);
-    inapp += s.inappSent;
-    emails += s.emailsSent;
-  }
-  return { task: "reminders", ran: orgs.length, detail: { inapp, emails } };
 }
 
 /** Forward approved invoice emails across all organizations. */
@@ -39,14 +24,6 @@ export async function runForwardingAll(): Promise<TaskSummary> {
     failed += r.failed;
   }
   return { task: "forward", ran: orgs.length, detail: { forwarded, failed } };
-}
-
-/** Recurring invoice drafts across all organizations. */
-export async function runRecurringAll(): Promise<TaskSummary> {
-  const orgs = await listOrganizationIds();
-  let created = 0;
-  for (const org of orgs) created += (await runRecurring(org)).created;
-  return { task: "recurring", ran: orgs.length, detail: { created } };
 }
 
 /** Sync Gmail accounts that are due (connected, not in backoff, stale). */
@@ -86,19 +63,7 @@ async function dispatchJob(job: JobRow): Promise<unknown> {
     case "forward":
       if (p.organizationId) return await runForwarding(String(p.organizationId));
       return await runForwardingAll();
-    case "reminder":
-      if (p.organizationId) return await generateAndSendReminders(String(p.organizationId));
-      return await runRemindersAll();
-    case "recurring":
-      if (p.organizationId) return await runRecurring(String(p.organizationId));
-      return await runRecurringAll();
     // Types handled inline by the request path (or not worker-owned): no-op.
-    case "ai_extract":
-    case "ocr":
-    case "validate":
-    case "dedupe":
-    case "report":
-    case "agent_task":
     default:
       return { skipped: job.type };
   }

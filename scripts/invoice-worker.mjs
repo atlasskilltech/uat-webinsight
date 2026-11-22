@@ -75,8 +75,6 @@ console.log(`[invoice-worker] started → ${appUrl} (drain ${DRAIN_MS / 1000}s, 
 every(DRAIN_MS, () => call("drain"));
 every(SYNC_MS, () => call("sync"));
 every(SYNC_MS, () => call("forward"));
-every(PERIODIC_MS, () => call("reminders"));
-every(PERIODIC_MS, () => call("recurring"));
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
