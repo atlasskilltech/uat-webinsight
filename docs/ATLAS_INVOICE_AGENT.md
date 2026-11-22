@@ -1,237 +1,158 @@
-# Atlas Invoice Agent — Implementation Report
+# Atlas Invoice Agent — Digital Finance & Accounts Employee
 
-An AI-powered Accounts Payable + Accounts Receivable finance module added **inside**
-the existing Atlas Web Insight app. Built additively; no existing module, route, or
-database table was changed. Single-organization model, additive sidebar.
+A focused AI agent inside Atlas Web Insight that **monitors connected Gmail
+accounts, identifies supplier/vendor invoice emails, and forwards them (with the
+original attached as `.eml`) to a configurable Finance & Accounts address** — plus
+a natural-language workspace to run finance tasks on command. It is **not** an
+accounting / procurement system and does not duplicate the university's
+procurement software.
 
-> Status legend: ✅ **Available/Done** · 🔧 **Reuses existing** · 🆕 **New** · 🔑 **Needs external config to run live**
+> Legend: ✅ works now · 🔑 needs external credentials/config to run live · ⚙️ background
 
 ---
 
-## 1. What was implemented (by milestone)
+## What changed in the scope reset (removed vs built)
 
-| Milestone | Scope | State |
+**Removed** (UI + dead backend; no existing Atlas module touched, no DB tables dropped):
+All AP/AR management surfaces — invoice list/incoming/outgoing/new/detail/print/review,
+Vendors·Customers, Products, Payments, Approvals, Due Dates, Needs-Review, Financial
+Reports, manual-upload Processing — and their now-unused services (invoices CRUD,
+parties, products, payments, approvals, due, sequences, reports, reminders, recurring,
+analytics, notifications) plus the AP/AR Zod/enums. Navigation trimmed from 15 links to 4.
+
+**Built / kept for the new mission:**
+- Multi-account **Gmail connection** (separate OAuth, encrypted tokens, `gmail.send` added).
+- **Background monitoring**: history-based incremental sync, Gmail **push (watch + Pub/Sub)**
+  with a secret-verified webhook + watch renewal, and scheduled-pull reconciliation.
+- **Invoice detection + auto-forwarding** to one configurable Finance & Accounts address,
+  **review-first** (per-account auto-forward toggle; uncertain → review), idempotent, with
+  the full original attached as `original.eml`.
+- **AI agent** with a monitoring/forwarding tool registry (no raw SQL; writes human-approved).
+- **Document intelligence**: PDF text + OCR + AI extraction + deterministic recompute +
+  duplicate detection (runs during sync; feeds the agent's read tools).
+
+---
+
+## The four screens
+
+1. **Invoice Agent** (`/invoices`) — status (connected accounts, emails monitored, invoices
+   identified, forwarded), **"needs your approval"** (approve/forward-now or dismiss), recent forwards.
+2. **AI Workspace** (`/invoices/assistant`) — chat + floating assistant; natural-language tasks.
+3. **Connected Accounts** (`/invoices/email-accounts`) — connect/reconnect/disconnect Gmail,
+   per-account **auto-forward** toggle, sync status.
+4. **Agent Settings** (`/invoices/settings`) — Finance & Accounts destination, confidence
+   threshold, enable/pause; database + provider states.
+
+---
+
+## How forwarding works (review-first)
+
+1. ⚙️ Sync (push or scheduled) pulls new mail; each email is classified with a confidence.
+2. A forward **task** is queued when a destination is configured:
+   - confidence ≥ threshold **and** account auto-forward **on** → `approved` (sent by the worker)
+   - confidence ≥ threshold **and** auto-forward **off** → `pending` (waits for a human)
+   - confidence < threshold → `review` (human verifies it's an invoice)
+3. The forward engine sends `approved` tasks: a new email **from the connected account** to the
+   F&A address, subject `Fwd: …`, the **entire original attached as `original.eml`**. Idempotent
+   (unique email+destination key), audit-logged, header-injection-safe.
+4. Humans approve/dismiss `pending`/`review` from the Invoice Agent home (or via the agent).
+
+**The agent never auto-pays, approves financial commitments, or takes high-impact actions.**
+Forwarding/sending from the agent is **approval-gated**.
+
+---
+
+## AI agent tools (LLM has no DB access; never writes SQL)
+
+Read: `list_connected_accounts, search_emails, get_email_details, classify_invoice_email,
+get_invoice_attachments, extract_invoice_data, search_invoice_records,
+detect_duplicate_invoices, generate_invoice_summary, generate_invoice_report,
+identify_pending_invoices, identify_overdue_invoices, get_agent_activity,
+draft_follow_up_email` (composes, never sends).
+Write (human-approved, then executed server-side): `forward_invoice_email,
+send_authorized_email, retry_failed_task`.
+
+---
+
+## Background jobs ⚙️
+
+DB-backed queue (`processing_jobs`, `FOR UPDATE SKIP LOCKED`). Endpoints (bearer
+`INVOICE_CRON_SECRET`, falls back to `CRON_SECRET`): `/api/invoices/cron/{sync,forward,drain,all}`.
+Worker `scripts/invoice-worker.mjs` (pm2 app `uat-invoice-worker`) drives them. Gmail **push**
+webhook: `/api/invoices/gmail/push?token=<secret>`.
+
+---
+
+## Provider status
+
+| Provider | Status | Enable with |
 |---|---|---|
-| **A — Foundation** | Dedicated `atlas_invoice` DB + migrations + runner, isolated mysql2 pool, BigInt money/GST engine, AES-256-GCM crypto, private storage (local/S3) + upload validation, DB-backed job queue, org isolation + capability permissions, audit, nav group, Overview + Settings | ✅ |
-| **B — Invoice management** | Vendors/customers, products, incoming (AP) + outgoing (AR) invoices with deterministic totals + auto-numbering, payments (transactional, over-pay guard), approvals (amount-bound), due dates, printable invoice | ✅ |
-| **C — AI processing** | Upload → store → PDF text / OCR → AI extract → Zod → recompute + cross-check → duplicate detection → confidence → Needs Review; provider-independent adapters; document serving | ✅ (AI/OCR 🔑) |
-| **D — Gmail** | Separate OAuth (multi-account, encrypted tokens), connect/disconnect/reconnect, sync with dedupe → pipeline, classification, backoff/reauth | ✅ (🔑 verified OAuth) |
-| **E — AI Agent** | Tool registry (no SQL), policy engine, Anthropic tool-use orchestrator, approval-gated writes, persisted conversations/runs, dedicated workspace + floating assistant | ✅ (AI 🔑) |
-| **F — Automation & reporting** | Worker + cron endpoints, scheduled Gmail sync, due-date reminders (in-app+email), recurring drafts, notifications, financial reports (+CSV), dashboard analytics | ✅ |
-| **G — QA & delivery** | Vitest suite (44 tests), regression (tsc/eslint/build), this report | ✅ |
+| Gmail OAuth (multi-account) | 🔑 | `GMAIL_CLIENT_ID/SECRET/REDIRECT_URI`, Gmail API, **scopes `gmail.readonly` + `gmail.send`**, restricted-scope verification |
+| Gmail push (real-time) | 🔑 ⚙️ | `GMAIL_PUBSUB_TOPIC`, a Pub/Sub topic + push subscription to the webhook with `?token=`=`GMAIL_PUBSUB_VERIFICATION_AUDIENCE`. Without it: scheduled pull still works |
+| Encryption (tokens) | 🔑 | `INVOICE_ENCRYPTION_KEY` (32-byte base64) — required before connecting Gmail |
+| AI extraction / assistant | 🔑 | `AI_PROVIDER=anthropic`, `AI_MODEL`, `AI_API_KEY` |
+| OCR (scanned docs) | 🔑 | `OCR_PROVIDER` (+ optional `tesseract.js`) |
+| Storage | ✅ local / 🔑 S3 | `INVOICE_STORAGE_PROVIDER=s3` + `S3_*` |
+
+Forwarding is **always on** once a destination + `gmail.send` grant exist — no AI needed.
+Everything unconfigured shows an honest "not configured" state.
 
 ---
 
-## 2. Routes and pages (23 pages + 4 API routes)
+## Environment variables
 
-**Pages** (`src/app/invoices/`): `/invoices` (Overview + analytics), `/invoices/list`,
-`/invoices/incoming`, `/invoices/outgoing`, `/invoices/new`, `/invoices/[id]`,
-`/invoices/[id]/print`, `/invoices/[id]/review`, `/invoices/parties`,
-`/invoices/products`, `/invoices/payments`, `/invoices/approvals`,
-`/invoices/due-dates`, `/invoices/email-accounts`, `/invoices/processing`,
-`/invoices/needs-review`, `/invoices/reports`, `/invoices/assistant`,
-`/invoices/settings`.
-
-**API routes**: `POST/GET /api/invoices/cron/[task]` (bearer),
-`GET /api/invoices/documents` (signed token + org check),
-`GET /api/invoices/gmail/connect`, `GET /api/invoices/gmail/callback`.
-
-**Sidebar** (`src/lib/nav.ts`, additive "Invoice Agent" group): Invoice Overview,
-All/Incoming/Outgoing Invoices, Email Accounts, Processing Queue, Needs Review,
-Vendors & Customers, Products & Services, Payments, Approvals, Due Dates,
-Financial Reports, AI Invoice Assistant, Invoice Settings.
+`ATLAS_INVOICE_DB_*`, `INVOICE_ENCRYPTION_KEY`, `GMAIL_CLIENT_ID/SECRET/REDIRECT_URI`,
+`GMAIL_PUBSUB_TOPIC`, `GMAIL_PUBSUB_VERIFICATION_AUDIENCE`, `GMAIL_QUERY`, `GMAIL_SYNC_DAYS`,
+`GMAIL_SYNC_INTERVAL_MIN`, `AI_PROVIDER/AI_MODEL/AI_API_KEY`, `OCR_PROVIDER`,
+`INVOICE_STORAGE_PROVIDER` (+`S3_*`), `INVOICE_CRON_SECRET`, `INVOICE_WORKER_*`. See `.env.example`.
 
 ---
 
-## 3. Database (dedicated `atlas_invoice`, raw MySQL — 36 tables)
+## Tests & build
 
-Migrations in `db/invoice/*.sql`, applied by `npm run invoice:db:init` (idempotent,
-tracked in `_invoice_migrations`). **Never touches `atlas_dashboard`.**
-
-- **Tenancy**: `organizations`, `organization_members`
-- **Master data**: `invoice_parties`, `products_services`, `invoice_sequences`
-- **Invoices**: `invoices`, `invoice_line_items`, `invoice_attachments`,
-  `invoice_extractions`, `invoice_credit_notes`, `invoice_credit_note_items`
-- **Finance ops**: `invoice_payments`, `invoice_payment_allocations`,
-  `invoice_approvals`, `invoice_approval_steps`, `invoice_reminders`,
-  `invoice_subscriptions`, `invoice_duplicate_matches`
-- **Gmail/email**: `gmail_integrations`, `gmail_sync_states`, `email_messages`,
-  `email_attachments`
-- **Infra**: `processing_jobs`, `invoice_audit_logs`, `notifications`,
-  `notification_preferences`
-- **Agent**: `agent_conversations`, `agent_messages`, `agent_runs`, `agent_steps`,
-  `agent_tool_calls`, `agent_tasks`, `agent_memory`, `agent_approvals`,
-  `agent_activity_logs`, `agent_settings`
-
-All money is `DECIMAL`; every tenant row carries `organization_id`; InnoDB, utf8mb4,
-FKs, indexes, unique dedupe keys.
+`npm test` — **39 Vitest tests pass**: money/GST engine, AES-256-GCM crypto, storage/upload
+validation + signed tokens, email classifier, **forwarding `.eml` MIME builder**
+(addresses the destination, embeds a decodable original, blocks header injection), formatting.
+`tsc --noEmit` ✅ · `eslint` ✅ · `next build` ✅ (4 invoice pages + 5 API routes; existing
+Atlas routes intact). Live Gmail/AI/OCR/Pub-Sub can't run in the build env.
 
 ---
 
-## 4. Services & libraries (`src/lib/invoice/`)
-
-`db.ts` (dedicated pool), `config.ts`, `money.ts` (BigInt GST engine), `crypto.ts`
-(AES-256-GCM), `storage.ts` (local/S3 + magic-byte validation + signed tokens),
-`audit.ts`, `org.ts` (isolation), `permissions.ts`, `types.ts`, `enums.ts`,
-`format.ts`, `validation.ts` (Zod), `status.ts`, `overview.ts`, `jobs.ts` (queue).
-`services/`: `parties, products, sequences, invoices, payments, approvals, due,
-duplicates, processing, gmail, agent, notifications, reminders, recurring, reports,
-analytics, orgs`. `ai/`: `pdf-text, ocr, extract, types`. `gmail/`: `oauth, api`.
-`agent/`: `tools, policy, llm, orchestrator`. `worker/handlers.ts`.
-
----
-
-## 5. AI agent tools (LLM has no DB/SQL access)
-
-Read: `list_invoices, get_invoice, find_overdue, summarize_due, overview_metrics,
-search_parties, list_payments, find_duplicates, find_gst_mismatches,
-list_pending_approvals`. Write (approval-gated): `record_payment`. Each tool has a
-required capability + Zod schema; writes create an `agent_approvals` request and run
-only after a human approves.
-
----
-
-## 6. Background jobs & automation
-
-DB-backed queue (`processing_jobs`, `FOR UPDATE SKIP LOCKED`). Cron endpoints
-`/api/invoices/cron/{sync,reminders,recurring,drain,all}` (bearer). Worker
-`scripts/invoice-worker.mjs` drives them on intervals (added as pm2 app
-`uat-invoice-worker`). Tasks: due Gmail sync, due-date reminders (in-app + email,
-deduped), recurring invoice drafts, queue drain. Inline today: OCR/AI extraction,
-validation, dedupe (run during upload/sync).
-
----
-
-## 7–9. Provider status
-
-| Provider | Status | To enable |
-|---|---|---|
-| **PDF text** | ✅ Works with no external service (`pdf-parse`) | — |
-| **OCR** | 🔑 Off until configured | `OCR_PROVIDER` (+ optional `tesseract.js`) |
-| **AI extraction + agent** | 🔑 Anthropic adapter; off until configured | `AI_PROVIDER=anthropic`, `AI_MODEL`, `AI_API_KEY` |
-| **Gmail** | 🔑 Full flow built; needs verified OAuth client | `GMAIL_CLIENT_ID/SECRET/REDIRECT_URI`, Gmail API, restricted-scope verification |
-| **Storage** | ✅ Local default; 🔑 S3 optional | `INVOICE_STORAGE_PROVIDER=s3` + `S3_*` (+ `@aws-sdk/client-s3`) |
-| **Email** | 🔧 Reuses app's Resend/SendGrid | existing `EMAIL_*` |
-| **Encryption** | 🔑 Required before Gmail | `INVOICE_ENCRYPTION_KEY` (32-byte base64) |
-
-All unconfigured features show an **honest "not configured" state** — none are faked.
-
----
-
-## 10. Environment variables (new; see `.env.example`)
-
-DB: `ATLAS_INVOICE_DB_HOST/PORT/USER/PASSWORD/NAME`. Security:
-`INVOICE_ENCRYPTION_KEY`. AI: `AI_PROVIDER/AI_MODEL/AI_API_KEY`. OCR:
-`OCR_PROVIDER/OCR_API_KEY`. Gmail: `GMAIL_CLIENT_ID/SECRET/REDIRECT_URI`,
-`GMAIL_PUBSUB_*` (optional), `GMAIL_QUERY/SYNC_DAYS/SYNC_INTERVAL_MIN`. Storage:
-`INVOICE_STORAGE_PROVIDER`, `INVOICE_STORAGE_DIR`, `INVOICE_MAX_UPLOAD_MB`, `S3_*`.
-Automation: `INVOICE_CRON_SECRET`, `INVOICE_WORKER_*`, `INVOICE_WORKER_CONCURRENCY`,
-`INVOICE_JOB_RETRY_LIMIT`.
-
----
-
-## 11. Tests executed (actual results)
-
-`npm test` (Vitest) — **44 passed / 44** across 6 files:
-- `money.test.ts` (13): parse/format, half-up rounding, qty/percent, GST split
-  (CGST/SGST/IGST), odd-amount exact split, invoice totals, round-off, claimed-total
-  cross-check.
-- `crypto.test.ts` (6): AES-256-GCM round-trip, no plaintext leak, unique IV, tamper
-  + malformed rejection, null handling.
-- `storage.test.ts` (10): magic-byte sniffing (PDF/PNG/JPG/WebP), upload validation
-  (size, declared/content mismatch), signed-token round-trip/expiry/tamper.
-- `validation.test.ts` (8): party/product/line/invoice/payment Zod schemas.
-- `format.test.ts` (3): money formatting, financial year, date input.
-- `classify.test.ts` (4): email classification heuristic.
-
-**Not runnable in this environment** (no MySQL / external providers here): live DB
-migrations, transactional flows, Gmail/AI/OCR/S3 integration, agent tool loop. These
-are written and type-safe; run them on a MySQL-enabled host with providers configured.
-
----
-
-## 12. Build results
-
-`npx tsc --noEmit` ✅ · `npx eslint` ✅ · `npm run build` ✅ (all invoice routes
-compiled; existing routes intact). Build warnings are the expected "Critical
-dependency" notices from intentional guarded optional imports (`tesseract.js`,
-`pdf-parse` internal, `@aws-sdk`) — benign.
-
----
-
-## 13. Security measures
-
-Server-side capability checks on every action/route/tool; organization isolation on
-every query (resolved server-side, never from client); AES-256-GCM for OAuth tokens;
-upload validation by file signature; duplicate-processing prevention; LLM restricted
-to registered tools (no SQL), approvals human-controlled; signed + authz-checked
-document access; bearer-secured cron; immutable audit trail; prompt-injection-aware
-system prompts (document text treated as data). CSRF via Next Server Actions + signed
-OAuth state.
-
----
-
-## 14. Outstanding external setup (before production)
-
-- Provision `atlas_invoice` DB + run `npm run invoice:db:init`.
-- Set `INVOICE_ENCRYPTION_KEY`; configure AI/OCR/Gmail/S3 as needed (each gated).
-- Gmail: create a **separate verified** Google Cloud OAuth client (restricted-scope
-  review has lead time); optional Pub/Sub for push.
-- **Automated DB backups** for `atlas_invoice` (mysqldump/snapshots) — required for
-  financial data; not yet automated.
-- Deploy the worker (pm2) or point an external scheduler at the cron endpoints.
-
----
-
-## 15. Run locally
+## Run locally
 
 ```bash
 npm install
-cp .env.example .env            # fill DB + INVOICE_ENCRYPTION_KEY (+ providers as needed)
-npm run db:init                 # existing app schema (unchanged)
-npm run invoice:db:init         # create/migrate atlas_invoice
-npm run dev                     # http://localhost:3000
-npm test                        # run the unit suite
+cp .env.example .env     # set ATLAS_INVOICE_DB_*, INVOICE_ENCRYPTION_KEY (+ providers)
+npm run db:init          # existing app schema (unchanged)
+npm run invoice:db:init  # create/migrate atlas_invoice (incl. migration 007 forwarding)
+npm run dev && npm test
 ```
-Sign in as the admin → **Invoice Agent → Invoice Settings → Create organization**.
+Then: sign in as admin → **Invoice Agent → Agent Settings** → create org + set the Finance
+& Accounts destination → **Connected Accounts** → connect Gmail → enable auto-forward per
+account when ready.
 
-## 16. Start the worker
-
+## Start the worker
 ```bash
-npm run invoice:worker          # needs APP_URL + INVOICE_CRON_SECRET (or CRON_SECRET) and the app running
+npm run invoice:worker   # needs APP_URL + INVOICE_CRON_SECRET (or CRON_SECRET), app running
 ```
-Or trigger tasks directly:
-```bash
-curl -X POST -H "Authorization: Bearer $INVOICE_CRON_SECRET" http://localhost:3000/api/invoices/cron/all
-```
+Or trigger directly: `curl -X POST -H "Authorization: Bearer $INVOICE_CRON_SECRET" $APP_URL/api/invoices/cron/all`
 
-## 17. Deploy to EC2 (existing pipeline)
-
-The GitHub Actions deploy (`.github/workflows/stagingweb.yml`, push to `staging`)
-already runs `npm ci`, `db:init`, `build`, `pm2 startOrReload`. For the Invoice Agent,
-add on the server: run `npm run invoice:db:init` once (and on schema changes), set the
-new env vars in `.env`, and `pm2 startOrReload ecosystem.config.js` (now includes the
-`uat-invoice-worker` app). Set up `mysqldump` backups for `atlas_invoice`.
+## Deploy to EC2
+Existing GitHub Actions deploy (push to `staging`) runs `npm ci`, `db:init`, `build`,
+`pm2 startOrReload`. For the agent, on the server: run `npm run invoice:db:init`, set the new
+env vars in `.env`, and `pm2 startOrReload ecosystem.config.js` (includes `uat-invoice-worker`).
+Configure the Google Cloud OAuth client + (optional) Pub/Sub. Add `atlas_invoice` backups.
 
 ---
 
-## Files created / modified
+## Remaining production blockers
 
-**Created**: `db/invoice/*.sql`, `scripts/invoice-db-init.ts`,
-`scripts/invoice-worker.mjs`, `src/lib/invoice/**`, `src/app/invoices/**`,
-`src/app/api/invoices/**`, `test/**`, `vitest.config.ts`, this doc.
+- 🔑 Verified Gmail OAuth client with **`gmail.send`** (restricted-scope Google review has lead time).
+- 🔑 `INVOICE_ENCRYPTION_KEY` set before connecting any account.
+- 🔑 (optional) Pub/Sub topic + push subscription for real-time; otherwise scheduled pull.
+- ⚙️ Automated `atlas_invoice` backups (not yet automated).
+- Live end-to-end + security pass on a MySQL-enabled host with real credentials.
 
-**Modified (additive only)**: `src/lib/nav.ts` (Finance group), `package.json`
-(scripts + deps: `pdf-parse`, dev `vitest`), `.env.example` (documented vars),
-`.gitignore` (local storage), `ecosystem.config.js` (worker app), `tsconfig.json`
-(target ES2017→ES2020 for BigInt). **Not modified**: `db/schema.sql`, `src/lib/db.ts`,
-`src/auth.ts`, the 9 existing module folders, existing cron routes.
-
----
-
-## Not production-ready until
-
-Essential external integrations (AI/OCR/Gmail), automated `atlas_invoice` backups, and
-a full live end-to-end + security pass on a MySQL-enabled host are completed. The code
-is implemented, type-checked, linted, unit-tested and building; live provider behaviour
-remains to be exercised with real credentials.
+Dormant (kept, data-safe, unused by the new scope): the AP/AR tables remain in `atlas_invoice`
+but no code reads/writes them except the extraction records (`invoices`, `invoice_line_items`,
+`invoice_extractions`, `invoice_duplicate_matches`) used for invoice intelligence.

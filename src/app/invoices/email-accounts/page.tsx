@@ -34,6 +34,7 @@ export default async function EmailAccountsPage({
     invoiceCount: Number(g.invoice_count),
     lastSyncAt: g.last_sync_at ? new Date(g.last_sync_at).toISOString() : null,
     consecutiveFailures: Number(g.consecutive_failures),
+    autoForward: Boolean(g.auto_forward),
   }));
 
   return (
@@ -47,7 +48,7 @@ export default async function EmailAccountsPage({
         <EmptyState
           icon={Mail}
           title="Gmail is not configured"
-          description="Set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REDIRECT_URI from a dedicated Google Cloud OAuth client (Gmail API enabled, gmail.readonly scope — verification required). This is separate from the Search Console / Analytics OAuth."
+          description="Set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REDIRECT_URI from a dedicated Google Cloud OAuth client (Gmail API enabled; scopes gmail.readonly + gmail.send — restricted-scope verification required). This is separate from the Search Console / Analytics OAuth."
         />
       ) : !encryptionOk ? (
         <EmptyState

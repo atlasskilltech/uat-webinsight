@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { runRemindersAll, runRecurringAll, runDueGmailSyncs, drainJobs } from "@/lib/invoice/worker/handlers";
+import { runDueGmailSyncs, runForwardingAll, drainJobs } from "@/lib/invoice/worker/handlers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,9 +11,8 @@ export const maxDuration = 300;
  * (INVOICE_CRON_SECRET, falling back to the app's CRON_SECRET). An external
  * scheduler OR the thin worker loop (scripts/invoice-worker.ts) can call these.
  *
- *   POST /api/invoices/cron/sync       -> Gmail sync for due accounts
- *   POST /api/invoices/cron/reminders  -> due-date reminders (in-app + email)
- *   POST /api/invoices/cron/recurring  -> recurring invoice drafts
+ *   POST /api/invoices/cron/sync       -> Gmail sync for due accounts (+ watch renewal)
+ *   POST /api/invoices/cron/forward    -> forward approved invoice emails to Finance & Accounts
  *   POST /api/invoices/cron/drain      -> process a batch of queued jobs
  *   POST /api/invoices/cron/all        -> all of the above, in order
  */
@@ -42,8 +41,7 @@ async function handle(req: Request, task: string): Promise<NextResponse> {
   try {
     const results: unknown[] = [];
     if (task === "sync" || task === "all") results.push(await runDueGmailSyncs());
-    if (task === "reminders" || task === "all") results.push(await runRemindersAll());
-    if (task === "recurring" || task === "all") results.push(await runRecurringAll());
+    if (task === "forward" || task === "all") results.push(await runForwardingAll());
     if (task === "drain" || task === "all") results.push(await drainJobs("cron", 25));
     if (results.length === 0) {
       return NextResponse.json({ ok: false, error: `Unknown task '${task}'.` }, { status: 400 });

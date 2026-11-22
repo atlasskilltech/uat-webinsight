@@ -6,6 +6,7 @@ import { encryptSecret, decryptSecret } from "../crypto";
 import {
   refreshGmailToken,
   GmailApiError,
+  GMAIL_SCOPE_LABEL,
   type GmailTokens,
 } from "../gmail/oauth";
 import {
@@ -15,6 +16,10 @@ import {
   collectAttachments,
   isSupportedAttachment,
   getHeader,
+  gmailGetProfile,
+  gmailListHistory,
+  gmailWatch,
+  gmailStopWatch,
 } from "../gmail/api";
 import { processUploadedDocument } from "./processing";
 
@@ -29,6 +34,7 @@ export interface GmailIntegrationRow {
   scopes: string | null;
   history_id: string | null;
   status: string;
+  auto_forward: boolean;
   last_error: string | null;
   created_at: Date;
   updated_at: Date;
@@ -76,13 +82,13 @@ export async function upsertGmailIntegration(
     await iExecute(
       "UPDATE `gmail_integrations` SET `google_sub`=?,`access_token_enc`=?,`refresh_token_enc`=?,`token_expires_at`=?," +
         "`scopes`=?,`status`='connected',`last_error`=NULL,`connected_by`=? WHERE id=?",
-      [account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, "gmail.readonly", actor.id, id],
+      [account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, id],
     );
   } else {
     await iExecute(
       "INSERT INTO `gmail_integrations` (`id`,`organization_id`,`email`,`google_sub`,`access_token_enc`,`refresh_token_enc`," +
         "`token_expires_at`,`scopes`,`status`,`connected_by`) VALUES (?,?,?,?,?,?,?,?,'connected',?)",
-      [id, organizationId, account.email, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, "gmail.readonly", actor.id],
+      [id, organizationId, account.email, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id],
     );
     await iExecute(
       "INSERT INTO `gmail_sync_states` (`id`,`organization_id`,`gmail_integration_id`) VALUES (?,?,?)",
@@ -170,7 +176,7 @@ export function classifyEmail(input: {
   from: string;
   snippet: string;
   hasAttachment: boolean;
-}): { classification: EmailClassification; isInvoiceCandidate: boolean } {
+}): { classification: EmailClassification; isInvoiceCandidate: boolean; confidence: number } {
   const t = `${input.subject} ${input.snippet}`.toLowerCase();
   const has = (...k: string[]) => k.some((w) => t.includes(w));
 
@@ -185,7 +191,18 @@ export function classifyEmail(input: {
 
   const isInvoiceCandidate =
     input.hasAttachment && (classification === "supplier_invoice" || has("invoice", "bill", "tax invoice"));
-  return { classification, isInvoiceCandidate };
+
+  // Heuristic confidence (0..1). Stronger invoice signals + an attachment score
+  // higher; the forwarding threshold decides auto vs review.
+  let confidence: number;
+  if (isInvoiceCandidate) {
+    confidence = has("tax invoice", "gst invoice", "gstin") ? 0.92 : has("invoice", "bill") ? 0.78 : 0.62;
+  } else if (classification === "supplier_invoice") {
+    confidence = 0.4;
+  } else {
+    confidence = 0.1;
+  }
+  return { classification, isInvoiceCandidate, confidence };
 }
 
 export interface SyncSummary {
@@ -215,10 +232,16 @@ export async function syncGmailAccount(
 
   try {
     const token = await getValidAccessToken(integration);
-    const days = Number(process.env.GMAIL_SYNC_DAYS) || 90;
-    const query = process.env.GMAIL_QUERY?.trim() || `has:attachment newer_than:${days}d`;
-    const { messages } = await gmailListMessages(token, query, opts.maxMessages ?? 25);
+    const { refs: messages, nextHistoryId } = await selectMessageRefs(token, integration, opts.maxMessages ?? 25);
     summary.scanned = messages.length;
+
+    // Forwarding config for this org (review-first: queue tasks, forward later).
+    const fwd = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
+      "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
+      [organizationId],
+    );
+    const minConf = Number(fwd?.min_confidence ?? 70);
+    const destination = fwd?.enabled && fwd.finance_destination ? fwd.finance_destination : null;
 
     for (const ref of messages) {
       try {
@@ -233,26 +256,38 @@ export async function syncGmailAccount(
         const from = getHeader(msg, "From") ?? "";
         const to = getHeader(msg, "To") ?? "";
         const atts = collectAttachments(msg).filter(isSupportedAttachment);
-        const { classification, isInvoiceCandidate } = classifyEmail({
+        const { classification, isInvoiceCandidate, confidence } = classifyEmail({
           subject,
           from,
           snippet: msg.snippet ?? "",
           hasAttachment: atts.length > 0,
         });
+        const confPct = Math.round(confidence * 100);
 
         const emailMessageId = createId();
         const receivedAt = msg.internalDate ? new Date(Number(msg.internalDate)) : null;
         await iExecute(
           "INSERT INTO `email_messages` (`id`,`organization_id`,`gmail_integration_id`,`gmail_message_id`,`thread_id`," +
-            "`from_address`,`to_address`,`subject`,`snippet`,`received_at`,`classification`,`is_invoice_candidate`,`processing_status`) " +
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "`from_address`,`to_address`,`subject`,`snippet`,`received_at`,`classification`,`classification_confidence`,`is_invoice_candidate`,`processing_status`) " +
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           [
             emailMessageId, organizationId, integrationId, ref.id, msg.threadId ?? null,
             from.slice(0, 320), to.slice(0, 320), subject, (msg.snippet ?? "").slice(0, 2000), receivedAt,
-            classification, isInvoiceCandidate, isInvoiceCandidate ? "pending" : "skipped",
+            classification, confPct, isInvoiceCandidate, isInvoiceCandidate ? "pending" : "skipped",
           ],
         );
         summary.newMessages += 1;
+
+        // Queue a forward task for invoice candidates (review-first).
+        if (isInvoiceCandidate && destination) {
+          const forwardStatus = confPct >= minConf ? (integration.auto_forward ? "approved" : "pending") : "review";
+          await iExecute(
+            "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
+              "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
+              "ON DUPLICATE KEY UPDATE `id`=`id`",
+            [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
+          );
+        }
 
         if (!isInvoiceCandidate) continue;
 
@@ -297,9 +332,13 @@ export async function syncGmailAccount(
       }
     }
 
+    // Advance the stored history anchor so the next sync is incremental.
+    if (nextHistoryId) {
+      await iExecute("UPDATE `gmail_integrations` SET `history_id`=? WHERE id=?", [nextHistoryId, integrationId]);
+    }
     await iExecute(
-      "UPDATE `gmail_sync_states` SET `last_incremental_sync_at`=NOW(3), `consecutive_failures`=0, `backoff_until`=NULL, `last_error`=NULL WHERE gmail_integration_id=?",
-      [integrationId],
+      "UPDATE `gmail_sync_states` SET `last_incremental_sync_at`=NOW(3), `last_history_id`=?, `consecutive_failures`=0, `backoff_until`=NULL, `last_error`=NULL WHERE gmail_integration_id=?",
+      [nextHistoryId ?? integration.history_id, integrationId],
     );
     summary.message = `Scanned ${summary.scanned}; ${summary.invoicesCreated} invoice(s) created, ${summary.duplicates} duplicate(s), ${summary.errors} error(s).`;
     return summary;
@@ -312,4 +351,121 @@ export async function syncGmailAccount(
     );
     throw e;
   }
+}
+
+// --- Incremental history sync + Gmail push (watch) --------------------------
+
+/**
+ * Choose the message ids to process: incrementally from the stored history
+ * anchor when present (falling back to a full query if the anchor expired),
+ * otherwise a bounded full query. Also returns the new history anchor to store.
+ */
+async function selectMessageRefs(
+  token: string,
+  integration: GmailIntegrationRow,
+  max: number,
+): Promise<{ refs: { id: string }[]; nextHistoryId: string | null }> {
+  const profile = await gmailGetProfile(token).catch(() => null);
+
+  if (integration.history_id) {
+    const h = await gmailListHistory(token, integration.history_id);
+    if (!h.expired) {
+      return {
+        refs: h.messageIds.slice(0, max).map((id) => ({ id })),
+        nextHistoryId: h.historyId || profile?.historyId || integration.history_id,
+      };
+    }
+    // History too old — fall through to a full reconciliation sync.
+  }
+
+  const days = Number(process.env.GMAIL_SYNC_DAYS) || 90;
+  const query = process.env.GMAIL_QUERY?.trim() || `has:attachment newer_than:${days}d`;
+  const { messages } = await gmailListMessages(token, query, max);
+  return { refs: messages.map((m) => ({ id: m.id })), nextHistoryId: profile?.historyId ?? null };
+}
+
+/** Is Gmail push (watch + Pub/Sub) configured? When false, scheduled pull is the only path. */
+export function pubsubConfigured(): boolean {
+  return Boolean(process.env.GMAIL_PUBSUB_TOPIC?.trim());
+}
+
+/** Start (or refresh) a Gmail watch so new mail pushes to Pub/Sub. */
+export async function startGmailWatch(organizationId: string, integrationId: string): Promise<void> {
+  const topic = process.env.GMAIL_PUBSUB_TOPIC?.trim();
+  if (!topic) throw new Error("Gmail push is not configured (set GMAIL_PUBSUB_TOPIC).");
+  const integration = await iQueryOne<GmailIntegrationRow>(
+    "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
+    [organizationId, integrationId],
+  );
+  if (!integration) throw new Error("Gmail account not found.");
+  const token = await getValidAccessToken(integration);
+  const { historyId, expiration } = await gmailWatch(token, topic);
+  const exp = expiration ? new Date(Number(expiration)) : null;
+  await iExecute(
+    "UPDATE `gmail_integrations` SET `history_id`=COALESCE(NULLIF(?, ''), `history_id`), `watch_expiration`=? WHERE id=?",
+    [historyId, exp, integrationId],
+  );
+}
+
+export async function stopGmailWatch(organizationId: string, integrationId: string): Promise<void> {
+  const integration = await iQueryOne<GmailIntegrationRow>(
+    "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
+    [organizationId, integrationId],
+  );
+  if (!integration) return;
+  const token = await getValidAccessToken(integration);
+  await gmailStopWatch(token).catch(() => undefined);
+  await iExecute("UPDATE `gmail_integrations` SET `watch_expiration`=NULL WHERE id=?", [integrationId]);
+}
+
+/** Renew watches that are missing or expiring within 24h. No-op if push is off. */
+export async function renewDueWatches(): Promise<{ renewed: number; skipped: boolean }> {
+  if (!pubsubConfigured()) return { renewed: 0, skipped: true };
+  const rows = await iQuery<{ id: string; organization_id: string }>(
+    "SELECT id, organization_id FROM `gmail_integrations` WHERE status='connected' " +
+      "AND (watch_expiration IS NULL OR watch_expiration < DATE_ADD(NOW(3), INTERVAL 24 HOUR)) LIMIT 50",
+  );
+  let renewed = 0;
+  for (const r of rows) {
+    try {
+      await startGmailWatch(r.organization_id, r.id);
+      renewed += 1;
+    } catch {
+      /* recorded per-account; keep going */
+    }
+  }
+  return { renewed, skipped: false };
+}
+
+/** Find a connected integration by its email (for the Pub/Sub push webhook). */
+export async function findConnectedIntegrationByEmail(
+  email: string,
+): Promise<{ id: string; organization_id: string } | null> {
+  return iQueryOne<{ id: string; organization_id: string }>(
+    "SELECT id, organization_id FROM `gmail_integrations` WHERE email=? AND status='connected' LIMIT 1",
+    [email.toLowerCase()],
+  );
+}
+
+/** Return a valid access token for an account (used by the forwarding service). */
+export async function getAccountAccessToken(organizationId: string, integrationId: string): Promise<string> {
+  const integration = await iQueryOne<GmailIntegrationRow>(
+    "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
+    [organizationId, integrationId],
+  );
+  if (!integration) throw new Error("Gmail account not found.");
+  return getValidAccessToken(integration);
+}
+
+/** Toggle per-account auto-forward (review-first default is off). */
+export async function setAccountAutoForward(
+  organizationId: string,
+  integrationId: string,
+  enabled: boolean,
+): Promise<void> {
+  await iExecute("UPDATE `gmail_integrations` SET `auto_forward`=? WHERE organization_id=? AND id=?", [
+    enabled,
+    organizationId,
+    integrationId,
+  ]);
 }

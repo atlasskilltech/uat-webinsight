@@ -6,7 +6,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { getInvoiceContext } from "@/lib/invoice/org";
 import { getInvoiceDbStatus } from "@/lib/invoice/status";
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
+import { getForwardingSettings } from "@/lib/invoice/services/forwarding";
 import { SetupOrganizationForm } from "./setup-client";
+import { ForwardingSettingsForm } from "./forwarding-form";
 
 export const metadata: Metadata = { title: "Invoice Settings" };
 export const dynamic = "force-dynamic";
@@ -51,6 +53,7 @@ function StateRow({
 export default async function InvoiceSettingsPage() {
   const [ctx, dbStatus] = await Promise.all([getInvoiceContext(), getInvoiceDbStatus()]);
   const flags = getInvoiceFeatureFlags();
+  const forwarding = ctx?.organizationId ? await getForwardingSettings(ctx.organizationId) : null;
 
   return (
     <div>
@@ -120,6 +123,26 @@ export default async function InvoiceSettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Finance & Accounts forwarding */}
+      {ctx?.organizationId && forwarding && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Finance &amp; Accounts forwarding</CardTitle>
+            <CardDescription>
+              The single destination the agent forwards invoice emails to, and the confidence needed to auto-forward.
+              Emails below the threshold wait for review on the Invoice Agent home.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ForwardingSettingsForm
+              destination={forwarding.financeDestination ?? ""}
+              minConfidence={forwarding.minConfidence}
+              enabled={forwarding.enabled}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Providers */}
       <Card>

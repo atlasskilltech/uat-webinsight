@@ -30,15 +30,118 @@ export interface GmailMessage {
   payload?: GmailPart;
 }
 
-async function gfetch(token: string, path: string): Promise<Response> {
-  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * GET a Gmail API path with bounded retry. Transient failures (429 rate limit,
+ * 5xx) are retried with exponential backoff + jitter; permanent failures
+ * (401/403/404 and other 4xx) throw immediately so callers can handle reauth.
+ */
+async function gfetch(token: string, path: string, attempt = 0): Promise<Response> {
+  const MAX_ATTEMPTS = 4;
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (e) {
+    // Network error / timeout — retry a few times.
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await sleep(Math.min(8000, 2 ** attempt * 500) + Math.random() * 250);
+      return gfetch(token, path, attempt + 1);
+    }
+    throw new GmailApiError(`Gmail network error: ${e instanceof Error ? e.message : "failed"}`, 503);
+  }
+  if (res.ok) return res;
+
+  const transient = res.status === 429 || res.status >= 500;
+  if (transient && attempt < MAX_ATTEMPTS - 1) {
+    const retryAfter = Number(res.headers.get("retry-after")) * 1000;
+    await sleep(retryAfter > 0 ? retryAfter : Math.min(8000, 2 ** attempt * 500) + Math.random() * 250);
+    return gfetch(token, path, attempt + 1);
+  }
+  throw new GmailApiError(
+    res.status === 429 ? "Gmail rate limit reached." : `Gmail API error: ${res.status}`,
+    res.status,
+  );
+}
+
+async function gpost(token: string, path: string, body: unknown): Promise<Response> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
   if (!res.ok) {
     throw new GmailApiError(
-      res.status === 429 ? "Gmail rate limit reached." : `Gmail API error: ${res.status}`,
+      res.status === 429 ? "Gmail rate limit reached." : `Gmail API error: ${res.status} ${(await res.text()).slice(0, 200)}`,
       res.status,
     );
   }
   return res;
+}
+
+/** The account's current mailbox historyId (used to anchor incremental sync). */
+export async function gmailGetProfile(token: string): Promise<{ emailAddress: string; historyId: string }> {
+  const res = await gfetch(token, "/profile");
+  const j = (await res.json()) as { emailAddress?: string; historyId?: string };
+  return { emailAddress: j.emailAddress ?? "", historyId: j.historyId ?? "" };
+}
+
+/** Start Gmail push notifications to a Pub/Sub topic for the INBOX. */
+export async function gmailWatch(
+  token: string,
+  topicName: string,
+): Promise<{ historyId: string; expiration: string }> {
+  const res = await gpost(token, "/watch", { topicName, labelIds: ["INBOX"], labelFilterBehavior: "INCLUDE" });
+  const j = (await res.json()) as { historyId?: string; expiration?: string };
+  return { historyId: j.historyId ?? "", expiration: j.expiration ?? "" };
+}
+
+/** Stop Gmail push notifications. */
+export async function gmailStopWatch(token: string): Promise<void> {
+  await gpost(token, "/stop", {});
+}
+
+export interface HistoryResult {
+  messageIds: string[];
+  historyId: string;
+  /** True when the startHistoryId was too old (404) — caller must do a full sync. */
+  expired: boolean;
+}
+
+/** Incremental: message ids added since startHistoryId (handles the 404-expired case). */
+export async function gmailListHistory(token: string, startHistoryId: string): Promise<HistoryResult> {
+  const ids = new Set<string>();
+  let pageToken: string | undefined;
+  let latest = startHistoryId;
+  try {
+    do {
+      const params = new URLSearchParams({ startHistoryId, historyTypes: "messageAdded" });
+      if (pageToken) params.set("pageToken", pageToken);
+      const res = await gfetch(token, `/history?${params.toString()}`);
+      const j = (await res.json()) as {
+        history?: { messagesAdded?: { message?: { id?: string } }[] }[];
+        historyId?: string;
+        nextPageToken?: string;
+      };
+      for (const h of j.history ?? []) {
+        for (const m of h.messagesAdded ?? []) {
+          if (m.message?.id) ids.add(m.message.id);
+        }
+      }
+      if (j.historyId) latest = j.historyId;
+      pageToken = j.nextPageToken;
+    } while (pageToken);
+  } catch (e) {
+    if (e instanceof GmailApiError && e.status === 404) {
+      return { messageIds: [], historyId: startHistoryId, expired: true };
+    }
+    throw e;
+  }
+  return { messageIds: [...ids], historyId: latest, expired: false };
 }
 
 export async function gmailListMessages(
@@ -68,6 +171,21 @@ export async function gmailGetAttachment(
   const json = (await res.json()) as { data?: string };
   if (!json.data) throw new GmailApiError("Attachment has no data.", 404, true);
   return Buffer.from(json.data, "base64url");
+}
+
+/** Fetch the full original message as RFC822 (base64url), for .eml forwarding. */
+export async function gmailGetRaw(token: string, id: string): Promise<string> {
+  const res = await gfetch(token, `/messages/${id}?format=raw`);
+  const j = (await res.json()) as { raw?: string };
+  if (!j.raw) throw new GmailApiError("Message has no raw content.", 404, true);
+  return j.raw; // base64url RFC822
+}
+
+/** Send a message (raw is a base64url-encoded RFC822 MIME message). */
+export async function gmailSend(token: string, rawBase64Url: string): Promise<{ id: string; threadId: string }> {
+  const res = await gpost(token, "/messages/send", { raw: rawBase64Url });
+  const j = (await res.json()) as { id?: string; threadId?: string };
+  return { id: j.id ?? "", threadId: j.threadId ?? "" };
 }
 
 export function getHeader(msg: GmailMessage, name: string): string | null {
