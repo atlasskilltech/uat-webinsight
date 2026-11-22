@@ -16,6 +16,10 @@ import {
   collectAttachments,
   isSupportedAttachment,
   getHeader,
+  gmailGetProfile,
+  gmailListHistory,
+  gmailWatch,
+  gmailStopWatch,
 } from "../gmail/api";
 import { processUploadedDocument } from "./processing";
 
@@ -216,9 +220,7 @@ export async function syncGmailAccount(
 
   try {
     const token = await getValidAccessToken(integration);
-    const days = Number(process.env.GMAIL_SYNC_DAYS) || 90;
-    const query = process.env.GMAIL_QUERY?.trim() || `has:attachment newer_than:${days}d`;
-    const { messages } = await gmailListMessages(token, query, opts.maxMessages ?? 25);
+    const { refs: messages, nextHistoryId } = await selectMessageRefs(token, integration, opts.maxMessages ?? 25);
     summary.scanned = messages.length;
 
     for (const ref of messages) {
@@ -298,9 +300,13 @@ export async function syncGmailAccount(
       }
     }
 
+    // Advance the stored history anchor so the next sync is incremental.
+    if (nextHistoryId) {
+      await iExecute("UPDATE `gmail_integrations` SET `history_id`=? WHERE id=?", [nextHistoryId, integrationId]);
+    }
     await iExecute(
-      "UPDATE `gmail_sync_states` SET `last_incremental_sync_at`=NOW(3), `consecutive_failures`=0, `backoff_until`=NULL, `last_error`=NULL WHERE gmail_integration_id=?",
-      [integrationId],
+      "UPDATE `gmail_sync_states` SET `last_incremental_sync_at`=NOW(3), `last_history_id`=?, `consecutive_failures`=0, `backoff_until`=NULL, `last_error`=NULL WHERE gmail_integration_id=?",
+      [nextHistoryId ?? integration.history_id, integrationId],
     );
     summary.message = `Scanned ${summary.scanned}; ${summary.invoicesCreated} invoice(s) created, ${summary.duplicates} duplicate(s), ${summary.errors} error(s).`;
     return summary;
@@ -313,4 +319,98 @@ export async function syncGmailAccount(
     );
     throw e;
   }
+}
+
+// --- Incremental history sync + Gmail push (watch) --------------------------
+
+/**
+ * Choose the message ids to process: incrementally from the stored history
+ * anchor when present (falling back to a full query if the anchor expired),
+ * otherwise a bounded full query. Also returns the new history anchor to store.
+ */
+async function selectMessageRefs(
+  token: string,
+  integration: GmailIntegrationRow,
+  max: number,
+): Promise<{ refs: { id: string }[]; nextHistoryId: string | null }> {
+  const profile = await gmailGetProfile(token).catch(() => null);
+
+  if (integration.history_id) {
+    const h = await gmailListHistory(token, integration.history_id);
+    if (!h.expired) {
+      return {
+        refs: h.messageIds.slice(0, max).map((id) => ({ id })),
+        nextHistoryId: h.historyId || profile?.historyId || integration.history_id,
+      };
+    }
+    // History too old — fall through to a full reconciliation sync.
+  }
+
+  const days = Number(process.env.GMAIL_SYNC_DAYS) || 90;
+  const query = process.env.GMAIL_QUERY?.trim() || `has:attachment newer_than:${days}d`;
+  const { messages } = await gmailListMessages(token, query, max);
+  return { refs: messages.map((m) => ({ id: m.id })), nextHistoryId: profile?.historyId ?? null };
+}
+
+/** Is Gmail push (watch + Pub/Sub) configured? When false, scheduled pull is the only path. */
+export function pubsubConfigured(): boolean {
+  return Boolean(process.env.GMAIL_PUBSUB_TOPIC?.trim());
+}
+
+/** Start (or refresh) a Gmail watch so new mail pushes to Pub/Sub. */
+export async function startGmailWatch(organizationId: string, integrationId: string): Promise<void> {
+  const topic = process.env.GMAIL_PUBSUB_TOPIC?.trim();
+  if (!topic) throw new Error("Gmail push is not configured (set GMAIL_PUBSUB_TOPIC).");
+  const integration = await iQueryOne<GmailIntegrationRow>(
+    "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
+    [organizationId, integrationId],
+  );
+  if (!integration) throw new Error("Gmail account not found.");
+  const token = await getValidAccessToken(integration);
+  const { historyId, expiration } = await gmailWatch(token, topic);
+  const exp = expiration ? new Date(Number(expiration)) : null;
+  await iExecute(
+    "UPDATE `gmail_integrations` SET `history_id`=COALESCE(NULLIF(?, ''), `history_id`), `watch_expiration`=? WHERE id=?",
+    [historyId, exp, integrationId],
+  );
+}
+
+export async function stopGmailWatch(organizationId: string, integrationId: string): Promise<void> {
+  const integration = await iQueryOne<GmailIntegrationRow>(
+    "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
+    [organizationId, integrationId],
+  );
+  if (!integration) return;
+  const token = await getValidAccessToken(integration);
+  await gmailStopWatch(token).catch(() => undefined);
+  await iExecute("UPDATE `gmail_integrations` SET `watch_expiration`=NULL WHERE id=?", [integrationId]);
+}
+
+/** Renew watches that are missing or expiring within 24h. No-op if push is off. */
+export async function renewDueWatches(): Promise<{ renewed: number; skipped: boolean }> {
+  if (!pubsubConfigured()) return { renewed: 0, skipped: true };
+  const rows = await iQuery<{ id: string; organization_id: string }>(
+    "SELECT id, organization_id FROM `gmail_integrations` WHERE status='connected' " +
+      "AND (watch_expiration IS NULL OR watch_expiration < DATE_ADD(NOW(3), INTERVAL 24 HOUR)) LIMIT 50",
+  );
+  let renewed = 0;
+  for (const r of rows) {
+    try {
+      await startGmailWatch(r.organization_id, r.id);
+      renewed += 1;
+    } catch {
+      /* recorded per-account; keep going */
+    }
+  }
+  return { renewed, skipped: false };
+}
+
+/** Find a connected integration by its email (for the Pub/Sub push webhook). */
+export async function findConnectedIntegrationByEmail(
+  email: string,
+): Promise<{ id: string; organization_id: string } | null> {
+  return iQueryOne<{ id: string; organization_id: string }>(
+    "SELECT id, organization_id FROM `gmail_integrations` WHERE email=? AND status='connected' LIMIT 1",
+    [email.toLowerCase()],
+  );
 }

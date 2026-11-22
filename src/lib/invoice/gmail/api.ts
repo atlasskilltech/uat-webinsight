@@ -67,6 +67,83 @@ async function gfetch(token: string, path: string, attempt = 0): Promise<Respons
   );
 }
 
+async function gpost(token: string, path: string, body: unknown): Promise<Response> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    throw new GmailApiError(
+      res.status === 429 ? "Gmail rate limit reached." : `Gmail API error: ${res.status} ${(await res.text()).slice(0, 200)}`,
+      res.status,
+    );
+  }
+  return res;
+}
+
+/** The account's current mailbox historyId (used to anchor incremental sync). */
+export async function gmailGetProfile(token: string): Promise<{ emailAddress: string; historyId: string }> {
+  const res = await gfetch(token, "/profile");
+  const j = (await res.json()) as { emailAddress?: string; historyId?: string };
+  return { emailAddress: j.emailAddress ?? "", historyId: j.historyId ?? "" };
+}
+
+/** Start Gmail push notifications to a Pub/Sub topic for the INBOX. */
+export async function gmailWatch(
+  token: string,
+  topicName: string,
+): Promise<{ historyId: string; expiration: string }> {
+  const res = await gpost(token, "/watch", { topicName, labelIds: ["INBOX"], labelFilterBehavior: "INCLUDE" });
+  const j = (await res.json()) as { historyId?: string; expiration?: string };
+  return { historyId: j.historyId ?? "", expiration: j.expiration ?? "" };
+}
+
+/** Stop Gmail push notifications. */
+export async function gmailStopWatch(token: string): Promise<void> {
+  await gpost(token, "/stop", {});
+}
+
+export interface HistoryResult {
+  messageIds: string[];
+  historyId: string;
+  /** True when the startHistoryId was too old (404) — caller must do a full sync. */
+  expired: boolean;
+}
+
+/** Incremental: message ids added since startHistoryId (handles the 404-expired case). */
+export async function gmailListHistory(token: string, startHistoryId: string): Promise<HistoryResult> {
+  const ids = new Set<string>();
+  let pageToken: string | undefined;
+  let latest = startHistoryId;
+  try {
+    do {
+      const params = new URLSearchParams({ startHistoryId, historyTypes: "messageAdded" });
+      if (pageToken) params.set("pageToken", pageToken);
+      const res = await gfetch(token, `/history?${params.toString()}`);
+      const j = (await res.json()) as {
+        history?: { messagesAdded?: { message?: { id?: string } }[] }[];
+        historyId?: string;
+        nextPageToken?: string;
+      };
+      for (const h of j.history ?? []) {
+        for (const m of h.messagesAdded ?? []) {
+          if (m.message?.id) ids.add(m.message.id);
+        }
+      }
+      if (j.historyId) latest = j.historyId;
+      pageToken = j.nextPageToken;
+    } while (pageToken);
+  } catch (e) {
+    if (e instanceof GmailApiError && e.status === 404) {
+      return { messageIds: [], historyId: startHistoryId, expired: true };
+    }
+    throw e;
+  }
+  return { messageIds: [...ids], historyId: latest, expired: false };
+}
+
 export async function gmailListMessages(
   token: string,
   query: string,

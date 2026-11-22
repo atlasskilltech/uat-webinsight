@@ -3,7 +3,7 @@ import { iQuery } from "../db";
 import { listOrganizationIds } from "../services/orgs";
 import { generateAndSendReminders } from "../services/reminders";
 import { runRecurring } from "../services/recurring";
-import { syncGmailAccount } from "../services/gmail";
+import { syncGmailAccount, renewDueWatches } from "../services/gmail";
 import { claimJobs, completeJob, failJob, type JobRow } from "../jobs";
 
 const SYSTEM_ACTOR = { id: "system", email: "worker@invoice-agent" };
@@ -37,6 +37,8 @@ export async function runRecurringAll(): Promise<TaskSummary> {
 
 /** Sync Gmail accounts that are due (connected, not in backoff, stale). */
 export async function runDueGmailSyncs(): Promise<TaskSummary> {
+  // Keep Gmail push subscriptions alive (no-op when push is not configured).
+  const watch = await renewDueWatches().catch(() => ({ renewed: 0, skipped: true }));
   const intervalMin = Number(process.env.GMAIL_SYNC_INTERVAL_MIN) || 30;
   const due = await iQuery<{ id: string; organization_id: string }>(
     "SELECT g.id, g.organization_id FROM `gmail_integrations` g " +
@@ -55,7 +57,7 @@ export async function runDueGmailSyncs(): Promise<TaskSummary> {
       failed += 1; // the sync service already recorded the error + backoff
     }
   }
-  return { task: "gmail_sync", ran: due.length, detail: { ok, failed } };
+  return { task: "gmail_sync", ran: due.length, detail: { ok, failed, watchesRenewed: watch.renewed } };
 }
 
 /** Dispatch one claimed job to its handler. */
