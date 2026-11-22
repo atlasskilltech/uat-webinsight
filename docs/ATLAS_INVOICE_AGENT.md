@@ -91,7 +91,7 @@ webhook: `/api/invoices/gmail/push?token=<secret>`.
 | Gmail push (real-time) | 🔑 ⚙️ | `GMAIL_PUBSUB_TOPIC`, a Pub/Sub topic + push subscription to the webhook with `?token=`=`GMAIL_PUBSUB_VERIFICATION_AUDIENCE`. Without it: scheduled pull still works |
 | Encryption (tokens) | 🔑 | `INVOICE_ENCRYPTION_KEY` (32-byte base64) — required before connecting Gmail |
 | AI extraction / assistant | 🔑 | `AI_PROVIDER=anthropic`, `AI_MODEL`, `AI_API_KEY` |
-| OCR (scanned docs) | 🔑 | `OCR_PROVIDER` (+ optional `tesseract.js`) |
+| OCR (scanned docs) | 🔑 | `OCR_PROVIDER=tesseract` (+ `tesseract.js`), **or** `OCR_PROVIDER=documentai` + Google Document AI (`DOCAI_PROJECT_ID`, `DOCAI_LOCATION`, `DOCAI_PROCESSOR_ID`, `GOOGLE_APPLICATION_CREDENTIALS` service account). Text-only; feeds the AI extractor |
 | Storage | ✅ local / 🔑 S3 | `INVOICE_STORAGE_PROVIDER=s3` + `S3_*` |
 
 Forwarding is **always on** once a destination + `gmail.send` grant exist — no AI needed.
@@ -104,7 +104,16 @@ Everything unconfigured shows an honest "not configured" state.
 `ATLAS_INVOICE_DB_*`, `INVOICE_ENCRYPTION_KEY`, `GMAIL_CLIENT_ID/SECRET/REDIRECT_URI`,
 `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUBSUB_VERIFICATION_AUDIENCE`, `GMAIL_QUERY`, `GMAIL_SYNC_DAYS`,
 `GMAIL_SYNC_INTERVAL_MIN`, `AI_PROVIDER/AI_MODEL/AI_API_KEY`, `OCR_PROVIDER`,
+`DOCAI_PROJECT_ID/DOCAI_LOCATION/DOCAI_PROCESSOR_ID/GOOGLE_APPLICATION_CREDENTIALS` (Document AI OCR),
 `INVOICE_STORAGE_PROVIDER` (+`S3_*`), `INVOICE_CRON_SECRET`, `INVOICE_WORKER_*`. See `.env.example`.
+
+### OCR via Google Cloud Document AI (optional, text-only)
+Set `OCR_PROVIDER=documentai` and provide the four `DOCAI_*`/`GOOGLE_APPLICATION_CREDENTIALS`
+variables above. Auth is a Google Cloud **service account** (role *Document AI API User*),
+not an API key — the agent mints a short-lived OAuth token from the key (no SDK). It is
+engaged only for scanned PDFs/images with no embedded text, and returns recognized text to
+the existing AI extractor; GST/total recomputation, duplicate detection and forwarding are
+unchanged. If any variable is missing the provider stays honestly "not configured" (OCR off).
 
 ---
 
