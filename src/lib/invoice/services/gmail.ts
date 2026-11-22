@@ -6,6 +6,7 @@ import { encryptSecret, decryptSecret } from "../crypto";
 import {
   refreshGmailToken,
   GmailApiError,
+  GMAIL_SCOPE_LABEL,
   type GmailTokens,
 } from "../gmail/oauth";
 import {
@@ -76,13 +77,13 @@ export async function upsertGmailIntegration(
     await iExecute(
       "UPDATE `gmail_integrations` SET `google_sub`=?,`access_token_enc`=?,`refresh_token_enc`=?,`token_expires_at`=?," +
         "`scopes`=?,`status`='connected',`last_error`=NULL,`connected_by`=? WHERE id=?",
-      [account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, "gmail.readonly", actor.id, id],
+      [account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, id],
     );
   } else {
     await iExecute(
       "INSERT INTO `gmail_integrations` (`id`,`organization_id`,`email`,`google_sub`,`access_token_enc`,`refresh_token_enc`," +
         "`token_expires_at`,`scopes`,`status`,`connected_by`) VALUES (?,?,?,?,?,?,?,?,'connected',?)",
-      [id, organizationId, account.email, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, "gmail.readonly", actor.id],
+      [id, organizationId, account.email, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id],
     );
     await iExecute(
       "INSERT INTO `gmail_sync_states` (`id`,`organization_id`,`gmail_integration_id`) VALUES (?,?,?)",

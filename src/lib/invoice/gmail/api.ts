@@ -30,15 +30,41 @@ export interface GmailMessage {
   payload?: GmailPart;
 }
 
-async function gfetch(token: string, path: string): Promise<Response> {
-  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    throw new GmailApiError(
-      res.status === 429 ? "Gmail rate limit reached." : `Gmail API error: ${res.status}`,
-      res.status,
-    );
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * GET a Gmail API path with bounded retry. Transient failures (429 rate limit,
+ * 5xx) are retried with exponential backoff + jitter; permanent failures
+ * (401/403/404 and other 4xx) throw immediately so callers can handle reauth.
+ */
+async function gfetch(token: string, path: string, attempt = 0): Promise<Response> {
+  const MAX_ATTEMPTS = 4;
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (e) {
+    // Network error / timeout — retry a few times.
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await sleep(Math.min(8000, 2 ** attempt * 500) + Math.random() * 250);
+      return gfetch(token, path, attempt + 1);
+    }
+    throw new GmailApiError(`Gmail network error: ${e instanceof Error ? e.message : "failed"}`, 503);
   }
-  return res;
+  if (res.ok) return res;
+
+  const transient = res.status === 429 || res.status >= 500;
+  if (transient && attempt < MAX_ATTEMPTS - 1) {
+    const retryAfter = Number(res.headers.get("retry-after")) * 1000;
+    await sleep(retryAfter > 0 ? retryAfter : Math.min(8000, 2 ** attempt * 500) + Math.random() * 250);
+    return gfetch(token, path, attempt + 1);
+  }
+  throw new GmailApiError(
+    res.status === 429 ? "Gmail rate limit reached." : `Gmail API error: ${res.status}`,
+    res.status,
+  );
 }
 
 export async function gmailListMessages(

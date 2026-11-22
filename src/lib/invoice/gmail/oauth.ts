@@ -12,10 +12,17 @@ import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypt
  */
 
 export const GMAIL_SCOPES = [
+  // Read messages + attachments to detect invoices.
   "https://www.googleapis.com/auth/gmail.readonly",
+  // Send (forward) eligible invoice emails to the Finance & Accounts address.
+  "https://www.googleapis.com/auth/gmail.send",
+  // Identify which account was connected.
   "https://www.googleapis.com/auth/userinfo.email",
   "openid",
 ];
+
+/** Human-readable scope summary stored on the integration row. */
+export const GMAIL_SCOPE_LABEL = "gmail.readonly gmail.send";
 
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
