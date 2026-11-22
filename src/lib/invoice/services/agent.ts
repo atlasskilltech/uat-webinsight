@@ -4,7 +4,8 @@ import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
 import { getTool, type AgentContext } from "../agent/tools";
 import { canUseTool } from "../agent/policy";
-import { recordPayment } from "./payments";
+import { forwardEmailById, approveAndForward } from "./forwarding";
+import { sendEmail } from "@/lib/email";
 
 // --- Conversations & messages ----------------------------------------------
 
@@ -201,18 +202,24 @@ export async function decideAgentApproval(
   if (!parsed.success) return { ok: false, message: "Stored arguments are no longer valid." };
 
   // Execute the mapped service for the write tool.
+  const actor = { id: ctx.user.id, email: ctx.user.email };
   try {
-    if (tool.name === "record_payment") {
-      const a = parsed.data as { invoiceId: string; amount: string; paidOn: string; method?: string; reference?: string };
-      await recordPayment(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, {
-        invoiceId: a.invoiceId,
-        amount: a.amount,
-        paidOn: a.paidOn,
-        method: a.method as never,
-        txnReference: a.reference,
-      });
+    let execResult: { ok: boolean; message: string } = { ok: true, message: "Executed." };
+    if (tool.name === "forward_invoice_email") {
+      const a = parsed.data as { emailId: string };
+      execResult = await forwardEmailById(ctx.organizationId, actor, a.emailId);
+    } else if (tool.name === "retry_failed_task") {
+      const a = parsed.data as { forwardId: string };
+      execResult = await approveAndForward(ctx.organizationId, actor, a.forwardId);
+    } else if (tool.name === "send_authorized_email") {
+      const a = parsed.data as { to: string; subject: string; body: string };
+      const sent = await sendEmail({ to: [a.to], subject: a.subject, html: a.body, text: a.body });
+      execResult = { ok: sent.ok, message: sent.message };
     } else {
       return { ok: false, message: `No executor mapped for ${tool.name}.` };
+    }
+    if (!execResult.ok) {
+      return { ok: false, message: execResult.message };
     }
     await iExecute("UPDATE `agent_approvals` SET `status`='approved', `decided_by_user_id`=?, `decided_at`=NOW(3) WHERE id=?", [ctx.user.id, approvalId]);
     await logActivity(ctx.organizationId, approval.run_id, ctx.user.id, "approval.approved", `Approved and executed ${approval.action}.`);

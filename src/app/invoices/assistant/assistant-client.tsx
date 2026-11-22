@@ -17,12 +17,12 @@ export interface ApprovalItem { id: string; action: string; summary: string }
 export interface ActivityItem { id: string; event: string; summary: string }
 
 const SUGGESTIONS = [
-  "Show invoices received this month",
-  "Which supplier payments are overdue?",
+  "Show today's invoices",
+  "Check all connected accounts",
+  "Which invoice emails are pending forwarding?",
   "Find possible duplicate invoices",
-  "Summarize payments due in the next 7 days",
-  "Find invoices with failed GST checks",
-  "List invoices waiting for approval",
+  "Prepare a vendor-wise report",
+  "Summarize this week's forwarding activity",
 ];
 
 export function AssistantWorkspace({

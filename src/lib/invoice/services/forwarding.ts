@@ -223,6 +223,42 @@ export async function approveAndForward(
     : { ok: false, message: "Forwarding failed — see the exception." };
 }
 
+/**
+ * Forward a specific invoice email by its email_messages id: ensure a forward
+ * task to the configured destination exists, approve it, and send. Used by the
+ * AI agent's forward_invoice_email tool (after human approval).
+ */
+export async function forwardEmailById(
+  organizationId: string,
+  actor: { id: string; email: string },
+  emailMessageId: string,
+): Promise<{ ok: boolean; message: string }> {
+  const settings = await getForwardingSettings(organizationId);
+  if (!settings.enabled || !settings.financeDestination) {
+    return { ok: false, message: "No Finance & Accounts destination is configured (set it in Agent Settings)." };
+  }
+  const email = await iQueryOne<{ id: string; gmail_integration_id: string; gmail_message_id: string; classification_confidence: string | null }>(
+    "SELECT id, gmail_integration_id, gmail_message_id, classification_confidence FROM `email_messages` WHERE organization_id=? AND id=?",
+    [organizationId, emailMessageId],
+  );
+  if (!email) return { ok: false, message: "Email not found." };
+
+  const existing = await iQueryOne<{ id: string }>(
+    "SELECT id FROM `invoice_forwards` WHERE email_message_id=? AND destination=?",
+    [emailMessageId, settings.financeDestination],
+  );
+  let forwardId = existing?.id;
+  if (!forwardId) {
+    forwardId = createId();
+    await iExecute(
+      "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`,`source_gmail_message_id`,`destination`,`status`,`confidence`) " +
+        "VALUES (?,?,?,?,?,?,'approved',?)",
+      [forwardId, organizationId, email.gmail_integration_id, emailMessageId, email.gmail_message_id, settings.financeDestination, email.classification_confidence],
+    );
+  }
+  return approveAndForward(organizationId, actor, forwardId);
+}
+
 export async function rejectForward(
   organizationId: string,
   actor: { id: string; email: string },
