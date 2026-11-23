@@ -14,7 +14,9 @@ module.exports = {
       // pass `-p` here, as the arg can be mis-parsed as a project directory.
       script: "node_modules/next/dist/bin/next",
       args: "start",
-      instances: 1,
+      // Fork mode (a single process), NOT cluster. pm2 switches to cluster
+      // whenever `instances` is set, so set exec_mode explicitly instead.
+      exec_mode: "fork",
       autorestart: true,
       max_restarts: 10,
       env: {
@@ -32,7 +34,8 @@ module.exports = {
       name: "uat-invoice-worker",
       cwd: "/home/ubuntu/uat-webinsight",
       script: "scripts/invoice-worker.mjs",
-      instances: 1,
+      // Fork mode (a single process), NOT cluster — this is a singleton loop.
+      exec_mode: "fork",
       autorestart: true,
       max_restarts: 10,
       env: {
