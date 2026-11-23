@@ -76,9 +76,17 @@ send_authorized_email, retry_failed_task`.
 
 ## Background jobs ⚙️
 
-DB-backed queue (`processing_jobs`, `FOR UPDATE SKIP LOCKED`). Endpoints (bearer
-`INVOICE_CRON_SECRET`, falls back to `CRON_SECRET`): `/api/invoices/cron/{sync,forward,drain,all}`.
-Worker `scripts/invoice-worker.mjs` (pm2 app `uat-invoice-worker`) drives them. Gmail **push**
+DB-backed queue (`processing_jobs`, `FOR UPDATE SKIP LOCKED`). The worker runs
+**in-process** inside the Next.js server — `src/lib/invoice/worker/scheduler.ts`,
+started once from `src/instrumentation.ts` (Node runtime, singleton + per-task
+in-flight guards) — so there is **no separate pm2 app**. It drains jobs (~10s),
+syncs due Gmail accounts + renews watches (~5m) and forwards approved emails (~5m),
+and reaps stale `running` jobs left by a restart (`reapStaleJobs`). Disable with
+`INVOICE_WORKER_DISABLED=1`. Must run as a **single fork-mode instance**.
+
+The same work stays exposed at `/api/invoices/cron/{sync,forward,drain,all}` (bearer
+`INVOICE_CRON_SECRET`, falls back to `CRON_SECRET`) for an external scheduler, and
+`scripts/invoice-worker.mjs` remains as a manual/fallback runner. Gmail **push**
 webhook: `/api/invoices/gmail/push?token=<secret>`.
 
 ---

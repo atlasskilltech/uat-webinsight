@@ -153,6 +153,33 @@ export async function failJob(id: string, error: string): Promise<"retry" | "dea
   return "retry";
 }
 
+/**
+ * Recover jobs stuck in 'running' because a worker/process was interrupted
+ * (deploy, restart, crash) mid-job. Any 'running' job whose lock is older than
+ * `staleMinutes` is requeued so it runs again — or dead-lettered if it has
+ * already exhausted its attempts (attempts were incremented at claim time, so
+ * this can never loop forever). Returns how many rows were recovered.
+ *
+ * Idempotent and safe to call from every drain tick; `run_after=NOW(3)` makes a
+ * recovered job immediately eligible, and `claimJobs` (FOR UPDATE SKIP LOCKED)
+ * still guarantees only one worker picks it up.
+ */
+export async function reapStaleJobs(
+  staleMinutes = Number(process.env.INVOICE_WORKER_STALE_MINUTES) || 15,
+): Promise<number> {
+  const res = await iExecute(
+    "UPDATE `processing_jobs` SET " +
+      "`status` = CASE WHEN `attempts` >= `max_attempts` THEN 'dead' ELSE 'queued' END, " +
+      "`last_error` = CASE WHEN `attempts` >= `max_attempts` " +
+      "THEN 'Interrupted while running; exceeded max attempts (reaped).' ELSE `last_error` END, " +
+      "`locked_at`=NULL, `locked_by`=NULL, `run_after`=NOW(3) " +
+      "WHERE `status`='running' AND `locked_at` IS NOT NULL " +
+      "AND `locked_at` < DATE_SUB(NOW(3), INTERVAL ? MINUTE)",
+    [staleMinutes],
+  );
+  return res.affectedRows ?? 0;
+}
+
 /** Recent jobs for the processing-queue view. */
 export async function listRecentJobs(organizationId: string, limit = 50): Promise<JobRow[]> {
   return iQuery<JobRow>(
