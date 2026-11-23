@@ -13,6 +13,7 @@ import { listForwards, forwardCounts } from "@/lib/invoice/services/forwarding";
 import { hasCapability } from "@/lib/invoice/permissions";
 import { iQueryOne } from "@/lib/invoice/db";
 import { ForwardingReview, type ForwardView } from "./forwarding-review";
+import { SampleInvoiceDemo } from "./sample-demo";
 
 export const metadata: Metadata = { title: "Invoice Agent" };
 export const dynamic = "force-dynamic";
@@ -125,6 +126,12 @@ export default async function InvoiceAgentHome() {
             <Link href="/invoices/assistant"><Button variant="secondary"><Bot className="h-4 w-4" /> Talk to the agent</Button></Link>
           </CardContent>
         </Card>
+      )}
+
+      {canApprove && (
+        <div className="mt-6">
+          <SampleInvoiceDemo />
+        </div>
       )}
 
       {accounts.length > 0 && (

@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { Bot, X, Send, Maximize2 } from "lucide-react";
+import { Bot, X, Send, Maximize2, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDictation, useSpeech } from "@/lib/invoice/use-voice";
 import { sendAgentMessageAction } from "./actions";
 
 interface Msg { id: string; role: "user" | "assistant"; content: string }
@@ -21,6 +22,8 @@ export function FloatingAssistant() {
   const [input, setInput] = useState("");
   const [pending, startTransition] = useTransition();
   const endRef = useRef<HTMLDivElement>(null);
+  const tts = useSpeech();
+  const mic = useDictation((t) => setInput((p) => (p ? `${p} ${t}` : t)));
 
   useEffect(() => {
     try {
@@ -42,7 +45,9 @@ export function FloatingAssistant() {
     setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", content: msg }]);
     startTransition(async () => {
       const res = await sendAgentMessageAction({ conversationId, message: msg });
-      setMessages((m) => [...m, { id: `a-${Date.now()}`, role: "assistant", content: res.assistantText || res.error || "(no response)" }]);
+      const replyText = res.assistantText || res.error || "(no response)";
+      setMessages((m) => [...m, { id: `a-${Date.now()}`, role: "assistant", content: replyText }]);
+      tts.speak(replyText);
       if (res.conversationId && res.conversationId !== conversationId) {
         setConversationId(res.conversationId);
         try {
@@ -94,14 +99,42 @@ export function FloatingAssistant() {
             <div ref={endRef} />
           </div>
 
-          <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex items-center gap-2 border-t border-border p-2.5">
+          <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex items-center gap-1.5 border-t border-border p-2.5">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask the agent…"
+              placeholder={mic.listening ? "Listening…" : "Ask the agent…"}
               disabled={pending}
               className="h-9 flex-1 rounded-lg border border-border bg-surface px-3 text-sm focus-ring"
             />
+            {mic.supported && (
+              <button
+                type="button"
+                onClick={mic.toggle}
+                title={mic.listening ? "Stop dictation" : "Speak your message"}
+                aria-label={mic.listening ? "Stop dictation" : "Dictate"}
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-lg border border-border",
+                  mic.listening ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground",
+                )}
+              >
+                {mic.listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </button>
+            )}
+            {tts.supported && (
+              <button
+                type="button"
+                onClick={() => { const next = !tts.enabled; tts.setEnabled(next); if (!next) tts.stop(); }}
+                title={tts.enabled ? "Replies read aloud (on)" : "Read replies aloud"}
+                aria-label={tts.enabled ? "Turn off read aloud" : "Turn on read aloud"}
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-lg border border-border",
+                  tts.enabled ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground",
+                )}
+              >
+                {tts.enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              </button>
+            )}
             <button type="submit" disabled={pending || !input.trim()} className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-accent-foreground disabled:opacity-50">
               <Send className="h-4 w-4" />
             </button>

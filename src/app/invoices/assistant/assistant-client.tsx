@@ -2,12 +2,13 @@
 
 import { useRef, useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, User, Plus, Send, XCircle, Wrench, ShieldQuestion } from "lucide-react";
+import { Bot, User, Plus, Send, XCircle, Wrench, ShieldQuestion, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { useDictation, useSpeech } from "@/lib/invoice/use-voice";
 import { sendAgentMessageAction, decideAgentApprovalAction } from "./actions";
 
 export interface ChatStep { tool: string; summary: string; ok: boolean }
@@ -46,6 +47,8 @@ export function AssistantWorkspace({
   const router = useRouter();
   const toast = useToast();
   const endRef = useRef<HTMLDivElement>(null);
+  const tts = useSpeech();
+  const mic = useDictation((t) => setInput((p) => (p ? `${p} ${t}` : t)));
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -61,10 +64,12 @@ export function AssistantWorkspace({
       if (!res.ok && res.error) {
         toast(res.error, "error");
       }
+      const replyText = res.assistantText || res.error || "(no response)";
       setMessages((m) => [
         ...m,
-        { id: `a-${Date.now()}`, role: "assistant", content: res.assistantText || res.error || "(no response)", steps: res.steps },
+        { id: `a-${Date.now()}`, role: "assistant", content: replyText, steps: res.steps },
       ]);
+      tts.speak(replyText);
       if (res.approvals.length) setLiveApprovals((a) => [...res.approvals.map((x) => ({ id: x.id, action: x.action, summary: x.summary })), ...a]);
       if (res.conversationId && res.conversationId !== conversationId) {
         setConversationId(res.conversationId);
@@ -155,10 +160,38 @@ export function AssistantWorkspace({
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about invoices, payments, duplicates…"
+                placeholder={mic.listening ? "Listening… speak now" : "Ask about invoices, payments, duplicates…"}
                 className="h-10 flex-1 rounded-lg border border-border bg-surface px-3 text-sm focus-ring"
                 disabled={pending}
               />
+              {mic.supported && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={mic.listening ? undefined : "secondary"}
+                  onClick={mic.toggle}
+                  title={mic.listening ? "Stop dictation" : "Speak your message"}
+                  aria-label={mic.listening ? "Stop dictation" : "Dictate"}
+                >
+                  {mic.listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                </Button>
+              )}
+              {tts.supported && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={tts.enabled ? undefined : "secondary"}
+                  onClick={() => {
+                    const next = !tts.enabled;
+                    tts.setEnabled(next);
+                    if (!next) tts.stop();
+                  }}
+                  title={tts.enabled ? "Replies read aloud (on)" : "Read replies aloud"}
+                  aria-label={tts.enabled ? "Turn off read aloud" : "Turn on read aloud"}
+                >
+                  {tts.enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                </Button>
+              )}
               <Button type="submit" size="icon" disabled={pending || !input.trim()}>
                 <Send className="h-4 w-4" />
               </Button>
