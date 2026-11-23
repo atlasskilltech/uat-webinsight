@@ -17,8 +17,9 @@ export interface GmailAccountView {
   email: string;
   status: string;
   lastError: string | null;
-  messageCount: number;
-  invoiceCount: number;
+  invoiceDetected: number;
+  forwardedCount: number;
+  pendingCount: number;
   lastSyncAt: string | null;
   consecutiveFailures: number;
   autoForward: boolean;
@@ -93,7 +94,7 @@ export function EmailAccountsClient({
                   </Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted">
-                  {a.messageCount} email(s) · {a.invoiceCount} invoice(s) imported ·{" "}
+                  {a.invoiceDetected} invoice email(s) detected · {a.forwardedCount} forwarded · {a.pendingCount} pending ·{" "}
                   {a.lastSyncAt ? `last sync ${fmtDate(a.lastSyncAt)}` : "never synced"}
                 </p>
                 {a.lastError && (

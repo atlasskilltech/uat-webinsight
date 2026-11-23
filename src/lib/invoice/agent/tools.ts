@@ -62,8 +62,9 @@ const listConnectedAccounts: ToolDef = {
         email: a.email,
         status: a.status,
         autoForward: a.auto_forward,
-        emails: Number(a.message_count),
-        invoicesIdentified: Number(a.invoice_count),
+        invoiceEmailsDetected: Number(a.invoice_detected),
+        invoicesForwarded: Number(a.forwarded_count),
+        invoicesPending: Number(a.pending_count),
         lastSyncAt: a.last_sync_at,
       })),
     };

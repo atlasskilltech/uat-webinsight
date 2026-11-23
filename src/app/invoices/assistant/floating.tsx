@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import Link from "next/link";
-import { Bot, X, Send, Maximize2, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import { Bot, X, Send, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDictation, useSpeech } from "@/lib/invoice/use-voice";
 import { sendAgentMessageAction } from "./actions";
@@ -82,9 +81,6 @@ export function FloatingAssistant() {
           <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
             <span className="flex items-center gap-2 text-sm font-semibold"><Bot className="h-4 w-4 text-accent" /> Invoice Assistant</span>
             <div className="flex items-center gap-1">
-              <Link href="/invoices/assistant" className="rounded p-1 text-muted hover:bg-surface-hover hover:text-foreground" aria-label="Open full workspace">
-                <Maximize2 className="h-4 w-4" />
-              </Link>
               <button onClick={() => setOpen(false)} className="rounded p-1 text-muted hover:bg-surface-hover hover:text-foreground" aria-label="Close">
                 <X className="h-4 w-4" />
               </button>

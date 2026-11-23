@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, Mail, Database, Cog, Inbox, FileCheck2, Send } from "lucide-react";
+import { Mail, Database, Cog, Inbox, FileCheck2, Send, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
@@ -66,9 +66,9 @@ export default async function InvoiceAgentHome() {
   }
 
   const org = ctx.organizationId;
-  const [accounts, emailsSeen, candidates, counts, allForwards, canApprove] = await Promise.all([
+  // All counts are INVOICE-only — ordinary emails never increase them.
+  const [accounts, candidates, counts, allForwards, canApprove] = await Promise.all([
     listGmailAccounts(org),
-    count("SELECT COUNT(*) c FROM `email_messages` WHERE organization_id=?", [org]),
     count("SELECT COUNT(*) c FROM `email_messages` WHERE organization_id=? AND is_invoice_candidate=1", [org]),
     forwardCounts(org),
     listForwards(org, { limit: 100 }),
@@ -76,6 +76,8 @@ export default async function InvoiceAgentHome() {
   ]);
   const connected = accounts.filter((a) => a.status === "connected").length;
   const forwarded = counts.forwarded ?? 0;
+  const pendingApprovals = counts.pending ?? 0;
+  const needsReview = counts.review ?? 0;
 
   const toView = (f: (typeof allForwards)[number]): ForwardView => ({
     id: f.id,
@@ -95,20 +97,16 @@ export default async function InvoiceAgentHome() {
       <AutoRefresh seconds={60} />
       <PageHeader
         title="Invoice Agent"
-        description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding invoices to Finance & Accounts. All figures are from real activity.`}
-        actions={
-          <Link href="/invoices/assistant">
-            <Button><Bot className="h-4 w-4" /> Open AI Workspace</Button>
-          </Link>
-        }
+        description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding supplier invoices to Finance & Accounts. All figures are invoice-only.`}
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <StatCard label="Invoice emails detected" value={candidates} icon={FileCheck2} tone="success" state={candidates ? "ok" : "empty"} />
+        <StatCard label="Invoices forwarded" value={forwarded} icon={Send} tone="success" state={forwarded ? "ok" : "empty"} />
+        <StatCard label="Pending approvals" value={pendingApprovals} icon={Inbox} state={pendingApprovals ? "ok" : "empty"} />
+        <StatCard label="Needs review" value={needsReview} icon={AlertTriangle} state={needsReview ? "ok" : "empty"} />
         <StatCard label="Connected accounts" value={connected} icon={Mail}
           state={accounts.length ? "ok" : "empty"} href="/invoices/email-accounts" />
-        <StatCard label="Emails monitored" value={emailsSeen} icon={Inbox} state={emailsSeen ? "ok" : "empty"} />
-        <StatCard label="Invoices identified" value={candidates} icon={FileCheck2} tone="success" state={candidates ? "ok" : "empty"} />
-        <StatCard label="Forwarded to Finance" value={forwarded} icon={Send} tone="success" state={forwarded ? "ok" : "empty"} />
       </div>
 
       {accounts.length === 0 ? (
@@ -120,12 +118,12 @@ export default async function InvoiceAgentHome() {
         />
       ) : (
         <Card>
-          <CardContent className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-medium text-foreground">The agent works in the background and on demand.</p>
-              <p className="text-sm text-muted">Ask it to check today&apos;s invoices, find duplicates, or forward eligible invoices — in plain language.</p>
-            </div>
-            <Link href="/invoices/assistant"><Button variant="secondary"><Bot className="h-4 w-4" /> Talk to the agent</Button></Link>
+          <CardContent>
+            <p className="text-sm font-medium text-foreground">The agent monitors your connected inboxes automatically.</p>
+            <p className="text-sm text-muted">
+              Supplier invoices are detected and forwarded to Finance &amp; Accounts; anything uncertain waits in the
+              approval queue below. Connect or manage mailboxes under Email Accounts.
+            </p>
           </CardContent>
         </Card>
       )}

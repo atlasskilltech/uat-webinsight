@@ -13,7 +13,6 @@ import {
   Receipt,
   SlidersHorizontal,
   Mail,
-  Bot,
 } from "lucide-react";
 
 export interface NavItem {
@@ -88,13 +87,6 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Invoice Agent",
     icon: Receipt,
     description: "Monitoring status and what the agent has done.",
-    group: "finance",
-  },
-  {
-    href: "/invoices/assistant",
-    label: "AI Workspace",
-    icon: Bot,
-    description: "Talk to the Invoice Agent in natural language.",
     group: "finance",
   },
   {

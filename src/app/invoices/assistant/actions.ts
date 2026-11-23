@@ -23,7 +23,9 @@ export async function sendAgentMessageAction(input: {
       return { ok: false, error: "Empty message.", conversationId: input.conversationId ?? "", assistantText: "", steps: [], approvals: [] };
     }
     const result = await runAgent(ctx, input.conversationId, text.slice(0, 4000));
-    revalidatePath("/invoices/assistant");
+    // The assistant is the floating widget mounted across the invoice pages;
+    // refresh the dashboard so any changes it made (e.g. forwards) show.
+    revalidatePath("/invoices");
     return result;
   } catch (e) {
     const msg = isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed.";
@@ -38,7 +40,6 @@ export async function decideAgentApprovalAction(input: {
   try {
     const ctx = await agentContext();
     const res = await decideAgentApproval(ctx, input.approvalId, input.decision);
-    revalidatePath("/invoices/assistant");
     revalidatePath("/invoices");
     return res;
   } catch (e) {
