@@ -5,8 +5,14 @@
 // (same pattern as scripts/daily-sync.mjs). Keeping the heavy logic inside the
 // Next server avoids bundling server-only modules into a standalone process.
 //
-// Run under pm2 as a second app (see ecosystem.config.js) or `npm run invoice:worker`.
-// Reads INVOICE_CRON_SECRET (or CRON_SECRET) and APP_URL from .env / the environment.
+// NOTE: the Invoice Agent worker now runs IN-PROCESS inside the Next.js server
+// (src/lib/invoice/worker/scheduler.ts, started from src/instrumentation.ts), so
+// pm2 no longer runs this script. It is kept as a MANUAL / FALLBACK runner —
+// e.g. `npm run invoice:worker`, or an external scheduler — for when the
+// in-process worker is disabled (INVOICE_WORKER_DISABLED=1) or you want to drive
+// the cron endpoints from a separate process. It calls the same bearer-protected
+// /api/invoices/cron/* endpoints, so it needs INVOICE_CRON_SECRET (or CRON_SECRET)
+// and APP_URL from .env / the environment.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

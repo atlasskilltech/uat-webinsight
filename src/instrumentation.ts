@@ -23,5 +23,14 @@ export async function register(): Promise<void> {
     if (process.env.DAILY_REPORT_SCHEDULER_DISABLED !== "1") {
       schedulers.startDailyReportScheduler();
     }
+
+    // Atlas Invoice Agent background worker (Gmail sync, job drain, forwarding).
+    // Runs IN-PROCESS in this same Node server — no separate pm2 app. The
+    // /api/invoices/cron/* endpoints and the Gmail Pub/Sub webhook remain.
+    // Toggle with INVOICE_WORKER_DISABLED=1.
+    if (process.env.INVOICE_WORKER_DISABLED !== "1") {
+      const invoiceWorker = await import("./lib/invoice/worker/scheduler");
+      invoiceWorker.startInvoiceWorkerScheduler();
+    }
   }
 }
