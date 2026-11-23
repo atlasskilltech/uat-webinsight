@@ -117,3 +117,14 @@ export async function iTransaction<T>(
 export function ijson(value: unknown): string | null {
   return value === undefined || value === null ? null : JSON.stringify(value);
 }
+
+/**
+ * True when an error is MySQL's "table doesn't exist" (ER_NO_SUCH_TABLE / errno
+ * 1146). Lets read paths degrade gracefully when the invoice DB is reachable but
+ * a newer migration has not been applied yet (deploy and `invoice:db:init` are
+ * separate steps), instead of throwing an unhandled server-side exception.
+ */
+export function isMissingTableError(e: unknown): boolean {
+  const err = e as { code?: string; errno?: number } | null;
+  return Boolean(err && (err.code === "ER_NO_SUCH_TABLE" || err.errno === 1146));
+}

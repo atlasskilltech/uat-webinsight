@@ -74,14 +74,16 @@ export default async function InvoiceSettingsPage() {
           <StateRow
             icon={Database}
             label="Invoice database"
-            ok={dbStatus.migrated}
+            ok={dbStatus.migrated && !dbStatus.schemaOutdated}
             okText="Migrated"
             hint={
-              dbStatus.migrated
-                ? "Schema is present and reachable."
-                : dbStatus.reachable
-                  ? "Reachable but not migrated. Run:  npm run invoice:db:init"
-                  : `Unreachable. Check ATLAS_INVOICE_DB_* env. ${dbStatus.error ?? ""}`
+              !dbStatus.reachable
+                ? `Unreachable. Check ATLAS_INVOICE_DB_* env. ${dbStatus.error ?? ""}`
+                : dbStatus.schemaOutdated
+                  ? "Schema upgrade pending — some tables are missing. Run:  npm run invoice:db:init"
+                  : dbStatus.migrated
+                    ? "Schema is present and reachable."
+                    : "Reachable but not migrated. Run:  npm run invoice:db:init"
             }
           />
         </CardContent>
@@ -146,8 +148,8 @@ export default async function InvoiceSettingsPage() {
         </Card>
       )}
 
-      {/* CC recipients */}
-      {ctx?.organizationId && forwarding && (
+      {/* CC recipients (hidden until the forwarding_cc_recipients table exists) */}
+      {ctx?.organizationId && forwarding && !dbStatus.schemaOutdated && (
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>CC recipients</CardTitle>

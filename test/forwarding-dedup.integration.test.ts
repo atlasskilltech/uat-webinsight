@@ -112,7 +112,9 @@ import {
   runForwarding,
   approveAndForward,
   listCcRecipients,
+  getForwardingSettings,
 } from "@/lib/invoice/services/forwarding";
+import { getInvoiceDbStatus } from "@/lib/invoice/status";
 
 // --- Test fixtures (generic, non-personal addresses) ------------------------
 const ORG = "org_itest";
@@ -558,6 +560,46 @@ describe.skipIf(!READY)("invoice forwarding — MySQL integration (disposable DB
     const accounts = await listGmailAccounts(ORG);
     const acct = accounts.find((a) => a.id === INT)!;
     expect(Number(acct.invoice_detected)).toBe(1); // the newsletter did NOT bump this
+  });
+
+  // --- Hardening: reachable-but-unmigrated DB must not crash --------------
+  it("degrades gracefully when the invoice DB is reachable but not migrated to 008 (no crash)", async () => {
+    // Simulate a deploy-before-migrate window: the latest table is absent.
+    await iExecute("DROP TABLE IF EXISTS `forwarding_cc_recipients`");
+    try {
+      // The Settings-page crash path: listCcRecipients must return [] not throw.
+      expect(await listCcRecipients(ORG)).toEqual([]);
+
+      // Status reports the base schema present but the newer migration pending.
+      const st = await getInvoiceDbStatus();
+      expect(st.reachable).toBe(true);
+      expect(st.migrated).toBe(true);
+      expect(st.schemaOutdated).toBe(true);
+
+      // getForwardingSettings still works while its own table exists...
+      expect((await getForwardingSettings(ORG)).financeDestination).toBe(DESTINATION);
+      // ...and also tolerates ITS table being absent (returns safe defaults).
+      await iExecute("DROP TABLE IF EXISTS `forwarding_settings`");
+      expect(await getForwardingSettings(ORG)).toEqual({
+        financeDestination: null,
+        minConfidence: 70,
+        enabled: true,
+      });
+    } finally {
+      // Recreate the dropped tables so other tests / beforeEach are unaffected.
+      const conn = await mysql2.createConnection({
+        host: DB.host,
+        port: DB.port,
+        user: DB.user,
+        password: DB.password,
+        database: DB.name,
+        multipleStatements: true,
+      });
+      for (const f of ["007_forwarding.sql", "008_forwarding_cc_and_dedup.sql"]) {
+        await conn.query(readFileSync(path.join(process.cwd(), "db", "invoice", f), "utf8"));
+      }
+      await conn.end();
+    }
   });
 
   // --- Migration 008 / schema shape ---------------------------------------

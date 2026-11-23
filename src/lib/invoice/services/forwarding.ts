@@ -1,5 +1,5 @@
 import "server-only";
-import { iQuery, iQueryOne, iExecute } from "../db";
+import { iQuery, iQueryOne, iExecute, isMissingTableError } from "../db";
 import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
 import { getAccountAccessToken } from "./gmail";
@@ -23,15 +23,22 @@ export interface ForwardingSettings {
 }
 
 export async function getForwardingSettings(organizationId: string): Promise<ForwardingSettings> {
-  const row = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
-    "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
-    [organizationId],
-  );
-  return {
-    financeDestination: row?.finance_destination ?? null,
-    minConfidence: Number(row?.min_confidence ?? 70),
-    enabled: row?.enabled ?? true,
-  };
+  const defaults: ForwardingSettings = { financeDestination: null, minConfidence: 70, enabled: true };
+  try {
+    const row = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
+      "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
+      [organizationId],
+    );
+    return {
+      financeDestination: row?.finance_destination ?? null,
+      minConfidence: Number(row?.min_confidence ?? 70),
+      enabled: row?.enabled ?? true,
+    };
+  } catch (e) {
+    // DB reachable but not migrated to this table yet → safe defaults, no crash.
+    if (isMissingTableError(e)) return defaults;
+    throw e;
+  }
 }
 
 export async function saveForwardingSettings(
@@ -72,10 +79,19 @@ export function normalizeEmail(raw: string): string | null {
 
 /** All CC recipients for an org (applied to every forwarded invoice). */
 export async function listCcRecipients(organizationId: string): Promise<CcRecipient[]> {
-  return iQuery<CcRecipient>(
-    "SELECT `id`, `email` FROM `forwarding_cc_recipients` WHERE organization_id=? ORDER BY `email` ASC",
-    [organizationId],
-  );
+  try {
+    return await iQuery<CcRecipient>(
+      "SELECT `id`, `email` FROM `forwarding_cc_recipients` WHERE organization_id=? ORDER BY `email` ASC",
+      [organizationId],
+    );
+  } catch (e) {
+    // The forwarding_cc_recipients table is created by migration 008. If the
+    // invoice DB is reachable but not yet migrated to it, treat it as "no CC
+    // recipients yet" rather than throwing (which would crash the Settings page
+    // and any forward). Re-raise anything that is not a missing-table error.
+    if (isMissingTableError(e)) return [];
+    throw e;
+  }
 }
 
 /** Add a CC recipient (idempotent — duplicates are ignored). Returns the outcome. */
