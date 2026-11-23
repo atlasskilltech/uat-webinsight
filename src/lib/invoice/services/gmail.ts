@@ -22,6 +22,7 @@ import {
   gmailStopWatch,
 } from "../gmail/api";
 import { processUploadedDocument } from "./processing";
+import { enqueueJob } from "../jobs";
 
 export interface GmailIntegrationRow {
   id: string;
@@ -41,23 +42,49 @@ export interface GmailIntegrationRow {
 }
 
 export interface GmailAccountView extends GmailIntegrationRow {
-  message_count: number;
-  invoice_count: number;
+  invoice_detected: number; // invoice emails detected (NOT ordinary email count)
+  forwarded_count: number; // invoices forwarded to Finance
+  pending_count: number; // invoices awaiting approval / review
   last_sync_at: Date | null;
   consecutive_failures: number;
 }
 
 export async function listGmailAccounts(organizationId: string): Promise<GmailAccountView[]> {
+  // Counts are INVOICE-only — ordinary emails (newsletters, notifications, etc.)
+  // never show up here, because only invoice candidates are counted.
   return iQuery<GmailAccountView>(
     "SELECT g.*, " +
-      "(SELECT COUNT(*) FROM `email_messages` m WHERE m.gmail_integration_id=g.id) AS message_count, " +
-      "(SELECT COUNT(*) FROM `invoices` i WHERE i.source_email_message_id IN " +
-      "   (SELECT m.id FROM `email_messages` m WHERE m.gmail_integration_id=g.id)) AS invoice_count, " +
+      "(SELECT COUNT(*) FROM `email_messages` m WHERE m.gmail_integration_id=g.id AND m.is_invoice_candidate=1) AS invoice_detected, " +
+      "(SELECT COUNT(*) FROM `invoice_forwards` f WHERE f.gmail_integration_id=g.id AND f.status='forwarded') AS forwarded_count, " +
+      "(SELECT COUNT(*) FROM `invoice_forwards` f WHERE f.gmail_integration_id=g.id AND f.status IN ('pending','review')) AS pending_count, " +
       "(SELECT s.last_incremental_sync_at FROM `gmail_sync_states` s WHERE s.gmail_integration_id=g.id) AS last_sync_at, " +
       "COALESCE((SELECT s.consecutive_failures FROM `gmail_sync_states` s WHERE s.gmail_integration_id=g.id),0) AS consecutive_failures " +
       "FROM `gmail_integrations` g WHERE g.organization_id=? ORDER BY g.email ASC",
     [organizationId],
   );
+}
+
+/**
+ * True when a message was sent by the connected account itself (its own Sent
+ * mail / the agent's own forwards). These are NEVER ingested — ingesting them
+ * would re-detect the agent's forwarded invoice and forward it again, looping
+ * every sync. Combined with the `in:inbox` query, this keeps processing to
+ * genuinely incoming mail only.
+ */
+export function isSelfSent(fromHeader: string, accountEmail: string): boolean {
+  const acct = accountEmail.trim().toLowerCase();
+  return acct.length > 0 && fromHeader.toLowerCase().includes(acct);
+}
+
+export type ForwardStatus = "approved" | "pending" | "review";
+
+/**
+ * The forward-task status for a DETECTED invoice: below the threshold → review;
+ * at/above → auto-forward when the mailbox has it on, otherwise wait for approval.
+ */
+export function decideForwardStatus(confPct: number, minConfidence: number, autoForward: boolean): ForwardStatus {
+  if (confPct < minConfidence) return "review";
+  return autoForward ? "approved" : "pending";
 }
 
 /** Upsert a connected Gmail account (called from the OAuth callback). */
@@ -275,6 +302,9 @@ export async function syncGmailAccount(
         const subject = getHeader(msg, "Subject") ?? "";
         const from = getHeader(msg, "From") ?? "";
         const to = getHeader(msg, "To") ?? "";
+        // Never ingest the account's own Sent mail / the agent's forwards —
+        // this (with the in:inbox query) prevents the forward-loop at the root.
+        if (isSelfSent(from, integration.email)) continue;
         const atts = collectAttachments(msg).filter(isSupportedAttachment);
         const { classification, isInvoiceCandidate, confidence } = classifyEmail({
           subject,
@@ -299,15 +329,30 @@ export async function syncGmailAccount(
         );
         summary.newMessages += 1;
 
-        // Queue a forward task for invoice candidates (review-first).
+        // Queue a forward task for invoice candidates (review-first). The unique
+        // keys (email_message_id,destination) AND (org,source_gmail_message_id,
+        // destination) make this idempotent — the same Gmail message can never
+        // produce a second forward, even across rescans / overlapping workers.
         if (isInvoiceCandidate && destination) {
-          const forwardStatus = confPct >= minConf ? (integration.auto_forward ? "approved" : "pending") : "review";
+          const forwardStatus = decideForwardStatus(confPct, minConf, integration.auto_forward);
           await iExecute(
             "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
               "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
               "ON DUPLICATE KEY UPDATE `id`=`id`",
             [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
           );
+          // Immediate forwarding: when eligible for auto-forward, enqueue a
+          // forward job so the drain worker sends it within ~10s instead of
+          // waiting for the periodic forwarding cycle.
+          if (forwardStatus === "approved") {
+            await enqueueJob({
+              type: "forward",
+              organizationId,
+              payload: { organizationId },
+              idempotencyKey: `forward:${organizationId}:${emailMessageId}`,
+              priority: 10,
+            }).catch(() => undefined);
+          }
         }
 
         if (!isInvoiceCandidate) continue;
@@ -431,7 +476,9 @@ async function selectMessageRefs(
   }
 
   const days = Number(process.env.GMAIL_SYNC_DAYS) || 90;
-  const query = process.env.GMAIL_QUERY?.trim() || `has:attachment newer_than:${days}d`;
+  // INCOMING inbox mail only — never the account's own Sent mail (which includes
+  // the agent's forwards). This is the primary guard against the forwarding loop.
+  const query = process.env.GMAIL_QUERY?.trim() || `in:inbox -in:sent -in:chats has:attachment newer_than:${days}d`;
   const { messages } = await gmailListMessages(token, query, max);
   return { refs: messages.map((m) => ({ id: m.id })), nextHistoryId: profile?.historyId ?? null };
 }

@@ -6,9 +6,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { getInvoiceContext } from "@/lib/invoice/org";
 import { getInvoiceDbStatus } from "@/lib/invoice/status";
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
-import { getForwardingSettings } from "@/lib/invoice/services/forwarding";
+import { getForwardingSettings, listCcRecipients } from "@/lib/invoice/services/forwarding";
 import { SetupOrganizationForm } from "./setup-client";
 import { ForwardingSettingsForm } from "./forwarding-form";
+import { CcRecipients } from "./cc-recipients";
 
 export const metadata: Metadata = { title: "Invoice Settings" };
 export const dynamic = "force-dynamic";
@@ -54,6 +55,7 @@ export default async function InvoiceSettingsPage() {
   const [ctx, dbStatus] = await Promise.all([getInvoiceContext(), getInvoiceDbStatus()]);
   const flags = getInvoiceFeatureFlags();
   const forwarding = ctx?.organizationId ? await getForwardingSettings(ctx.organizationId) : null;
+  const ccRecipients = ctx?.organizationId ? await listCcRecipients(ctx.organizationId) : [];
 
   return (
     <div>
@@ -140,6 +142,22 @@ export default async function InvoiceSettingsPage() {
               minConfidence={forwarding.minConfidence}
               enabled={forwarding.enabled}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* CC recipients */}
+      {ctx?.organizationId && forwarding && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>CC recipients</CardTitle>
+            <CardDescription>
+              These addresses are CC&apos;d on every forwarded invoice, in addition to the Finance &amp; Accounts
+              destination (which stays the primary recipient).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <CcRecipients recipients={ccRecipients} />
           </CardContent>
         </Card>
       )}
