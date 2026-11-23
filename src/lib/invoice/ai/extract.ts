@@ -1,5 +1,6 @@
 import "server-only";
 import { ExtractedInvoiceSchema, EXTRACTION_SYSTEM_PROMPT, type ExtractedInvoice } from "./types";
+import { openAiChat, openAiModel } from "./openai";
 
 /**
  * Provider-independent AI invoice extractor. OFF until AI_PROVIDER + AI_API_KEY
@@ -83,11 +84,49 @@ class AnthropicExtractor implements AIExtractor {
   }
 }
 
+/** OpenAI Chat Completions extractor (uses the caller's own AI_API_KEY). */
+class OpenAiExtractor implements AIExtractor {
+  readonly provider = "openai";
+  get model(): string {
+    return process.env.AI_MODEL?.trim() || "openai";
+  }
+
+  async extract({ text }: { text: string }): Promise<ExtractionResult> {
+    const model = openAiModel(); // throws a clear error if AI_MODEL is unset
+    const resp = await openAiChat({
+      model,
+      max_completion_tokens: 4000,
+      // JSON mode: the word "json" must appear in the messages (it does, below).
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: `${EXTRACTION_SYSTEM_PROMPT}\n\n${JSON_SHAPE_HINT}` },
+        {
+          role: "user",
+          content: `<invoice_document>\n${text.slice(0, 60000)}\n</invoice_document>\n\nExtract the invoice as JSON.`,
+        },
+      ],
+    });
+    const textOut = resp.choices?.[0]?.message?.content ?? "";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripFences(textOut));
+    } catch {
+      throw new Error("AI returned invalid JSON.");
+    }
+    const validated = ExtractedInvoiceSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error(`AI output failed validation: ${validated.error.issues[0]?.message ?? "schema mismatch"}`);
+    }
+    return { data: validated.data, raw: parsed, provider: this.provider, model };
+  }
+}
+
 /** Return the configured extractor, or null when AI is off. */
 export function getExtractor(): AIExtractor | null {
   if (!aiConfigured()) return null;
   const provider = process.env.AI_PROVIDER?.trim().toLowerCase();
   if (provider === "anthropic") return new AnthropicExtractor();
+  if (provider === "openai") return new OpenAiExtractor();
   // Unknown provider -> treated as not configured (honest).
   return null;
 }
