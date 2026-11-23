@@ -14,6 +14,7 @@ import { hasCapability } from "@/lib/invoice/permissions";
 import { iQueryOne } from "@/lib/invoice/db";
 import { ForwardingReview, type ForwardView } from "./forwarding-review";
 import { SampleInvoiceDemo } from "./sample-demo";
+import { AutoRefresh } from "./auto-refresh";
 
 export const metadata: Metadata = { title: "Invoice Agent" };
 export const dynamic = "force-dynamic";
@@ -91,6 +92,7 @@ export default async function InvoiceAgentHome() {
 
   return (
     <div>
+      <AutoRefresh seconds={60} />
       <PageHeader
         title="Invoice Agent"
         description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding invoices to Finance & Accounts. All figures are from real activity.`}

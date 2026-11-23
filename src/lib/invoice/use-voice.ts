@@ -47,19 +47,34 @@ function getRecognitionCtor(): SRConstructor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-/** Microphone dictation. Emits each FINAL phrase to `onFinal`. */
-export function useDictation(onFinal: (text: string) => void): {
+/**
+ * Hands-free microphone dictation. Keeps listening and, each time you stop
+ * speaking, emits the FINAL phrase to `onFinal` (the caller auto-sends it — no
+ * Enter needed). `onInterim` streams the live partial transcript, and the hook
+ * exposes it as `interim` for an on-screen indicator.
+ */
+export function useDictation(opts: {
+  onFinal: (text: string) => void;
+  onInterim?: (text: string) => void;
+}): {
   supported: boolean;
   listening: boolean;
+  interim: string;
   toggle: () => void;
+  stop: () => void;
 } {
   const [supported] = useState(() => getRecognitionCtor() !== null);
   const [listening, setListening] = useState(false);
+  const [interim, setInterim] = useState("");
   const recRef = useRef<SRInstance | null>(null);
-  const onFinalRef = useRef(onFinal);
-  onFinalRef.current = onFinal;
+  const wantRef = useRef(false); // true while the user wants hands-free mode on
+  const cbRef = useRef(opts);
+  cbRef.current = opts;
 
   const stop = useCallback(() => {
+    wantRef.current = false;
+    setListening(false);
+    setInterim("");
     try {
       recRef.current?.stop();
     } catch {
@@ -70,40 +85,57 @@ export function useDictation(onFinal: (text: string) => void): {
   const start = useCallback(() => {
     const Ctor = getRecognitionCtor();
     if (!Ctor) return;
-    const rec = new Ctor();
-    rec.lang = "en-IN";
-    rec.interimResults = false;
-    rec.continuous = false;
-    rec.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r?.isFinal) {
-          const text = (r[0]?.transcript ?? "").trim();
-          if (text) onFinalRef.current(text);
+    wantRef.current = true;
+    const begin = () => {
+      if (!wantRef.current) return;
+      const rec = new Ctor();
+      rec.lang = "en-IN";
+      rec.interimResults = true;
+      rec.continuous = false; // one phrase per recognition; we restart for hands-free
+      rec.onresult = (e) => {
+        let live = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          const text = (r?.[0]?.transcript ?? "").trim();
+          if (!text) continue;
+          if (r.isFinal) {
+            setInterim("");
+            cbRef.current.onFinal(text); // caller auto-sends
+          } else {
+            live += text;
+          }
         }
+        if (live) {
+          setInterim(live);
+          cbRef.current.onInterim?.(live);
+        }
+      };
+      rec.onerror = () => setInterim("");
+      rec.onend = () => {
+        recRef.current = null;
+        if (wantRef.current) begin(); // keep listening until the user turns it off
+        else setListening(false);
+      };
+      recRef.current = rec;
+      try {
+        rec.start();
+      } catch {
+        wantRef.current = false;
+        setListening(false);
       }
     };
-    rec.onend = () => {
-      setListening(false);
-      recRef.current = null;
-    };
-    rec.onerror = () => setListening(false);
-    recRef.current = rec;
     setListening(true);
-    try {
-      rec.start();
-    } catch {
-      setListening(false);
-    }
+    begin();
   }, []);
 
   const toggle = useCallback(() => {
-    if (listening) stop();
+    if (wantRef.current) stop();
     else start();
-  }, [listening, start, stop]);
+  }, [start, stop]);
 
   useEffect(
     () => () => {
+      wantRef.current = false;
       try {
         recRef.current?.abort();
       } catch {
@@ -113,7 +145,7 @@ export function useDictation(onFinal: (text: string) => void): {
     [],
   );
 
-  return { supported, listening, toggle };
+  return { supported, listening, interim, toggle, stop };
 }
 
 /** Text-to-speech for reading assistant replies aloud (opt-in via `enabled`). */

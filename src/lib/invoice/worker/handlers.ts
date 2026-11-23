@@ -30,7 +30,9 @@ export async function runForwardingAll(): Promise<TaskSummary> {
 export async function runDueGmailSyncs(): Promise<TaskSummary> {
   // Keep Gmail push subscriptions alive (no-op when push is not configured).
   const watch = await renewDueWatches().catch(() => ({ renewed: 0, skipped: true }));
-  const intervalMin = Number(process.env.GMAIL_SYNC_INTERVAL_MIN) || 30;
+  // How stale a connected account may be before the worker re-syncs it. Default
+  // 5 minutes so counts/invoices refresh on their own without a manual sync.
+  const intervalMin = Number(process.env.GMAIL_SYNC_INTERVAL_MIN) || 5;
   const due = await iQuery<{ id: string; organization_id: string }>(
     "SELECT g.id, g.organization_id FROM `gmail_integrations` g " +
       "LEFT JOIN `gmail_sync_states` s ON s.gmail_integration_id=g.id " +
