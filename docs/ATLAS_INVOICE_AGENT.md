@@ -90,7 +90,7 @@ webhook: `/api/invoices/gmail/push?token=<secret>`.
 | Gmail OAuth (multi-account) | 🔑 | `GMAIL_CLIENT_ID/SECRET/REDIRECT_URI`, Gmail API, **scopes `gmail.readonly` + `gmail.send`**, restricted-scope verification |
 | Gmail push (real-time) | 🔑 ⚙️ | `GMAIL_PUBSUB_TOPIC`, a Pub/Sub topic + push subscription to the webhook with `?token=`=`GMAIL_PUBSUB_VERIFICATION_AUDIENCE`. Without it: scheduled pull still works |
 | Encryption (tokens) | 🔑 | `INVOICE_ENCRYPTION_KEY` (32-byte base64) — required before connecting Gmail |
-| AI extraction / assistant | 🔑 | `AI_PROVIDER=anthropic`, `AI_MODEL`, `AI_API_KEY` |
+| AI extraction / assistant | 🔑 | `AI_PROVIDER=anthropic` **or** `openai`, `AI_MODEL` (a model id for that provider, e.g. `claude-sonnet-5-5` / `gpt-4.1`), `AI_API_KEY`. One model serves both the extractor and the Workspace |
 | OCR (scanned docs) | 🔑 | `OCR_PROVIDER=tesseract` (+ `tesseract.js`), **or** `OCR_PROVIDER=documentai` + Google Document AI (`DOCAI_PROJECT_ID`, `DOCAI_LOCATION`, `DOCAI_PROCESSOR_ID`, `GOOGLE_APPLICATION_CREDENTIALS` service account). Text-only; feeds the AI extractor |
 | Storage | ✅ local / 🔑 S3 | `INVOICE_STORAGE_PROVIDER=s3` + `S3_*` |
 

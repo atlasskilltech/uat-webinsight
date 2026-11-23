@@ -1,5 +1,6 @@
 import "server-only";
 import { aiConfigured } from "../ai/extract";
+import { callOpenAiLlm } from "../ai/openai";
 
 /**
  * Anthropic Messages API client for the agent's tool-use loop. Uses the caller's
@@ -46,8 +47,11 @@ export async function callLlm(input: {
   const key = process.env.AI_API_KEY?.trim();
   if (!key) throw new Error("AI is not configured (set AI_PROVIDER, AI_MODEL, AI_API_KEY).");
   const provider = process.env.AI_PROVIDER?.trim().toLowerCase();
+  if (provider === "openai") {
+    return callOpenAiLlm(input);
+  }
   if (provider && provider !== "anthropic") {
-    throw new Error(`AI_PROVIDER '${provider}' is not supported by the agent yet (anthropic only).`);
+    throw new Error(`AI_PROVIDER '${provider}' is not supported (use anthropic or openai).`);
   }
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
