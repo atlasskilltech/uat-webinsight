@@ -1,10 +1,13 @@
 /**
  * Atlas Invoice Agent — environment configuration.
  *
- * The Invoice Agent uses a DEDICATED MySQL database (`atlas_invoice` by default)
- * on the same server as the main app. Connection parts default to the main app's
- * DB_* credentials (same server) but ALWAYS a different database name, so the
- * existing `atlas_dashboard` schema is never touched by invoice migrations.
+ * The Invoice Agent's database is named by ATLAS_INVOICE_DB_NAME (default
+ * `atlas_invoice`). Connection parts (host/user/password/port) fall back to the
+ * main app's DB_* credentials, so it can run on its own dedicated schema OR share
+ * the existing `atlas_dashboard` database by setting ATLAS_INVOICE_DB_NAME=
+ * atlas_dashboard. Either way the Invoice Agent only ever creates/uses its own
+ * snake_case tables (no name overlap with the PascalCase Web Insight tables) and
+ * its migrations never modify the existing Web Insight tables.
  *
  * This module reads env only; it never connects. It is safe to import anywhere.
  */
@@ -23,6 +26,8 @@ export function getInvoiceDbConfig(): InvoiceDbConfig {
   const user = process.env.ATLAS_INVOICE_DB_USER?.trim() || process.env.DB_USER?.trim();
   const password =
     process.env.ATLAS_INVOICE_DB_PASSWORD ?? process.env.DB_PASSWORD ?? "";
+  // The Invoice Agent's database name. Defaults to `atlas_invoice`; set
+  // ATLAS_INVOICE_DB_NAME=atlas_dashboard to share the main app's database.
   const database =
     process.env.ATLAS_INVOICE_DB_NAME?.trim() || "atlas_invoice";
   const port = Number(

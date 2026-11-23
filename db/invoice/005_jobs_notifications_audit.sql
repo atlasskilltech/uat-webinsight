@@ -1,10 +1,11 @@
--- Atlas Invoice Agent — DB-backed job queue, audit trail, and notifications.
+-- Atlas Invoice Agent — DB-backed job queue, immutable audit trail, and
+-- per-user notification preferences.
 
 -- DB-backed queue. Workers claim jobs with SELECT ... FOR UPDATE SKIP LOCKED.
 CREATE TABLE IF NOT EXISTS `processing_jobs` (
     `id` VARCHAR(191) NOT NULL,
     `organization_id` VARCHAR(191) NULL,
-    `type` VARCHAR(64) NOT NULL,                      -- gmail_sync | download_attachment | ocr | ai_extract | validate | dedupe | reminder | recurring | report | agent_task | ...
+    `type` VARCHAR(64) NOT NULL,                      -- gmail_sync | forward | download_attachment | ocr | ai_extract | ...
     `status` VARCHAR(16) NOT NULL DEFAULT 'queued',  -- queued | running | succeeded | failed | dead
     `priority` INT NOT NULL DEFAULT 100,
     `payload` JSON NULL,
@@ -24,7 +25,7 @@ CREATE TABLE IF NOT EXISTS `processing_jobs` (
     UNIQUE INDEX `processing_jobs_idempotency_key` (`idempotency_key`)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Immutable audit trail for every financial / sensitive mutation (before/after).
+-- Immutable audit trail for every sensitive mutation (before/after).
 CREATE TABLE IF NOT EXISTS `invoice_audit_logs` (
     `id` VARCHAR(191) NOT NULL,
     `organization_id` VARCHAR(191) NULL,
@@ -41,22 +42,6 @@ CREATE TABLE IF NOT EXISTS `invoice_audit_logs` (
     PRIMARY KEY (`id`),
     INDEX `invoice_audit_logs_entity_idx` (`organization_id`, `entity_type`, `entity_id`),
     INDEX `invoice_audit_logs_created_idx` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `notifications` (
-    `id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `user_id` VARCHAR(191) NOT NULL,                 -- atlas_dashboard.User.id (logical)
-    `type` VARCHAR(48) NOT NULL,
-    `title` VARCHAR(191) NOT NULL,
-    `body` TEXT NULL,
-    `link` VARCHAR(512) NULL,
-    `payload` JSON NULL,
-    `read_at` DATETIME(3) NULL,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (`id`),
-    INDEX `notifications_user_idx` (`user_id`, `read_at`),
-    INDEX `notifications_org_idx` (`organization_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notification_preferences` (

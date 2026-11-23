@@ -1,11 +1,15 @@
--- Atlas Invoice Agent — core tenant & master-data tables.
--- Dedicated `atlas_invoice` database (separate from atlas_dashboard). Raw MySQL,
--- InnoDB, utf8mb4. Monetary columns are DECIMAL — never FLOAT/DOUBLE.
--- Applied by: npm run invoice:db:init  (idempotent; CREATE TABLE IF NOT EXISTS).
+-- Atlas Invoice Agent — core tenant tables.
+-- The Invoice Agent's tables live in the database named by ATLAS_INVOICE_DB_NAME
+-- (its own dedicated schema, or the main `atlas_dashboard` when configured to
+-- share it). Raw MySQL, InnoDB, utf8mb4. Monetary columns are DECIMAL — never
+-- FLOAT/DOUBLE. Applied by: npm run invoice:db:init (idempotent; CREATE TABLE IF
+-- NOT EXISTS — it only ever creates the Invoice Agent's own tables, never the
+-- existing Web Insight tables).
 --
 -- NOTE on cross-database references: user ids reference atlas_dashboard.`User`.`id`
 -- LOGICALLY only. No cross-database FOREIGN KEY is declared (cross-schema FKs are
--- fragile and couple the two databases). Isolation is enforced in the data layer.
+-- fragile and couple the two databases). Isolation is enforced in the data layer
+-- (every query is scoped by organization_id), whether or not the tables share a DB.
 
 CREATE TABLE IF NOT EXISTS `organizations` (
     `id` VARCHAR(191) NOT NULL,
@@ -41,7 +45,9 @@ CREATE TABLE IF NOT EXISTS `organization_members` (
         REFERENCES `organizations` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- A business party may be a SUPPLIER, a CUSTOMER, or BOTH (see `kind`).
+-- The supplier/vendor a detected invoice is matched to (by GSTIN/name) during
+-- processing. Kept because invoices.party_id references it and the processing
+-- pipeline looks parties up for duplicate detection.
 CREATE TABLE IF NOT EXISTS `invoice_parties` (
     `id` VARCHAR(191) NOT NULL,
     `organization_id` VARCHAR(191) NOT NULL,
@@ -68,48 +74,5 @@ CREATE TABLE IF NOT EXISTS `invoice_parties` (
     INDEX `invoice_parties_org_gstin_idx` (`organization_id`, `gstin`),
     INDEX `invoice_parties_org_name_idx` (`organization_id`, `business_name`),
     CONSTRAINT `invoice_parties_org_fk` FOREIGN KEY (`organization_id`)
-        REFERENCES `organizations` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- Catalogue of products/services for outgoing (AR) invoice preparation.
-CREATE TABLE IF NOT EXISTS `products_services` (
-    `id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `name` VARCHAR(191) NOT NULL,
-    `description` TEXT NULL,
-    `sku` VARCHAR(64) NULL,
-    `unit` VARCHAR(32) NULL,
-    `default_price` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-    `default_gst_rate` DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-    `hsn_sac` VARCHAR(16) NULL,
-    `currency` CHAR(3) NOT NULL DEFAULT 'INR',
-    `is_active` BOOLEAN NOT NULL DEFAULT TRUE,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    `deleted_at` DATETIME(3) NULL,
-    PRIMARY KEY (`id`),
-    INDEX `products_services_org_idx` (`organization_id`, `is_active`),
-    INDEX `products_services_org_sku_idx` (`organization_id`, `sku`),
-    CONSTRAINT `products_services_org_fk` FOREIGN KEY (`organization_id`)
-        REFERENCES `organizations` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- Per-organization, per-financial-year, per-series invoice number counters.
--- Allocation happens inside a transaction with SELECT ... FOR UPDATE.
-CREATE TABLE IF NOT EXISTS `invoice_sequences` (
-    `id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `direction` VARCHAR(16) NOT NULL DEFAULT 'outgoing',  -- outgoing | incoming
-    `series` VARCHAR(32) NOT NULL DEFAULT 'DEFAULT',
-    `financial_year` VARCHAR(9) NOT NULL,                 -- e.g. '2026-2027'
-    `prefix` VARCHAR(32) NOT NULL DEFAULT 'INV',
-    `next_number` INT UNSIGNED NOT NULL DEFAULT 1,
-    `padding` TINYINT UNSIGNED NOT NULL DEFAULT 4,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (`id`),
-    UNIQUE INDEX `invoice_sequences_key`
-        (`organization_id`, `direction`, `series`, `financial_year`),
-    CONSTRAINT `invoice_sequences_org_fk` FOREIGN KEY (`organization_id`)
         REFERENCES `organizations` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

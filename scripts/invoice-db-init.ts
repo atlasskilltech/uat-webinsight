@@ -1,13 +1,17 @@
 /**
- * Create / migrate the dedicated `atlas_invoice` database.
+ * Create / migrate the Atlas Invoice Agent tables.
  *
  *   npm run invoice:db:init
  *
- * - Connects with the invoice DB credentials (INVOICE_* or fallback to DB_*).
- * - Creates the database if it does not exist.
- * - Applies every db/invoice/*.sql file, in filename order, exactly once.
+ * - Connects with the invoice DB credentials (ATLAS_INVOICE_DB_* or fallback to
+ *   DB_*). The target database is ATLAS_INVOICE_DB_NAME — a dedicated schema
+ *   (`atlas_invoice`) or the shared `atlas_dashboard`.
+ * - Creates the database if it does not exist (CREATE DATABASE IF NOT EXISTS).
+ * - Applies every db/invoice/*.sql file, in filename order, exactly once
+ *   (all CREATE TABLE IF NOT EXISTS — only the Invoice Agent's own tables).
  * - Records applied files in `_invoice_migrations`, so re-running is safe and
- *   only new files are applied. Does NOT touch the main `atlas_dashboard` DB.
+ *   only new files are applied. It NEVER drops or modifies the existing Web
+ *   Insight tables, even when pointed at `atlas_dashboard`.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";

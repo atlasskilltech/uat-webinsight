@@ -1,5 +1,5 @@
 -- Atlas Invoice Agent — AI agent orchestration persistence: conversations,
--- messages, runs/steps/tool-calls, tasks, memory, approvals, activity, settings.
+-- messages, runs/steps/tool-calls, approvals, activity and settings.
 
 CREATE TABLE IF NOT EXISTS `agent_conversations` (
     `id` VARCHAR(191) NOT NULL,
@@ -81,36 +81,6 @@ CREATE TABLE IF NOT EXISTS `agent_tool_calls` (
     PRIMARY KEY (`id`),
     INDEX `agent_tool_calls_run_idx` (`run_id`),
     INDEX `agent_tool_calls_tool_idx` (`organization_id`, `tool_name`)
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `agent_tasks` (
-    `id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `user_id` VARCHAR(191) NULL,
-    `title` VARCHAR(191) NOT NULL,
-    `kind` VARCHAR(32) NOT NULL DEFAULT 'adhoc',      -- adhoc | scheduled
-    `schedule_cron` VARCHAR(64) NULL,
-    `status` VARCHAR(16) NOT NULL DEFAULT 'active',   -- active | paused | completed | failed
-    `instruction` TEXT NULL,
-    `next_run_at` DATETIME(3) NULL,
-    `last_run_at` DATETIME(3) NULL,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (`id`),
-    INDEX `agent_tasks_org_status_idx` (`organization_id`, `status`, `next_run_at`)
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `agent_memory` (
-    `id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `user_id` VARCHAR(191) NULL,
-    `scope` VARCHAR(24) NOT NULL DEFAULT 'org',       -- org | user | conversation
-    `key_name` VARCHAR(128) NOT NULL,
-    `value` JSON NULL,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (`id`),
-    UNIQUE INDEX `agent_memory_key` (`organization_id`, `scope`, `user_id`, `key_name`)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- Approval requests raised by the agent for sensitive tool calls.
