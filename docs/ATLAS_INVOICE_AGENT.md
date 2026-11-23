@@ -139,9 +139,9 @@ Atlas routes intact). Live Gmail/AI/OCR/Pub-Sub can't run in the build env.
 
 ```bash
 npm install
-cp .env.example .env     # set ATLAS_INVOICE_DB_*, INVOICE_ENCRYPTION_KEY (+ providers)
-npm run db:init          # existing app schema (unchanged)
-npm run invoice:db:init  # create/migrate atlas_invoice (incl. migration 007 forwarding)
+cp .env.example .env     # set ATLAS_INVOICE_DB_NAME (atlas_invoice or atlas_dashboard), INVOICE_ENCRYPTION_KEY (+ providers)
+npm run db:init          # existing Web Insight schema (unchanged)
+npm run invoice:db:init  # create the Invoice Agent tables in ATLAS_INVOICE_DB_NAME
 npm run dev && npm test
 ```
 Then: sign in as admin → **Invoice Agent → Agent Settings** → create org + set the Finance
@@ -158,7 +158,10 @@ Or trigger directly: `curl -X POST -H "Authorization: Bearer $INVOICE_CRON_SECRE
 Existing GitHub Actions deploy (push to `staging`) runs `npm ci`, `db:init`, `build`,
 `pm2 startOrReload`. For the agent, on the server: run `npm run invoice:db:init`, set the new
 env vars in `.env`, and `pm2 startOrReload ecosystem.config.js` (includes `uat-invoice-worker`).
-Configure the Google Cloud OAuth client + (optional) Pub/Sub. Add `atlas_invoice` backups.
+Configure the Google Cloud OAuth client + (optional) Pub/Sub. The Invoice Agent's database
+is `ATLAS_INVOICE_DB_NAME` — a dedicated `atlas_invoice` schema, or the existing
+`atlas_dashboard` (shares one DB; its snake_case tables never collide with or modify the
+Web Insight tables). Ensure that database is covered by backups.
 
 ---
 
@@ -167,9 +170,14 @@ Configure the Google Cloud OAuth client + (optional) Pub/Sub. Add `atlas_invoice
 - 🔑 Verified Gmail OAuth client with **`gmail.send`** (restricted-scope Google review has lead time).
 - 🔑 `INVOICE_ENCRYPTION_KEY` set before connecting any account.
 - 🔑 (optional) Pub/Sub topic + push subscription for real-time; otherwise scheduled pull.
-- ⚙️ Automated `atlas_invoice` backups (not yet automated).
+- ⚙️ Automated backups of the configured Invoice Agent database (not yet automated).
 - Live end-to-end + security pass on a MySQL-enabled host with real credentials.
 
-Dormant (kept, data-safe, unused by the new scope): the AP/AR tables remain in `atlas_invoice`
-but no code reads/writes them except the extraction records (`invoices`, `invoice_line_items`,
-`invoice_extractions`, `invoice_duplicate_matches`) used for invoice intelligence.
+Schema: the Invoice Agent creates **25 tables** (the Finance & Accounts scope reset removed
+the unused legacy AP/AR tables — payments, allocations, approvals, approval-steps, reminders,
+subscriptions, credit notes/items, products/services, invoice sequences, standalone
+notifications, agent tasks/memory). The retained set covers organizations + members, Gmail
+integration/sync, email messages/attachments, invoice detection/extraction/attachments/line
+items/duplicate matches + parties, forwarding settings/log, the job queue, audit log,
+notification preferences, and the AI agent workspace tables. All are snake_case and never
+overlap the PascalCase Web Insight tables, so they coexist safely in one database.

@@ -1,5 +1,5 @@
--- Atlas Invoice Agent — invoice records (incoming AP + outgoing AR), line items,
--- attachments, AI extractions, and credit notes. All monetary columns DECIMAL.
+-- Atlas Invoice Agent — invoice records detected from email, their line items,
+-- stored attachments and AI/OCR extractions. All monetary columns DECIMAL.
 
 CREATE TABLE IF NOT EXISTS `invoices` (
     `id` VARCHAR(191) NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS `invoices` (
     `amount_paid` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
     `balance_due` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
 
-    -- Lifecycle. processing_status drives the AP/AR pipeline; payment_status the ledger.
+    -- Lifecycle. processing_status drives the detection/extraction pipeline.
     `processing_status` VARCHAR(32) NOT NULL DEFAULT 'RECEIVED',
     `payment_status` VARCHAR(32) NOT NULL DEFAULT 'UNPAID',
 
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS `invoice_line_items` (
     `invoice_id` VARCHAR(191) NOT NULL,
     `organization_id` VARCHAR(191) NOT NULL,
     `line_no` INT NOT NULL DEFAULT 1,
-    `product_service_id` VARCHAR(191) NULL,           -- optional link to catalogue
+    `product_service_id` VARCHAR(191) NULL,           -- optional catalogue reference (no FK)
     `description` TEXT NULL,
     `hsn_sac` VARCHAR(16) NULL,
     `quantity` DECIMAL(15,3) NOT NULL DEFAULT 0.000,
@@ -90,8 +90,8 @@ CREATE TABLE IF NOT EXISTS `invoice_line_items` (
         REFERENCES `invoices` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Stored documents (original uploads / downloaded attachments). The bytes live in
--- the storage provider (local/S3); this row holds metadata + storage key only.
+-- Stored documents (downloaded attachments). The bytes live in the storage
+-- provider (local/S3); this row holds metadata + storage key only.
 CREATE TABLE IF NOT EXISTS `invoice_attachments` (
     `id` VARCHAR(191) NOT NULL,
     `organization_id` VARCHAR(191) NOT NULL,
@@ -136,43 +136,4 @@ CREATE TABLE IF NOT EXISTS `invoice_extractions` (
     INDEX `invoice_extractions_org_idx` (`organization_id`),
     CONSTRAINT `invoice_extractions_invoice_fk` FOREIGN KEY (`invoice_id`)
         REFERENCES `invoices` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `invoice_credit_notes` (
-    `id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `invoice_id` VARCHAR(191) NOT NULL,
-    `credit_note_number` VARCHAR(128) NULL,
-    `reason` TEXT NULL,
-    `credit_date` DATE NULL,
-    `subtotal` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-    `tax_total` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-    `grand_total` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-    `currency` CHAR(3) NOT NULL DEFAULT 'INR',
-    `status` VARCHAR(32) NOT NULL DEFAULT 'draft',
-    `created_by` VARCHAR(191) NULL,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (`id`),
-    INDEX `invoice_credit_notes_invoice_idx` (`invoice_id`),
-    INDEX `invoice_credit_notes_org_idx` (`organization_id`),
-    CONSTRAINT `invoice_credit_notes_invoice_fk` FOREIGN KEY (`invoice_id`)
-        REFERENCES `invoices` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `invoice_credit_note_items` (
-    `id` VARCHAR(191) NOT NULL,
-    `credit_note_id` VARCHAR(191) NOT NULL,
-    `organization_id` VARCHAR(191) NOT NULL,
-    `description` TEXT NULL,
-    `hsn_sac` VARCHAR(16) NULL,
-    `quantity` DECIMAL(15,3) NOT NULL DEFAULT 0.000,
-    `unit_price` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-    `gst_rate` DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-    `line_total` DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (`id`),
-    INDEX `invoice_credit_note_items_cn_idx` (`credit_note_id`),
-    CONSTRAINT `invoice_credit_note_items_cn_fk` FOREIGN KEY (`credit_note_id`)
-        REFERENCES `invoice_credit_notes` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

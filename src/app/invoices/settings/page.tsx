@@ -66,7 +66,7 @@ export default async function InvoiceSettingsPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Database</CardTitle>
-          <CardDescription>Dedicated atlas_invoice database (separate from the main app).</CardDescription>
+          <CardDescription>Invoice Agent database (set by ATLAS_INVOICE_DB_NAME; its own tables, may share atlas_dashboard).</CardDescription>
         </CardHeader>
         <CardContent>
           <StateRow
