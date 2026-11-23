@@ -23,7 +23,13 @@ export function FloatingAssistant() {
   const [pending, startTransition] = useTransition();
   const endRef = useRef<HTMLDivElement>(null);
   const tts = useSpeech();
-  const mic = useDictation((t) => setInput((p) => (p ? `${p} ${t}` : t)));
+  const mic = useDictation({ onFinal: (t) => send(t) });
+
+  function toggleVoice() {
+    const turningOn = !mic.listening;
+    mic.toggle();
+    if (turningOn && !tts.enabled) tts.setEnabled(true);
+  }
 
   useEffect(() => {
     try {
@@ -38,8 +44,8 @@ export function FloatingAssistant() {
     if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pending, open]);
 
-  function send() {
-    const msg = input.trim();
+  function send(text?: string) {
+    const msg = (text ?? input).trim();
     if (!msg || pending) return;
     setInput("");
     setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", content: msg }]);
@@ -96,6 +102,11 @@ export function FloatingAssistant() {
               ))
             )}
             {pending && <p className="text-xs text-muted">Thinking…</p>}
+            {mic.listening && (
+              <p className="text-xs text-accent">
+                {mic.interim ? `“${mic.interim}”` : "Listening… speak, it sends automatically."}
+              </p>
+            )}
             <div ref={endRef} />
           </div>
 
@@ -110,9 +121,9 @@ export function FloatingAssistant() {
             {mic.supported && (
               <button
                 type="button"
-                onClick={mic.toggle}
-                title={mic.listening ? "Stop dictation" : "Speak your message"}
-                aria-label={mic.listening ? "Stop dictation" : "Dictate"}
+                onClick={toggleVoice}
+                title={mic.listening ? "Stop voice mode" : "Hands-free voice: speak and it sends automatically"}
+                aria-label={mic.listening ? "Stop voice mode" : "Start voice mode"}
                 className={cn(
                   "flex h-9 w-9 items-center justify-center rounded-lg border border-border",
                   mic.listening ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground",

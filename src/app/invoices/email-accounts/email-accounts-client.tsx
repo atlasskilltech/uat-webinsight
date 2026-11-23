@@ -2,14 +2,14 @@
 
 import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Mail, RefreshCw, Plug, AlertTriangle } from "lucide-react";
+import { Mail, RefreshCw, RotateCcw, Plug, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { idleState } from "@/lib/form-state";
 import { fmtDate } from "@/lib/invoice/format";
-import { syncGmailAction, disconnectGmailAction } from "./actions";
+import { syncGmailAction, rescanGmailAction, disconnectGmailAction } from "./actions";
 import { setAutoForwardAction } from "../forwarding-actions";
 
 export interface GmailAccountView {
@@ -110,6 +110,17 @@ export function EmailAccountsClient({
                 ) : (
                   <Button size="sm" disabled={pending} onClick={() => act(syncGmailAction, a.id, "Synced.")}>
                     <RefreshCw className="h-3.5 w-3.5" /> Sync now
+                  </Button>
+                )}
+                {(a.status === "connected" || a.status === "error") && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending}
+                    title="Re-check recent mail with the latest invoice detection (catches invoices missed earlier)."
+                    onClick={() => act(rescanGmailAction, a.id, "Re-scanned.")}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Rescan inbox
                   </Button>
                 )}
                 <Button

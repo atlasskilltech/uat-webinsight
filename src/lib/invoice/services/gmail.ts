@@ -170,34 +170,54 @@ export type EmailClassification =
   | "general_finance"
   | "irrelevant";
 
-/** Heuristic email classifier (deterministic; AI classification can slot in later). */
+/** An attachment filename that looks like an invoice/bill/receipt document. */
+const INVOICE_FILENAME = /invoice|tax[-_ ]?invoice|e[-_ ]?invoice|proforma|\binv[-_ ]?\d|\bbill[-_ ]?\d|billing|\breceipt/i;
+
+/**
+ * Heuristic email classifier (deterministic; AI classification can slot in
+ * later). An email is an invoice candidate when it carries a supported
+ * attachment AND either the subject/snippet mentions an invoice OR the
+ * attachment itself is named like an invoice (e.g. "Invoice-123.pdf") — many
+ * real invoices arrive with a generic subject and the word only inside the PDF.
+ */
 export function classifyEmail(input: {
   subject: string;
   from: string;
   snippet: string;
   hasAttachment: boolean;
+  attachmentNames?: string[];
 }): { classification: EmailClassification; isInvoiceCandidate: boolean; confidence: number } {
   const t = `${input.subject} ${input.snippet}`.toLowerCase();
   const has = (...k: string[]) => k.some((w) => t.includes(w));
+  const fileLooksLikeInvoice = (input.attachmentNames ?? []).some((f) => INVOICE_FILENAME.test(f));
+
+  const subjectInvoice = has("invoice", "tax invoice", "bill", "gstin", "gst invoice", "e-invoice", "proforma");
 
   let classification: EmailClassification = "irrelevant";
   if (has("credit note")) classification = "credit_note";
   else if (has("purchase order", "p.o.", " po ")) classification = "purchase_order";
   else if (has("remittance")) classification = "remittance_advice";
-  else if (has("payment received", "payment confirmation", "paid")) classification = "payment_confirmation";
-  else if (has("invoice", "tax invoice", "bill", "gstin", "gst invoice")) classification = "supplier_invoice";
+  else if (has("payment received", "payment confirmation")) classification = "payment_confirmation";
+  else if (subjectInvoice) classification = "supplier_invoice";
   else if (has("quotation", "request for invoice", "please invoice")) classification = "customer_request";
   else if (has("statement", "account")) classification = "general_finance";
 
   const isInvoiceCandidate =
-    input.hasAttachment && (classification === "supplier_invoice" || has("invoice", "bill", "tax invoice"));
+    input.hasAttachment && (classification === "supplier_invoice" || subjectInvoice || fileLooksLikeInvoice);
 
-  // Heuristic confidence (0..1). Stronger invoice signals + an attachment score
-  // higher; the forwarding threshold decides auto vs review.
+  // When only the attachment name flags it, still mark it a supplier invoice so
+  // the UI and forwarding treat it consistently.
+  if (isInvoiceCandidate && classification !== "supplier_invoice") classification = "supplier_invoice";
+
+  // Heuristic confidence (0..1). Stronger invoice signals score higher; the
+  // forwarding threshold decides auto vs review.
   let confidence: number;
   if (isInvoiceCandidate) {
-    confidence = has("tax invoice", "gst invoice", "gstin") ? 0.92 : has("invoice", "bill") ? 0.78 : 0.62;
-  } else if (classification === "supplier_invoice") {
+    if (has("tax invoice", "gst invoice", "gstin")) confidence = 0.93;
+    else if (subjectInvoice) confidence = 0.82;
+    else if (fileLooksLikeInvoice) confidence = 0.72; // detected via attachment name only
+    else confidence = 0.62;
+  } else if (subjectInvoice) {
     confidence = 0.4;
   } else {
     confidence = 0.1;
@@ -261,6 +281,7 @@ export async function syncGmailAccount(
           from,
           snippet: msg.snippet ?? "",
           hasAttachment: atts.length > 0,
+          attachmentNames: atts.map((a) => a.filename),
         });
         const confPct = Math.round(confidence * 100);
 
@@ -351,6 +372,37 @@ export async function syncGmailAccount(
     );
     throw e;
   }
+}
+
+/**
+ * Re-check recent mail with the CURRENT detection logic. Normal syncs skip any
+ * message already in the ledger, so improvements to classification don't reach
+ * mail that was already scanned. This clears only the non-invoice ("skipped")
+ * ledger rows for the account and forces a full re-scan, so previously-missed
+ * invoices get picked up. Invoice rows and their forwards are left untouched.
+ */
+export async function rescanGmailAccount(
+  organizationId: string,
+  integrationId: string,
+  actor: { id: string; email: string },
+  opts: { maxMessages?: number } = {},
+): Promise<SyncSummary> {
+  // Remove only skipped (non-candidate) ledger rows so they are re-evaluated;
+  // candidates/attachments/forwards are kept (and re-dedupe on their own keys).
+  await iExecute(
+    "DELETE FROM `email_messages` WHERE gmail_integration_id=? AND organization_id=? AND is_invoice_candidate=0",
+    [integrationId, organizationId],
+  );
+  // Force a full query re-scan rather than an incremental history fetch.
+  await iExecute("UPDATE `gmail_integrations` SET `history_id`=NULL WHERE id=? AND organization_id=?", [
+    integrationId,
+    organizationId,
+  ]);
+  await iExecute(
+    "UPDATE `gmail_sync_states` SET `last_history_id`=NULL WHERE gmail_integration_id=?",
+    [integrationId],
+  );
+  return syncGmailAccount(organizationId, integrationId, actor, { maxMessages: opts.maxMessages ?? 100 });
 }
 
 // --- Incremental history sync + Gmail push (watch) --------------------------

@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { NotReady } from "../not-ready";
 import { EmailAccountsClient, type GmailAccountView } from "./email-accounts-client";
+import { AutoRefresh } from "../auto-refresh";
 
 export const metadata: Metadata = { title: "Email Accounts" };
 export const dynamic = "force-dynamic";
@@ -58,12 +59,15 @@ export default async function EmailAccountsPage({
         />
       ) : (
         <>
+          <AutoRefresh seconds={60} />
           <div className="mb-6 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              Sync is on-demand (and via the scheduled worker in a later phase). Each sync scans recent emails with
-              attachments, skips already-processed messages, classifies them, and sends invoice attachments to the
-              pipeline. Real-time push (Gmail watch + Pub/Sub) activates only when that infrastructure is configured.
+              Connected accounts sync automatically in the background (about every 5 minutes), so the counts below
+              update on their own. Each sync scans recent emails with attachments, skips already-processed messages,
+              classifies them, and sends invoice attachments to the pipeline. Use <strong>Sync now</strong> to run it
+              immediately, or <strong>Rescan inbox</strong> to re-check recent mail with the latest detection. Real-time
+              push (Gmail watch + Pub/Sub) activates only when that infrastructure is configured.
             </p>
           </div>
           <EmailAccountsClient

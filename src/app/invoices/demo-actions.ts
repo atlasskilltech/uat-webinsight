@@ -69,6 +69,7 @@ export async function runSampleInvoiceDemo(): Promise<SampleDemoResult> {
     from: SAMPLE.from,
     snippet: SAMPLE.snippet,
     hasAttachment: true,
+    attachmentNames: ["invoice-INV-2026-0042.pdf"],
   });
   const confidence = Math.round(c.confidence * 100);
 

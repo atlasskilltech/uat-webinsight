@@ -48,7 +48,13 @@ export function AssistantWorkspace({
   const toast = useToast();
   const endRef = useRef<HTMLDivElement>(null);
   const tts = useSpeech();
-  const mic = useDictation((t) => setInput((p) => (p ? `${p} ${t}` : t)));
+  const mic = useDictation({ onFinal: (t) => send(t) });
+
+  function toggleVoice() {
+    const turningOn = !mic.listening;
+    mic.toggle();
+    if (turningOn && !tts.enabled) tts.setEnabled(true); // full voice conversation
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -153,6 +159,12 @@ export function AssistantWorkspace({
             <div ref={endRef} />
           </CardContent>
           <div className="border-t border-border p-3">
+            {mic.listening && (
+              <p className="mb-2 flex items-center gap-2 text-xs text-accent">
+                <Mic className="h-3.5 w-3.5 animate-pulse" />
+                {mic.interim ? `“${mic.interim}”` : "Listening… just speak, it sends automatically."}
+              </p>
+            )}
             <form
               onSubmit={(e) => { e.preventDefault(); send(input); }}
               className="flex items-center gap-2"
@@ -169,9 +181,9 @@ export function AssistantWorkspace({
                   type="button"
                   size="icon"
                   variant={mic.listening ? undefined : "secondary"}
-                  onClick={mic.toggle}
-                  title={mic.listening ? "Stop dictation" : "Speak your message"}
-                  aria-label={mic.listening ? "Stop dictation" : "Dictate"}
+                  onClick={toggleVoice}
+                  title={mic.listening ? "Stop voice mode" : "Hands-free voice: speak and it sends automatically"}
+                  aria-label={mic.listening ? "Stop voice mode" : "Start voice mode"}
                 >
                   {mic.listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </Button>
