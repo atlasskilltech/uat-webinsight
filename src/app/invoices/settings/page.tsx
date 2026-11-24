@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
-import { Database, KeyRound, Bot, ScanLine, Mail, HardDrive, CheckCircle2, XCircle } from "lucide-react";
+import { Database, KeyRound, Bot, ScanLine, Mail, HardDrive, CheckCircle2, XCircle, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getInvoiceContext } from "@/lib/invoice/org";
-import { getInvoiceDbStatus } from "@/lib/invoice/status";
+import { hasCapability } from "@/lib/invoice/permissions";
+import { getInvoiceDbStatus, getGstinUniquenessStatus } from "@/lib/invoice/status";
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
 import { getForwardingSettings, listCcRecipients } from "@/lib/invoice/services/forwarding";
+import { listMembers, listOrganizationsBrief } from "@/lib/invoice/services/org-admin";
 import { SetupOrganizationForm } from "./setup-client";
+import { OrgProfileForm } from "./org-profile-form";
+import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
 import { CcRecipients } from "./cc-recipients";
 
@@ -56,6 +60,12 @@ export default async function InvoiceSettingsPage() {
   const flags = getInvoiceFeatureFlags();
   const forwarding = ctx?.organizationId ? await getForwardingSettings(ctx.organizationId) : null;
   const ccRecipients = ctx?.organizationId ? await listCcRecipients(ctx.organizationId) : [];
+  const canManageOrg = ctx?.organizationId ? await hasCapability("org.manage") : false;
+  const members = ctx?.organizationId && canManageOrg ? await listMembers(ctx.organizationId) : [];
+  // Shown during setup so an admin can see existing orgs and avoid duplicates.
+  const existingOrgs = ctx && !ctx.organizationId && ctx.canSetup ? await listOrganizationsBrief() : [];
+  // Live state of the GSTIN unique index (migration 009 may have skipped it).
+  const gstinUniq = dbStatus.migrated && !dbStatus.schemaOutdated ? await getGstinUniquenessStatus() : null;
 
   return (
     <div>
@@ -86,6 +96,21 @@ export default async function InvoiceSettingsPage() {
                     : "Reachable but not migrated. Run:  npm run invoice:db:init"
             }
           />
+          {gstinUniq && (
+            <StateRow
+              icon={ShieldCheck}
+              label="GSTIN uniqueness (database-level)"
+              ok={gstinUniq.enforced}
+              okText="Enforced"
+              hint={
+                gstinUniq.enforced
+                  ? "A unique index prevents two organizations from sharing a GSTIN (race-safe)."
+                  : gstinUniq.duplicateGroups > 0
+                    ? `Not enforced — ${gstinUniq.duplicateGroups} duplicate GSTIN(s) exist. Resolve them, then run:  npm run invoice:db:init`
+                    : "Not enforced yet. Run:  npm run invoice:db:init"
+              }
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -98,35 +123,93 @@ export default async function InvoiceSettingsPage() {
         <CardContent>
           {!dbStatus.migrated ? (
             <p className="text-sm text-muted">Initialize the database first, then reload this page.</p>
-          ) : ctx?.organizationId ? (
-            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <dt className="text-xs text-muted">Name</dt>
-                <dd className="text-sm font-medium">{ctx.organization?.name}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted">Base currency</dt>
-                <dd className="text-sm font-medium">{ctx.organization?.base_currency}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted">GSTIN</dt>
-                <dd className="text-sm font-medium">{ctx.organization?.gstin ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted">Your finance role</dt>
-                <dd className="text-sm font-medium">{ctx.role}</dd>
-              </div>
-            </dl>
+          ) : ctx?.organizationId && ctx.organization ? (
+            canManageOrg ? (
+              <OrgProfileForm org={ctx.organization} />
+            ) : (
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-muted">Name</dt>
+                  <dd className="text-sm font-medium">{ctx.organization.name}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Legal name</dt>
+                  <dd className="text-sm font-medium">{ctx.organization.legal_name ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">GSTIN</dt>
+                  <dd className="text-sm font-medium">{ctx.organization.gstin ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">PAN</dt>
+                  <dd className="text-sm font-medium">{ctx.organization.pan ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Base currency</dt>
+                  <dd className="text-sm font-medium">{ctx.organization.base_currency}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Your finance role</dt>
+                  <dd className="text-sm font-medium">{ctx.role}</dd>
+                </div>
+              </dl>
+            )
           ) : ctx?.canSetup ? (
-            <SetupOrganizationForm />
+            <div className="space-y-5">
+              {existingOrgs.length > 0 && (
+                <div className="rounded-lg border border-border bg-surface-2 p-4">
+                  <p className="text-sm font-medium text-foreground">You&apos;re not a member of any organization yet.</p>
+                  <p className="mt-1 text-sm text-muted">
+                    If your organization is already set up, ask its Finance Admin to add you under <strong>Team members</strong>
+                    {" "}rather than creating a new one. Existing organizations:
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm text-foreground">
+                    {existingOrgs.map((o) => (
+                      <li key={o.id}>• {o.name}{o.gstin ? ` — GSTIN ${o.gstin}` : ""}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <p className="mb-2 text-sm font-medium text-foreground">
+                  {existingOrgs.length > 0 ? "Create a separate organization" : "Create your organization"}
+                </p>
+                <p className="mb-3 text-xs text-muted">
+                  Use a distinct name and GSTIN. The person who creates it becomes its Finance Admin and can then add team
+                  members. Reusing an existing GSTIN or name is blocked to prevent duplicates.
+                </p>
+                <SetupOrganizationForm />
+              </div>
+            </div>
+          ) : ctx?.orgExists ? (
+            <EmptyState
+              title="You're not a member yet"
+              description="Ask your organization's Finance Admin to add you under Team Members, then reload this page."
+            />
           ) : (
             <EmptyState
               title="No organization yet"
-              description="A Finance Admin must create the organization before you can use the Invoice Agent."
+              description="An administrator must create the organization before you can use the Invoice Agent."
             />
           )}
         </CardContent>
       </Card>
+
+      {/* Team members (Finance Admin: org.manage) */}
+      {ctx?.organizationId && ctx.user && canManageOrg && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Team members</CardTitle>
+            <CardDescription>
+              Add Atlas employees by their existing Web Insight login email and assign a finance role. Every member
+              shares this one organization and its GST/company profile — no duplicate organizations are created.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TeamMembers members={members} currentUserId={ctx.user.id} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Finance & Accounts forwarding */}
       {ctx?.organizationId && forwarding && (

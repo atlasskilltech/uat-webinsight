@@ -74,6 +74,34 @@ async function main() {
       count += 1;
     }
     console.log(`[invoice:db:init] done. ${count} migration(s) applied, ${files.length} total.`);
+
+    // Surface a clear warning when DB-level GSTIN uniqueness (migration 009)
+    // could NOT be enforced because duplicate GSTINs already exist. The index is
+    // skipped (never fails the migration); an admin must resolve the duplicates
+    // and re-run. Until then only the application-level guard is in force.
+    try {
+      const [idxRows] = await conn.query(
+        "SELECT COUNT(*) AS c FROM information_schema.STATISTICS " +
+          "WHERE table_schema = DATABASE() AND table_name = 'organizations' AND index_name = 'organizations_gstin_key'",
+      );
+      const hasIndex = Number((idxRows as { c: number }[])[0]?.c ?? 0) > 0;
+      if (!hasIndex) {
+        const [dupRows] = await conn.query(
+          "SELECT COUNT(*) AS c FROM (SELECT `gstin` FROM `organizations` WHERE `gstin` IS NOT NULL GROUP BY `gstin` HAVING COUNT(*) > 1) d",
+        );
+        const dups = Number((dupRows as { c: number }[])[0]?.c ?? 0);
+        if (dups > 0) {
+          console.warn(
+            `[invoice:db:init] WARNING: database-level GSTIN uniqueness is NOT enforced — ` +
+              `${dups} duplicate GSTIN(s) exist, so the unique index 'organizations_gstin_key' was skipped. ` +
+              `Resolve the duplicate organizations, then re-run 'npm run invoice:db:init'. ` +
+              `Until then only the application-level duplicate guard is active.`,
+          );
+        }
+      }
+    } catch {
+      /* best-effort advisory only — never fail the migration over the check */
+    }
   } finally {
     await conn.end();
   }
