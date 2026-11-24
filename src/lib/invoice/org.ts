@@ -3,6 +3,7 @@ import { cache } from "react";
 import { getCurrentUser } from "@/lib/auth/session";
 import type { SafeUser } from "@/lib/auth/types";
 import { iQuery, iQueryOne } from "./db";
+import { anyActiveOrganizationExists } from "./services/org-admin";
 import type { FinanceRole } from "./types";
 
 /**
@@ -42,8 +43,10 @@ export interface InvoiceContext {
   organizationId: string | null;
   member: MemberRow | null;
   role: FinanceRole | null;
-  /** True when the user may reach the module to set up the first org. */
+  /** True when the user may reach the module to set up the FIRST org. */
   canSetup: boolean;
+  /** True when at least one active organization already exists. */
+  orgExists: boolean;
 }
 
 /** List organizations the current user belongs to (active memberships). */
@@ -77,19 +80,25 @@ export const getInvoiceContext = cache(
         member: null,
         role: null,
         canSetup: user.role === "admin",
+        orgExists: false,
       };
     }
 
     if (memberships.length === 0) {
-      // No membership yet. App admins may enter setup mode.
-      const canSetup = user.role === "admin";
+      // No membership yet. An app admin may provision an organization (the first
+      // one, or a genuinely separate one such as ISDI). Accidental duplicates of
+      // an EXISTING org are prevented at creation time by a GSTIN/name match, not
+      // by blocking all creation — so multiple legitimate orgs are supported.
+      // A non-admin is never shown setup; they must be added by a Finance Admin.
+      const orgExists = await anyActiveOrganizationExists().catch(() => false);
       return {
         user,
         organization: null,
         organizationId: null,
         member: null,
         role: null,
-        canSetup,
+        canSetup: user.role === "admin",
+        orgExists,
       };
     }
 
@@ -109,7 +118,8 @@ export const getInvoiceContext = cache(
       organizationId: organization?.id ?? null,
       member: chosen,
       role: chosen.role,
-      canSetup: user.role === "admin",
+      canSetup: false, // already a member — no bootstrap needed
+      orgExists: true,
     };
   },
 );
