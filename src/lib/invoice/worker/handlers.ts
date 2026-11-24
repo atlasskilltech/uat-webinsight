@@ -3,6 +3,7 @@ import { iQuery } from "../db";
 import { syncGmailAccount, renewDueWatches } from "../services/gmail";
 import { runForwarding } from "../services/forwarding";
 import { listOrganizationIds } from "../services/orgs";
+import { gmailPollFallbackMinutes } from "../config";
 import { claimJobs, completeJob, failJob, type JobRow } from "../jobs";
 
 const SYSTEM_ACTOR = { id: "system", email: "worker@invoice-agent" };
@@ -28,11 +29,14 @@ export async function runForwardingAll(): Promise<TaskSummary> {
 
 /** Sync Gmail accounts that are due (connected, not in backoff, stale). */
 export async function runDueGmailSyncs(): Promise<TaskSummary> {
-  // Keep Gmail push subscriptions alive (no-op when push is not configured).
+  // Keep Gmail push subscriptions alive / recover them after a restart (no-op
+  // when push is not configured). This also re-registers a watch whose
+  // expiration is NULL (e.g. never started) or within 24h of expiring.
   const watch = await renewDueWatches().catch(() => ({ renewed: 0, skipped: true }));
-  // How stale a connected account may be before the worker re-syncs it. Default
-  // 5 minutes so counts/invoices refresh on their own without a manual sync.
-  const intervalMin = Number(process.env.GMAIL_SYNC_INTERVAL_MIN) || 5;
+  // Polling fallback staleness: re-sync a connected account if it hasn't synced
+  // within this window. Capped at 2 minutes (the maximum fallback latency) — the
+  // push path handles the real-time case.
+  const intervalMin = gmailPollFallbackMinutes();
   const due = await iQuery<{ id: string; organization_id: string }>(
     "SELECT g.id, g.organization_id FROM `gmail_integrations` g " +
       "LEFT JOIN `gmail_sync_states` s ON s.gmail_integration_id=g.id " +

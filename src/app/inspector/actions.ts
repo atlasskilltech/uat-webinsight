@@ -1,5 +1,6 @@
 "use server";
 
+import { requireFullAccess } from "@/lib/auth/guard";
 import { revalidatePath } from "next/cache";
 import { queryOne, execute, transaction, json } from "@/lib/db";
 import { createId } from "@/lib/id";
@@ -12,6 +13,7 @@ import { lastNDays } from "@/lib/dates";
 import { successState, errorState, type FormState } from "@/lib/form-state";
 
 export async function runAudit(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireFullAccess();
   const url = String(formData.get("url") ?? "").trim();
   const runPsi = formData.get("runPsi") === "on";
   if (!url) return errorState("Enter a URL to inspect.");
@@ -118,12 +120,14 @@ export async function runAudit(_prev: FormState, formData: FormData): Promise<Fo
 }
 
 export async function deleteAudit(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `PageAudit` WHERE `id`=?", [id]);
   revalidatePath("/inspector");
 }
 
 /** Promote a diagnostic finding into the Technical SEO Issues register. */
 export async function createIssueFromFinding(findingId: string): Promise<FormState> {
+  await requireFullAccess();
   const finding = await queryOne<AuditFinding>("SELECT * FROM `AuditFinding` WHERE `id`=?", [findingId]);
   if (!finding) return errorState("Finding not found.");
   const audit = await queryOne<PageAudit>("SELECT * FROM `PageAudit` WHERE `id`=?", [finding.auditId]);

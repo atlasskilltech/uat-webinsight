@@ -15,6 +15,13 @@ export interface InvoiceDbStatus {
    * gracefully meanwhile instead of crashing.
    */
   schemaOutdated?: boolean;
+  /**
+   * True when the Phase 6 forwarding-routing tables (migration 010:
+   * document_categories, forwarding_destinations, forwarding_rules) are present.
+   * The configurable-routing UI is hidden until this is true; the resolver falls
+   * back to legacy single-destination forwarding meanwhile.
+   */
+  routingReady?: boolean;
   error?: string;
 }
 
@@ -34,10 +41,20 @@ export async function getInvoiceDbStatus(): Promise<InvoiceDbStatus> {
   // deploy-before-migrate state is reported honestly rather than crashing.
   try {
     await iQuery("SELECT 1 FROM `forwarding_cc_recipients` LIMIT 1");
-    return { reachable: true, migrated: true };
   } catch {
     return { reachable: true, migrated: true, schemaOutdated: true };
   }
+  // Phase 6 routing tables (migration 010) are optional: their absence is not
+  // "schema outdated" (forwarding still works via the legacy path); it just
+  // hides the configurable-routing UI until the migration runs.
+  let routingReady = false;
+  try {
+    await iQuery("SELECT 1 FROM `forwarding_rules` LIMIT 1");
+    routingReady = true;
+  } catch {
+    routingReady = false;
+  }
+  return { reachable: true, migrated: true, routingReady };
 }
 
 export interface GstinUniquenessStatus {

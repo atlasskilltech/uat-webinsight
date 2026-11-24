@@ -19,7 +19,8 @@ export async function GET(request: Request) {
   // Admin-only: only an admin can complete the data-integration connection.
   const user = await getCurrentUser();
   if (!user) return NextResponse.redirect(`${origin}/login`);
-  if (user.role !== "admin") return new NextResponse("Forbidden — admin access required.", { status: 403 });
+  if (user.role !== "admin" || user.accessScope !== "full")
+    return new NextResponse("Forbidden — admin access required.", { status: 403 });
 
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");

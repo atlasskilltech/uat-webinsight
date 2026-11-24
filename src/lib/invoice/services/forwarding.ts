@@ -116,6 +116,42 @@ export async function removeCcRecipient(organizationId: string, id: string): Pro
   await iExecute("DELETE FROM `forwarding_cc_recipients` WHERE organization_id=? AND id=?", [organizationId, id]);
 }
 
+/**
+ * Per-destination CC addresses (Phase 6) for a given destination email, scoped
+ * to the org. Missing-table-safe: returns [] when the routing tables aren't
+ * migrated yet, so forwarding keeps working with only the org-wide CC list.
+ */
+async function destinationCc(organizationId: string, destinationEmail: string): Promise<string[]> {
+  try {
+    const row = await iQueryOne<{ cc_emails: string | null }>(
+      "SELECT `cc_emails` FROM `forwarding_destinations` WHERE organization_id=? AND email=?",
+      [organizationId, destinationEmail.toLowerCase()],
+    );
+    if (!row?.cc_emails) return [];
+    const arr = JSON.parse(row.cc_emails);
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+  } catch (e) {
+    if (isMissingTableError(e)) return [];
+    return []; // malformed JSON or transient read: fall back to org-wide CC only
+  }
+}
+
+/**
+ * The complete CC list applied to a forward to `destinationEmail`: the org-wide
+ * recipients plus any CC addresses configured on the matching destination
+ * record, de-duplicated (case-insensitive). Org-wide CC always applies.
+ */
+async function resolveForwardCc(organizationId: string, destinationEmail: string): Promise<string[]> {
+  const orgCc = (await listCcRecipients(organizationId)).map((r) => r.email);
+  const destCc = await destinationCc(organizationId, destinationEmail);
+  const out: string[] = [];
+  for (const e of [...destCc, ...orgCc]) {
+    const n = e.toLowerCase();
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 /** Edit a CC recipient's address (validated + de-duplicated). */
 export async function updateCcRecipient(
   organizationId: string,
@@ -229,6 +265,53 @@ export interface ForwardAttachment {
   contentBase64: string; // standard base64 of the raw bytes
 }
 
+export interface ForwardBodyInput {
+  subject: string;
+  from: string;
+  date: string;
+  confidence: string | null;
+  /** Cleaned filenames of the attachments included directly on the forward. */
+  attachmentFilenames: string[];
+}
+
+export interface RenderedForwardBody {
+  /** Subject BEFORE RFC2047 header encoding (buildForwardMime encodes it). */
+  subject: string;
+  /** MIME Content-Type of the body part, e.g. `text/plain; charset="UTF-8"`. */
+  contentType: string;
+  /** Content-Transfer-Encoding of the body part, e.g. `8bit`. */
+  encoding: string;
+  /** The rendered body content. */
+  body: string;
+}
+
+/**
+ * Render the forwarded message's subject + body. This is the single seam a
+ * reusable email template plugs into — an HTML reference design is pending, so
+ * this currently reproduces the existing plain-text body byte-for-byte. The MIME
+ * assembly (headers, attachments, original.eml) stays in buildForwardMime and is
+ * unaffected when the template is swapped in.
+ */
+export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody {
+  const names = input.attachmentFilenames;
+  const body =
+    "Forwarded automatically by the Atlas Invoice Agent.\r\n\r\n" +
+    `Original From: ${cleanHeader(input.from)}\r\n` +
+    `Original Date: ${cleanHeader(input.date)}\r\n` +
+    `Original Subject: ${cleanHeader(input.subject)}\r\n` +
+    (input.confidence ? `Invoice confidence: ${Math.round(Number(input.confidence))}%\r\n` : "") +
+    (names.length
+      ? `\r\n${names.length} invoice attachment(s) are attached directly: ${names.join(", ")}.\r\n`
+      : "") +
+    "The complete original email is also attached as original.eml.\r\n";
+  return {
+    subject: "Fwd: " + cleanHeader(input.subject || "(no subject)"),
+    contentType: 'text/plain; charset="UTF-8"',
+    encoding: "8bit",
+    body,
+  };
+}
+
 /**
  * Build an RFC822 forward. The ACTUAL invoice attachments (PDFs/images) are
  * attached directly, each with its original filename + MIME type, so the Finance
@@ -250,16 +333,14 @@ export function buildForwardMime(input: {
   const attachments = input.attachments ?? [];
   const cc = (input.cc ?? []).map((e) => cleanHeader(e)).filter(Boolean);
 
-  const text =
-    "Forwarded automatically by the Atlas Invoice Agent.\r\n\r\n" +
-    `Original From: ${cleanHeader(input.from)}\r\n` +
-    `Original Date: ${cleanHeader(input.date)}\r\n` +
-    `Original Subject: ${cleanHeader(input.subject)}\r\n` +
-    (input.confidence ? `Invoice confidence: ${Math.round(Number(input.confidence))}%\r\n` : "") +
-    (attachments.length
-      ? `\r\n${attachments.length} invoice attachment(s) are attached directly: ${attachments.map((a) => cleanFilename(a.filename)).join(", ")}.\r\n`
-      : "") +
-    "The complete original email is also attached as original.eml.\r\n";
+  // The subject + body come from the (swappable) template renderer.
+  const rendered = renderForwardBody({
+    subject: input.subject,
+    from: input.from,
+    date: input.date,
+    confidence: input.confidence,
+    attachmentFilenames: attachments.map((a) => cleanFilename(a.filename)),
+  });
 
   // Each actual attachment, with its real filename + MIME type.
   const attachmentParts = attachments
@@ -276,13 +357,13 @@ export function buildForwardMime(input: {
   return (
     `To: ${cleanHeader(input.destination)}\r\n` +
     (cc.length ? `Cc: ${cc.join(", ")}\r\n` : "") +
-    `Subject: ${encodeHeaderWord("Fwd: " + cleanHeader(input.subject || "(no subject)"))}\r\n` +
+    `Subject: ${encodeHeaderWord(rendered.subject)}\r\n` +
     "MIME-Version: 1.0\r\n" +
     `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
     `--${boundary}\r\n` +
-    'Content-Type: text/plain; charset="UTF-8"\r\n' +
-    "Content-Transfer-Encoding: 8bit\r\n\r\n" +
-    `${text}\r\n` +
+    `Content-Type: ${rendered.contentType}\r\n` +
+    `Content-Transfer-Encoding: ${rendered.encoding}\r\n\r\n` +
+    `${rendered.body}\r\n` +
     attachmentParts +
     `--${boundary}\r\n` +
     "Content-Type: message/rfc822\r\n" +
@@ -336,7 +417,7 @@ async function sendForward(
         /* skip an attachment that can't be fetched; original.eml still carries it */
       }
     }
-    const cc = (await listCcRecipients(organizationId)).map((r) => r.email);
+    const cc = await resolveForwardCc(organizationId, forward.destination);
     mime = buildForwardMime({
       destination: forward.destination,
       cc,

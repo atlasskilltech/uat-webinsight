@@ -9,11 +9,14 @@ import { getInvoiceDbStatus, getGstinUniquenessStatus } from "@/lib/invoice/stat
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
 import { getForwardingSettings, listCcRecipients } from "@/lib/invoice/services/forwarding";
 import { listMembers, listOrganizationsBrief } from "@/lib/invoice/services/org-admin";
+import { listCategories, listDestinations, listRules } from "@/lib/invoice/services/routing";
+import { listGmailAccounts } from "@/lib/invoice/services/gmail";
 import { SetupOrganizationForm } from "./setup-client";
 import { OrgProfileForm } from "./org-profile-form";
 import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
 import { CcRecipients } from "./cc-recipients";
+import { DestinationsManager, CategoriesManager, RulesManager } from "./routing-client";
 
 export const metadata: Metadata = { title: "Invoice Settings" };
 export const dynamic = "force-dynamic";
@@ -61,7 +64,20 @@ export default async function InvoiceSettingsPage() {
   const forwarding = ctx?.organizationId ? await getForwardingSettings(ctx.organizationId) : null;
   const ccRecipients = ctx?.organizationId ? await listCcRecipients(ctx.organizationId) : [];
   const canManageOrg = ctx?.organizationId ? await hasCapability("org.manage") : false;
+  const canManageSettings = ctx?.organizationId ? await hasCapability("settings.manage") : false;
   const members = ctx?.organizationId && canManageOrg ? await listMembers(ctx.organizationId) : [];
+  // Phase 6: configurable forwarding routing (hidden until migration 010 ran and
+  // only for Finance Admins who can manage settings). Falls back to the legacy
+  // single-destination form below when routing isn't ready.
+  const showRouting = Boolean(ctx?.organizationId && dbStatus.routingReady && canManageSettings);
+  const [routeDestinations, routeCategories, routeRules, routeMailboxes] = showRouting
+    ? await Promise.all([
+        listDestinations(ctx!.organizationId!),
+        listCategories(ctx!.organizationId!),
+        listRules(ctx!.organizationId!),
+        listGmailAccounts(ctx!.organizationId!).then((a) => a.map((m) => ({ id: m.id, email: m.email }))),
+      ])
+    : [[], [], [], []];
   // Shown during setup so an admin can see existing orgs and avoid duplicates.
   const existingOrgs = ctx && !ctx.organizationId && ctx.canSetup ? await listOrganizationsBrief() : [];
   // Live state of the GSTIN unique index (migration 009 may have skipped it).
@@ -215,10 +231,11 @@ export default async function InvoiceSettingsPage() {
       {ctx?.organizationId && forwarding && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Finance &amp; Accounts forwarding</CardTitle>
+            <CardTitle>Default forwarding destination</CardTitle>
             <CardDescription>
-              The single destination the agent forwards invoice emails to, and the confidence needed to auto-forward.
-              Emails below the threshold wait for review on the Invoice Agent home.
+              The default destination the agent forwards invoice emails to, and the confidence needed to auto-forward.
+              Emails below the threshold wait for review on the Invoice Agent home. When forwarding rules are configured,
+              this is used as the fallback whenever no rule matches.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -245,6 +262,58 @@ export default async function InvoiceSettingsPage() {
             <CcRecipients recipients={ccRecipients} />
           </CardContent>
         </Card>
+      )}
+
+      {/* Phase 6 — configurable forwarding routing (Finance Admin). Hidden until
+          migration 010 has run; the legacy default destination above stays the
+          fallback when no rule matches. */}
+      {showRouting && (
+        <>
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Forwarding destinations</CardTitle>
+              <CardDescription>
+                Reusable Finance/AP mailboxes that rules forward to. Each can carry its own CC recipients (merged with the
+                organization-wide CC list on every send).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DestinationsManager destinations={routeDestinations} />
+            </CardContent>
+          </Card>
+
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Document categories</CardTitle>
+              <CardDescription>
+                Invoice, Purchase Order, Statement and Other are built-in. Add custom categories to route specific document
+                types with rules.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <CategoriesManager categories={routeCategories} />
+            </CardContent>
+          </Card>
+
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Forwarding rules</CardTitle>
+              <CardDescription>
+                Route by organization mailbox, sender and document category, in priority order, with a fallback destination.
+                The highest-priority enabled rule that matches wins; if none match, the default destination above is used
+                (existing behaviour). Test a rule before enabling it — nothing is sent during a test.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <RulesManager
+                rules={routeRules}
+                destinations={routeDestinations}
+                categories={routeCategories}
+                mailboxes={routeMailboxes}
+              />
+            </CardContent>
+          </Card>
+        </>
       )}
 
       {/* Providers */}

@@ -43,7 +43,7 @@ export function AppShell({
 
       {/* Desktop sidebar */}
       <div className="hidden lg:block no-print">
-        <Sidebar collapsed={collapsed} isAdmin={isAdmin} />
+        <Sidebar collapsed={collapsed} isAdmin={isAdmin} accessScope={user.accessScope} />
       </div>
 
       {/* Mobile drawer */}
@@ -54,7 +54,7 @@ export function AppShell({
             onClick={() => setMobileOpen(false)}
           />
           <div className="absolute inset-y-0 left-0 animate-in">
-            <Sidebar collapsed={false} isAdmin={isAdmin} onNavigate={() => setMobileOpen(false)} />
+            <Sidebar collapsed={false} isAdmin={isAdmin} accessScope={user.accessScope} onNavigate={() => setMobileOpen(false)} />
           </div>
         </div>
       )}

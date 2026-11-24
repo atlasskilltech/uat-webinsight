@@ -201,3 +201,51 @@ export async function setStatusAction(userId: string, status: "active" | "inacti
     return { ok: false, message: "Could not change the account status." };
   }
 }
+
+// --- Module access scope ----------------------------------------------------
+// Grants or restricts a user to the Invoice Agent only. Takes effect on the
+// user's next request (the Auth.js jwt callback re-reads accessScope from the DB
+// each request, so nav, page access and API/action guards all update at once).
+export async function setAccessScopeAction(
+  userId: string,
+  accessScope: "full" | "invoice_only",
+): Promise<ActionResult> {
+  let admin: SafeUser;
+  try {
+    admin = await requireAdmin();
+  } catch (e) {
+    return deniedResult(e);
+  }
+  if (accessScope !== "full" && accessScope !== "invoice_only") {
+    return { ok: false, message: "Invalid access scope." };
+  }
+
+  try {
+    await transaction(async (conn) => {
+      const [rows] = await conn.query("SELECT * FROM `User` WHERE `id` = ?", [userId]);
+      const target = (rows as User[])[0] ?? null;
+      if (!target) throw new AuthError("User not found.", 404);
+      if ((target.accessScope ?? "full") === accessScope) return;
+      await conn.query("UPDATE `User` SET `accessScope` = ? WHERE `id` = ?", [accessScope, userId]);
+      await logAudit(
+        {
+          actorId: admin.id,
+          actorEmail: admin.email,
+          action: "user.access_scope_changed",
+          targetUserId: userId,
+          targetEmail: target.email,
+          metadata: { from: target.accessScope ?? "full", to: accessScope },
+        },
+        conn,
+      );
+    });
+    revalidatePath("/admin/users");
+    return {
+      ok: true,
+      message: accessScope === "invoice_only" ? "Set to Invoice Agent only." : "Full access restored.",
+    };
+  } catch (e) {
+    if (isAuthError(e)) return { ok: false, message: e.message };
+    return { ok: false, message: "Could not change the access scope." };
+  }
+}

@@ -1,4 +1,5 @@
 import type { User } from "@/lib/models";
+import { type AccessScope, normalizeAccessScope } from "./access";
 
 export type Role = "admin" | "user";
 export type UserStatus = "active" | "inactive";
@@ -20,6 +21,7 @@ export interface SafeUser {
   email: string;
   role: Role;
   status: UserStatus;
+  accessScope: AccessScope;
   lastLoginAt: Date | null;
   createdAt: Date;
 }
@@ -31,6 +33,7 @@ export function toSafeUser(u: User): SafeUser {
     email: u.email,
     role: (u.role as Role) ?? "user",
     status: (u.status as UserStatus) ?? "active",
+    accessScope: normalizeAccessScope(u.accessScope),
     lastLoginAt: u.lastLoginAt ?? null,
     createdAt: u.createdAt,
   };

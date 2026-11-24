@@ -68,7 +68,11 @@ export function startInvoiceWorkerScheduler(): void {
   started = true;
 
   const drainMs = Math.max(5, Number(process.env.INVOICE_WORKER_DRAIN_SECONDS) || 10) * 1000;
-  const syncMs = Math.max(1, Number(process.env.INVOICE_WORKER_SYNC_MINUTES) || 5) * 60_000;
+  // Gmail push (watch + Pub/Sub) is the PRIMARY detection path — a notification
+  // is enqueued and drained within ~1 drain cycle. This periodic sync is only a
+  // FALLBACK for missed / expired notifications, capped at 2 minutes so eligible
+  // mail is detected and forwarded within ~2 min even without push.
+  const syncMs = Math.max(1, Math.min(2, Number(process.env.INVOICE_WORKER_SYNC_MINUTES) || 2)) * 60_000;
   const forwardMs = syncMs;
 
   // Drain queued jobs (incl. Pub/Sub-enqueued gmail_sync), and first recover any

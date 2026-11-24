@@ -10,7 +10,8 @@ export async function GET(request: Request) {
   const origin = baseUrl(request);
   const user = await getCurrentUser();
   if (!user) return NextResponse.redirect(`${origin}/login`);
-  if (user.role !== "admin") return new NextResponse("Forbidden — admin access required.", { status: 403 });
+  if (user.role !== "admin" || user.accessScope !== "full")
+    return new NextResponse("Forbidden — admin access required.", { status: 403 });
   if (!googleConfigured()) {
     return NextResponse.redirect(
       `${origin}/settings?error=${encodeURIComponent("Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.")}`,

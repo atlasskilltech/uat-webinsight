@@ -23,6 +23,13 @@ import {
 } from "../gmail/api";
 import { processUploadedDocument } from "./processing";
 import { enqueueJob } from "../jobs";
+import {
+  resolveForwardingPlan,
+  categoryKeyForClassification,
+  listRules,
+  listDestinations,
+} from "./routing";
+import { listCcRecipients } from "./forwarding";
 
 export interface GmailIntegrationRow {
   id: string;
@@ -131,6 +138,13 @@ export async function upsertGmailIntegration(
     entityId: id,
     metadata: { email: account.email },
   });
+  // Register a Gmail push watch right away when Pub/Sub is configured, so the
+  // account gets real-time notifications immediately after connecting (the
+  // worker's renewDueWatches also recovers / renews it). Best-effort — a failure
+  // here never blocks connecting; the polling fallback still covers the account.
+  if (pubsubConfigured()) {
+    await startGmailWatch(organizationId, id).catch(() => undefined);
+  }
   return id;
 }
 
@@ -266,7 +280,11 @@ export async function syncGmailAccount(
   organizationId: string,
   integrationId: string,
   actor: { id: string; email: string },
-  opts: { maxMessages?: number } = {},
+  // backfill: ingest + index historical mail ONLY — never create forward tasks
+  // or enqueue forwarding (so a historical backfill can't re-forward old email).
+  // query: an explicit Gmail search to use (historical backfill window) instead
+  // of the incremental history anchor / default inbox query.
+  opts: { maxMessages?: number; backfill?: boolean; query?: string } = {},
 ): Promise<SyncSummary> {
   const integration = await iQueryOne<GmailIntegrationRow>(
     "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
@@ -279,16 +297,22 @@ export async function syncGmailAccount(
 
   try {
     const token = await getValidAccessToken(integration);
-    const { refs: messages, nextHistoryId } = await selectMessageRefs(token, integration, opts.maxMessages ?? 25);
+    const { refs: messages, nextHistoryId } = await selectMessageRefs(token, integration, opts.maxMessages ?? 25, opts.query);
     summary.scanned = messages.length;
 
     // Forwarding config for this org (review-first: queue tasks, forward later).
-    const fwd = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
-      "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
-      [organizationId],
-    );
-    const minConf = Number(fwd?.min_confidence ?? 70);
-    const destination = fwd?.enabled && fwd.finance_destination ? fwd.finance_destination : null;
+    // Phase 6: routing is resolved per message by configurable rules, falling
+    // back to the legacy single-destination `forwarding_settings` behaviour when
+    // no rule matches. Rules/destinations/CC are preloaded ONCE here so the
+    // per-message resolve does no extra list queries. Skipped in backfill mode
+    // (historical mail is never forwarded).
+    const routing = opts.backfill
+      ? null
+      : {
+          rules: await listRules(organizationId),
+          destinations: await listDestinations(organizationId),
+          orgCc: (await listCcRecipients(organizationId)).map((r) => r.email),
+        };
 
     for (const ref of messages) {
       try {
@@ -333,8 +357,28 @@ export async function syncGmailAccount(
         // keys (email_message_id,destination) AND (org,source_gmail_message_id,
         // destination) make this idempotent — the same Gmail message can never
         // produce a second forward, even across rescans / overlapping workers.
-        if (isInvoiceCandidate && destination) {
-          const forwardStatus = decideForwardStatus(confPct, minConf, integration.auto_forward);
+        // Skipped entirely in backfill mode so historical mail is never forwarded.
+        //
+        // Phase 6: the destination + automation are resolved by configurable
+        // rules; when no rule matches, the plan is the legacy org default and the
+        // decision is byte-identical to the pre-Phase-6 behaviour.
+        if (isInvoiceCandidate && routing && !opts.backfill) {
+          const plan = await resolveForwardingPlan(
+            organizationId,
+            {
+              integrationId,
+              sender: from,
+              categoryKey: categoryKeyForClassification(classification),
+              confidencePct: confPct,
+            },
+            routing,
+          );
+          // Legacy path honours the mailbox's own auto-forward switch; a matched
+          // rule carries its own auto_forward override.
+          const effectiveAuto = plan.source === "legacy" ? integration.auto_forward : plan.autoForward;
+          const destination = plan.destination;
+          if (destination) {
+          const forwardStatus = decideForwardStatus(confPct, plan.minConfidence, effectiveAuto);
           await iExecute(
             "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
               "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
@@ -353,7 +397,8 @@ export async function syncGmailAccount(
               priority: 10,
             }).catch(() => undefined);
           }
-        }
+          } // end if (destination)
+        } // end if (isInvoiceCandidate && routing && !opts.backfill)
 
         if (!isInvoiceCandidate) continue;
 
@@ -461,8 +506,16 @@ async function selectMessageRefs(
   token: string,
   integration: GmailIntegrationRow,
   max: number,
+  queryOverride?: string,
 ): Promise<{ refs: { id: string }[]; nextHistoryId: string | null }> {
   const profile = await gmailGetProfile(token).catch(() => null);
+
+  // An explicit query (historical backfill) always runs a full query and does
+  // NOT advance/consume the incremental history anchor.
+  if (queryOverride?.trim()) {
+    const { messages } = await gmailListMessages(token, queryOverride.trim(), max);
+    return { refs: messages.map((m) => ({ id: m.id })), nextHistoryId: integration.history_id ?? null };
+  }
 
   if (integration.history_id) {
     const h = await gmailListHistory(token, integration.history_id);

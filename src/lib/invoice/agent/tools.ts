@@ -2,9 +2,37 @@ import "server-only";
 import { z } from "zod";
 import { iQuery, iQueryOne } from "../db";
 import type { FinanceCapability } from "../types";
-import { listGmailAccounts, classifyEmail } from "../services/gmail";
+import { listGmailAccounts, classifyEmail, getAccountAccessToken, syncGmailAccount } from "../services/gmail";
+import { gmailListMessages, gmailGetMessage, getHeader, collectAttachments } from "../gmail/api";
 import { listActivity } from "../services/agent";
 import { listForwards, forwardCounts } from "../services/forwarding";
+
+/** Build a Gmail search `q` from assistant filters (searches all mail — incl.
+ *  archived — by default; spam/trash only when includeSpamTrash). Exported for
+ *  tests. Free `query`/`invoiceNumber` use Gmail's full-text (covers the body). */
+export function buildGmailQuery(a: {
+  from?: string; to?: string; subject?: string; query?: string;
+  after?: string; before?: string; hasAttachment?: boolean; filename?: string;
+  invoiceNumber?: string; includeSpamTrash?: boolean;
+}): string {
+  const toGmailDate = (s: string): string => {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s; // already Gmail-format (YYYY/MM/DD)
+    return `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  };
+  const parts: string[] = [];
+  if (a.from) parts.push(`from:${a.from}`);
+  if (a.to) parts.push(`to:${a.to}`);
+  if (a.subject) parts.push(`subject:(${a.subject})`);
+  if (a.filename) parts.push(`filename:${a.filename}`);
+  if (a.hasAttachment) parts.push("has:attachment");
+  if (a.after) parts.push(`after:${toGmailDate(a.after)}`);
+  if (a.before) parts.push(`before:${toGmailDate(a.before)}`);
+  if (a.invoiceNumber) parts.push(`"${String(a.invoiceNumber).replace(/"/g, "")}"`);
+  if (a.query) parts.push(a.query);
+  if (a.includeSpamTrash) parts.push("in:anywhere");
+  return parts.join(" ").trim();
+}
 
 /**
  * Tool registry for the AI Invoice Agent (email-monitoring + forwarding focus).
@@ -74,49 +102,62 @@ const listConnectedAccounts: ToolDef = {
 const searchEmails: ToolDef = {
   name: "search_emails",
   description:
-    "Search monitored emails. Filters: account (email address), q (text in subject/sender), " +
-    "invoiceOnly (only invoice candidates), days (received within N days). Returns recent matches.",
+    "Search the LOCAL index of monitored emails (fast; covers synced mail). Filters: account (email), q (free text in " +
+    "subject/sender/recipient/snippet), from, to, subject, invoiceNumber (matches an identified invoice's number), " +
+    "invoiceOnly, hasAttachment, after/before (YYYY-MM-DD date range), days (within N days), limit, offset (pagination). " +
+    "Returns each match with source details (account, date, from, to, subject) and its attachment filenames. For mail " +
+    "older than the local index or archived mail not synced, use search_gmail_messages (live Gmail).",
   capability: "invoice.read",
   kind: "read",
   jsonSchema: obj({
-    account: { type: "string" },
-    q: { type: "string" },
-    invoiceOnly: { type: "boolean" },
-    days: { type: "number" },
-    limit: { type: "number" },
+    account: { type: "string" }, q: { type: "string" }, from: { type: "string" }, to: { type: "string" },
+    subject: { type: "string" }, invoiceNumber: { type: "string" }, invoiceOnly: { type: "boolean" },
+    hasAttachment: { type: "boolean" }, after: { type: "string" }, before: { type: "string" },
+    days: { type: "number" }, limit: { type: "number" }, offset: { type: "number" },
   }),
   input: z.object({
-    account: z.string().optional(),
-    q: z.string().optional(),
-    invoiceOnly: z.boolean().optional(),
-    days: z.number().int().min(1).max(365).optional(),
-    limit: z.number().int().min(1).max(100).optional(),
+    account: z.string().optional(), q: z.string().optional(), from: z.string().optional(), to: z.string().optional(),
+    subject: z.string().optional(), invoiceNumber: z.string().optional(), invoiceOnly: z.boolean().optional(),
+    hasAttachment: z.boolean().optional(), after: z.string().optional(), before: z.string().optional(),
+    days: z.number().int().min(1).max(3650).optional(), limit: z.number().int().min(1).max(100).optional(),
+    offset: z.number().int().min(0).max(100000).optional(),
   }),
   async run(ctx, args) {
-    const where: string[] = ["m.organization_id = ?"];
+    const where: string[] = ["m.organization_id = ?"]; // org isolation
     const params: unknown[] = [ctx.organizationId];
-    if (args.account) {
-      where.push("g.email = ?");
-      params.push(String(args.account).toLowerCase());
-    }
+    if (args.account) { where.push("g.email = ?"); params.push(String(args.account).toLowerCase()); }
     if (args.invoiceOnly) where.push("m.is_invoice_candidate = 1");
-    if (args.q) {
-      where.push("(m.subject LIKE ? OR m.from_address LIKE ?)");
-      params.push(`%${args.q}%`, `%${args.q}%`);
+    if (args.q) { where.push("(m.subject LIKE ? OR m.from_address LIKE ? OR m.to_address LIKE ? OR m.snippet LIKE ?)"); const t = `%${args.q}%`; params.push(t, t, t, t); }
+    if (args.from) { where.push("m.from_address LIKE ?"); params.push(`%${args.from}%`); }
+    if (args.to) { where.push("m.to_address LIKE ?"); params.push(`%${args.to}%`); }
+    if (args.subject) { where.push("m.subject LIKE ?"); params.push(`%${args.subject}%`); }
+    if (args.invoiceNumber) {
+      where.push("m.id IN (SELECT source_email_message_id FROM `invoices` WHERE organization_id=? AND invoice_number LIKE ? AND deleted_at IS NULL)");
+      params.push(ctx.organizationId, `%${args.invoiceNumber}%`);
     }
-    if (args.days) {
-      where.push("m.received_at >= DATE_SUB(NOW(3), INTERVAL ? DAY)");
-      params.push(args.days);
-    }
-    params.push((args.limit as number | undefined) ?? 25);
-    const rows = await iQuery<Record<string, unknown>>(
-      "SELECT m.id, m.subject, m.from_address, m.received_at, m.classification, m.classification_confidence, " +
-        "m.is_invoice_candidate, m.processing_status, g.email AS account FROM `email_messages` m " +
+    if (args.hasAttachment) where.push("EXISTS (SELECT 1 FROM `email_attachments` a WHERE a.email_message_id = m.id)");
+    if (args.after) { where.push("m.received_at >= ?"); params.push(new Date(String(args.after))); }
+    if (args.before) { where.push("m.received_at <= ?"); params.push(new Date(String(args.before))); }
+    if (args.days) { where.push("m.received_at >= DATE_SUB(NOW(3), INTERVAL ? DAY)"); params.push(args.days); }
+    const limit = (args.limit as number | undefined) ?? 25;
+    const offset = (args.offset as number | undefined) ?? 0;
+    params.push(limit, offset);
+    const rows = await iQuery<{ id: string; [k: string]: unknown }>(
+      "SELECT m.id, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.classification_confidence, " +
+        "m.is_invoice_candidate, m.processing_status, m.gmail_message_id, g.email AS account FROM `email_messages` m " +
         "LEFT JOIN `gmail_integrations` g ON g.id = m.gmail_integration_id " +
-        `WHERE ${where.join(" AND ")} ORDER BY m.received_at DESC LIMIT ?`,
+        `WHERE ${where.join(" AND ")} ORDER BY m.received_at DESC LIMIT ? OFFSET ?`,
       params,
     );
-    return { ok: true, summary: `${rows.length} email(s).`, data: rows };
+    // Attach each message's attachment filenames (source details).
+    for (const r of rows) {
+      const atts = await iQuery<{ filename: string; mime_type: string }>(
+        "SELECT filename, mime_type FROM `email_attachments` WHERE email_message_id=?",
+        [r.id],
+      );
+      (r as Record<string, unknown>).attachments = atts;
+    }
+    return { ok: true, summary: `${rows.length} email(s) from the local index.`, data: rows };
   },
 };
 
@@ -396,9 +437,150 @@ const retryFailedTask: ToolDef = {
   },
 };
 
+const searchGmailMessages: ToolDef = {
+  name: "search_gmail_messages",
+  description:
+    "LIVE search of this organization's connected Gmail accounts — including HISTORICAL and ARCHIVED mail not in the local " +
+    "index. Use for older periods, prior years, or when search_emails finds nothing. Searches all mail (archived included); " +
+    "spam/trash only when includeSpamTrash. Filters: account (email — else all connected accounts), from, to, subject, " +
+    "query (free text; Gmail full-text — searches the body too), after/before (YYYY-MM-DD), hasAttachment, filename, " +
+    "invoiceNumber, limit (per account, max 25), pageToken (continue one account's results). Returns matches with source " +
+    "details (account, date, from, to, subject, snippet, attachments) and reports any account it could NOT access. Never " +
+    "claims complete coverage when an account is unavailable. Tokens are never exposed.",
+  capability: "invoice.read",
+  kind: "read",
+  jsonSchema: obj({
+    account: { type: "string" }, from: { type: "string" }, to: { type: "string" }, subject: { type: "string" },
+    query: { type: "string" }, after: { type: "string" }, before: { type: "string" }, hasAttachment: { type: "boolean" },
+    filename: { type: "string" }, invoiceNumber: { type: "string" }, includeSpamTrash: { type: "boolean" },
+    limit: { type: "number" }, pageToken: { type: "string" },
+  }),
+  input: z.object({
+    account: z.string().optional(), from: z.string().optional(), to: z.string().optional(), subject: z.string().optional(),
+    query: z.string().optional(), after: z.string().optional(), before: z.string().optional(), hasAttachment: z.boolean().optional(),
+    filename: z.string().optional(), invoiceNumber: z.string().optional(), includeSpamTrash: z.boolean().optional(),
+    limit: z.number().int().min(1).max(25).optional(), pageToken: z.string().optional(),
+  }),
+  async run(ctx, args) {
+    const q = buildGmailQuery(args as Parameters<typeof buildGmailQuery>[0]);
+    if (!q) return { ok: false, summary: "Provide at least one search filter (sender, subject, text, date, filename, …)." };
+    // ORGANIZATION ISOLATION: only this org's connected accounts are searchable.
+    const connected = (await listGmailAccounts(ctx.organizationId)).filter((a) => a.status === "connected");
+    const targets = args.account
+      ? connected.filter((a) => a.email.toLowerCase() === String(args.account).toLowerCase())
+      : connected;
+    if (args.account && targets.length === 0) {
+      return { ok: false, summary: `No connected Gmail account '${args.account}' in this organization.` };
+    }
+    if (targets.length === 0) return { ok: true, summary: "No connected Gmail accounts to search.", data: { matches: [], notAccessed: [] } };
+
+    const limit = (args.limit as number | undefined) ?? 15;
+    const matches: Record<string, unknown>[] = [];
+    const notAccessed: { account: string; reason: string }[] = [];
+    const nextPageTokens: Record<string, string> = {};
+    for (const acct of targets) {
+      try {
+        const token = await getAccountAccessToken(ctx.organizationId, acct.id);
+        const { messages, nextPageToken } = await gmailListMessages(token, q, limit, args.account ? (args.pageToken as string | undefined) : undefined);
+        if (nextPageToken) nextPageTokens[acct.email] = nextPageToken;
+        for (const ref of messages) {
+          try {
+            const msg = await gmailGetMessage(token, ref.id);
+            matches.push({
+              account: acct.email,
+              gmailMessageId: ref.id,
+              date: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
+              from: getHeader(msg, "From"),
+              to: getHeader(msg, "To"),
+              subject: getHeader(msg, "Subject"),
+              snippet: msg.snippet ?? null,
+              attachments: collectAttachments(msg).map((a) => ({ filename: a.filename, mimeType: a.mimeType })),
+            });
+          } catch {
+            /* skip a single message that can't be fetched */
+          }
+        }
+      } catch (e) {
+        // Partial access — report it; never pretend the mailbox was fully covered.
+        notAccessed.push({ account: acct.email, reason: e instanceof Error ? e.message.slice(0, 200) : "could not access" });
+      }
+    }
+    const searched = targets.length - notAccessed.length;
+    const coverage = notAccessed.length
+      ? `Searched ${searched}/${targets.length} connected account(s); ${notAccessed.length} could not be accessed.`
+      : `Searched all ${targets.length} connected account(s).`;
+    return {
+      ok: true,
+      summary: `${matches.length} live Gmail match(es). ${coverage}`,
+      data: { query: q, matches, notAccessed, nextPageTokens },
+    };
+  },
+};
+
+const backfillEmailIndex: ToolDef = {
+  name: "backfill_email_index",
+  description:
+    "INDEX-ONLY historical backfill: ingest older Gmail messages for one connected account into the local search index so " +
+    "they become searchable. It NEVER forwards, approves, sends, or creates forward tasks — old email is never re-forwarded. " +
+    "Args: account (email, required), days (look-back window, default 365, max 3650), maxMessages (default 200, max 1000).",
+  capability: "gmail.manage",
+  kind: "read",
+  jsonSchema: obj({ account: { type: "string" }, days: { type: "number" }, maxMessages: { type: "number" } }, ["account"]),
+  input: z.object({
+    account: z.string().min(1),
+    days: z.number().int().min(1).max(3650).optional(),
+    maxMessages: z.number().int().min(1).max(1000).optional(),
+  }),
+  async run(ctx, args) {
+    const connected = (await listGmailAccounts(ctx.organizationId)).filter((a) => a.status === "connected");
+    const acct = connected.find((a) => a.email.toLowerCase() === String(args.account).toLowerCase());
+    if (!acct) return { ok: false, summary: `No connected Gmail account '${args.account}' in this organization.` };
+    const days = (args.days as number | undefined) ?? 365;
+
+    // RESUMABLE: each call walks OLDER through history, starting from the oldest
+    // message already indexed for this account (so repeated calls make progress
+    // instead of re-fetching the newest page). The boundary day is re-included
+    // (before:<oldest+1d>) and the per-message unique key dedupes it, so nothing
+    // is silently skipped. Bounded per call by maxMessages.
+    const cursor = await iQueryOne<{ oldest: Date | string | null }>(
+      "SELECT MIN(`received_at`) AS oldest FROM `email_messages` WHERE `gmail_integration_id`=?",
+      [acct.id],
+    );
+    let beforeClause = "";
+    let resuming = false;
+    if (cursor?.oldest) {
+      const d = new Date(cursor.oldest as string);
+      if (!Number.isNaN(d.getTime())) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        beforeClause = ` before:${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+        resuming = true;
+      }
+    }
+    // Historical, all-mail (archived included), excluding the account's own Sent/
+    // chats. backfill:true guarantees NO forward tasks / sends are created.
+    const query = `-in:sent -in:chats has:attachment newer_than:${days}d${beforeClause}`;
+    const summary = await syncGmailAccount(
+      ctx.organizationId,
+      acct.id,
+      { id: ctx.user.id, email: ctx.user.email },
+      { maxMessages: (args.maxMessages as number | undefined) ?? 200, backfill: true, query },
+    );
+    return {
+      ok: true,
+      summary:
+        `Backfilled ${acct.email} (last ${days}d, ${resuming ? "resuming older history" : "from newest"}): ` +
+        `${summary.newMessages} new message(s) indexed, ${summary.invoicesCreated} invoice(s) extracted, ` +
+        `${summary.duplicates} duplicate(s). ${summary.newMessages === 0 ? "Nothing new — backfill may be complete. " : ""}No emails were forwarded.`,
+      data: { ...summary, query, resuming },
+    };
+  },
+};
+
 export const TOOLS: ToolDef[] = [
   listConnectedAccounts,
   searchEmails,
+  searchGmailMessages,
+  backfillEmailIndex,
   getEmailDetails,
   classifyInvoiceEmail,
   getInvoiceAttachments,

@@ -77,6 +77,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.userId = dbUser.id;
           token.role = dbUser.role;
           token.status = dbUser.status;
+          token.accessScope = dbUser.accessScope ?? "full";
           token.name = dbUser.name;
         } else {
           token.status = "inactive";
@@ -90,6 +91,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.id = (token.userId as string) ?? "";
         session.user.role = (token.role as string) ?? "user";
         session.user.status = (token.status as string) ?? "inactive";
+        session.user.accessScope = (token.accessScope as string) ?? "full";
       }
       return session;
     },

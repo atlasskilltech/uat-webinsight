@@ -7,6 +7,7 @@ import {
   getGmailAccountEmail,
 } from "@/lib/invoice/gmail/oauth";
 import { upsertGmailIntegration } from "@/lib/invoice/services/gmail";
+import { baseUrl } from "@/lib/base-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,9 @@ export const dynamic = "force-dynamic";
 /** Gmail OAuth callback: validate state, exchange code, store encrypted tokens. */
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const base = url.origin;
+  // Redirect back to the PUBLIC Connected Accounts page (configured app URL),
+  // never the internal proxy origin (e.g. localhost:9091 → connection refused).
+  const base = baseUrl(req);
   const back = (q: string) => NextResponse.redirect(`${base}/invoices/email-accounts?${q}`);
 
   if (!gmailConfigured()) return back("error=not_configured");

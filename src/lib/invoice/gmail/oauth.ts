@@ -43,11 +43,20 @@ export function gmailConfigured(): boolean {
   return Boolean(process.env.GMAIL_CLIENT_ID?.trim() && process.env.GMAIL_CLIENT_SECRET?.trim());
 }
 
+/**
+ * The OAuth redirect_uri sent to Google (and echoed on token exchange). It MUST
+ * exactly match an "Authorized redirect URI" in the Google Cloud Console.
+ * Prefer the explicit GMAIL_REDIRECT_URI; otherwise derive it from the
+ * configured public base URL (APP_URL / AUTH_URL / NEXTAUTH_URL). localhost is
+ * only a local-dev last resort — no environment-specific URL is hardcoded.
+ */
 function redirectUri(): string {
-  return (
-    process.env.GMAIL_REDIRECT_URI?.trim() ??
-    "http://localhost:3000/api/invoices/gmail/callback"
-  );
+  const explicit = process.env.GMAIL_REDIRECT_URI?.trim();
+  if (explicit) return explicit;
+  const base = (process.env.APP_URL ?? process.env.AUTH_URL ?? process.env.NEXTAUTH_URL)
+    ?.trim()
+    .replace(/\/+$/, "");
+  return `${base || "http://localhost:3000"}/api/invoices/gmail/callback`;
 }
 
 // --- CSRF state (signed, bound to org + user) -------------------------------

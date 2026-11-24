@@ -1,5 +1,6 @@
 "use server";
 
+import { requireFullAccess } from "@/lib/auth/guard";
 import { revalidatePath } from "next/cache";
 import { execute } from "@/lib/db";
 import { createId } from "@/lib/id";
@@ -70,6 +71,7 @@ export async function createServerAsset(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(serverAssetSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
@@ -87,6 +89,7 @@ export async function updateServerAsset(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const id = String(formData.get("id") ?? "");
   if (!id) return errorState("Missing asset id.");
   const parsed = parseForm(serverAssetSchema, formData);
@@ -102,6 +105,7 @@ export async function updateServerAsset(
 }
 
 export async function deleteServerAsset(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `ServerAsset` WHERE `id` = ?", [id]);
   revalidateOps();
 }
@@ -113,6 +117,7 @@ export async function deleteServerAsset(id: string): Promise<void> {
  * needs a domain or URL — it is health-checked automatically from then on.
  */
 export async function addMonitoredDomain(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireFullAccess();
   const raw = String(formData.get("domain") ?? "");
   const environment = String(formData.get("environment") ?? "");
   const { addMonitoredHost } = await import("@/lib/domain-monitor");
@@ -127,6 +132,7 @@ export async function addMonitoredDomain(_prev: FormState, formData: FormData): 
 
 /** Move a monitored domain between Production and UAT. */
 export async function setMonitoredDomainEnvironmentAction(id: string, environment: string): Promise<void> {
+  await requireFullAccess();
   const { setMonitoredDomainEnvironment } = await import("@/lib/domain-monitor");
   await setMonitoredDomainEnvironment(id, environment);
   revalidateOps();
@@ -137,6 +143,7 @@ export async function setMonitoredDomainEnvironmentAction(id: string, environmen
  * the current live list. Called by the Server Inventory panel every 10s.
  */
 export async function checkMonitoredDomainsAction(): Promise<DomainStatusRow[]> {
+  await requireFullAccess();
   const { runDomainMonitor, getMonitoredDomains } = await import("@/lib/domain-monitor");
   // ~8s freshness so the 10s client poll re-checks each cycle without
   // redundantly re-probing a domain already checked moments ago.
@@ -150,6 +157,7 @@ export async function createOpsLog(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(opsLogSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
@@ -167,6 +175,7 @@ export async function updateOpsLog(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const id = String(formData.get("id") ?? "");
   if (!id) return errorState("Missing log id.");
   const parsed = parseForm(opsLogSchema, formData);
@@ -182,6 +191,7 @@ export async function updateOpsLog(
 }
 
 export async function deleteOpsLog(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `OperationsLog` WHERE `id` = ?", [id]);
   revalidateOps();
 }
