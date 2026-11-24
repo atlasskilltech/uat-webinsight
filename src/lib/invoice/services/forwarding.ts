@@ -5,6 +5,7 @@ import { logInvoiceAudit } from "../audit";
 import { getAccountAccessToken } from "./gmail";
 import { gmailGetRaw, gmailGetAttachment, gmailSend } from "../gmail/api";
 import { GmailApiError } from "../gmail/oauth";
+import { isOrganizationActive } from "./org-admin";
 
 /**
  * Invoice email forwarding to the Finance & Accounts destination.
@@ -111,9 +112,22 @@ export async function addCcRecipient(
     : { ok: true, message: `Added ${email} to CC.` };
 }
 
-/** Remove a CC recipient by id (scoped to the org). */
-export async function removeCcRecipient(organizationId: string, id: string): Promise<void> {
-  await iExecute("DELETE FROM `forwarding_cc_recipients` WHERE organization_id=? AND id=?", [organizationId, id]);
+/**
+ * Remove a CC recipient by id (scoped to the org). Returns "Recipient not found"
+ * when the id does not belong to THIS organization, so a stale or cross-org id
+ * is not silently reported as removed. The DELETE stays organization-scoped, so
+ * no other organization's recipient can ever be affected.
+ */
+export async function removeCcRecipient(
+  organizationId: string,
+  id: string,
+): Promise<{ ok: boolean; message: string }> {
+  const res = await iExecute("DELETE FROM `forwarding_cc_recipients` WHERE organization_id=? AND id=?", [
+    organizationId,
+    id,
+  ]);
+  if (res.affectedRows === 0) return { ok: false, message: "Recipient not found." };
+  return { ok: true, message: "CC recipient removed." };
 }
 
 /**
@@ -160,6 +174,16 @@ export async function updateCcRecipient(
 ): Promise<{ ok: boolean; message: string }> {
   const email = normalizeEmail(rawEmail);
   if (!email) return { ok: false, message: "Enter a valid email address." };
+  // Existence check is organization-scoped: a stale or cross-org id resolves to
+  // no row here and returns "Recipient not found" (never a false success, never
+  // another org's recipient). Done as a SELECT rather than relying on UPDATE
+  // affectedRows, which is 0 when the address is unchanged even though the row
+  // exists.
+  const existing = await iQueryOne<{ id: string }>(
+    "SELECT `id` FROM `forwarding_cc_recipients` WHERE organization_id=? AND id=?",
+    [organizationId, id],
+  );
+  if (!existing) return { ok: false, message: "Recipient not found." };
   const dupe = await iQueryOne<{ id: string }>(
     "SELECT `id` FROM `forwarding_cc_recipients` WHERE organization_id=? AND email=? AND id<>?",
     [organizationId, email, id],
@@ -498,6 +522,11 @@ async function sendForward(
 export async function runForwarding(
   organizationId: string,
 ): Promise<{ forwarded: number; failed: number; unknown: number; pending: number }> {
+  // Deactivated orgs are paused: a forward job queued BEFORE deactivation must
+  // not send after it. Approved rows are preserved and resume on reactivation.
+  if (!(await isOrganizationActive(organizationId))) {
+    return { forwarded: 0, failed: 0, unknown: 0, pending: 0 };
+  }
   const approved = await listForwards(organizationId, { status: "approved", limit: 100 });
   let forwarded = 0;
   let failed = 0;

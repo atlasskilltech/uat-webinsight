@@ -3,16 +3,15 @@ import { Database, KeyRound, Bot, ScanLine, Mail, HardDrive, CheckCircle2, XCirc
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { getInvoiceContext } from "@/lib/invoice/org";
+import { getInvoiceContext, listUserOrganizations } from "@/lib/invoice/org";
 import { hasCapability } from "@/lib/invoice/permissions";
 import { getInvoiceDbStatus, getGstinUniquenessStatus } from "@/lib/invoice/status";
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
 import { getForwardingSettings, listCcRecipients } from "@/lib/invoice/services/forwarding";
-import { listMembers, listOrganizationsBrief } from "@/lib/invoice/services/org-admin";
+import { listMembers, listOrganizationsBrief, addressText } from "@/lib/invoice/services/org-admin";
 import { listCategories, listDestinations, listRules } from "@/lib/invoice/services/routing";
 import { listGmailAccounts } from "@/lib/invoice/services/gmail";
-import { SetupOrganizationForm } from "./setup-client";
-import { OrgProfileForm } from "./org-profile-form";
+import { OrganizationsManager, OrgForm } from "./organizations-client";
 import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
 import { CcRecipients } from "./cc-recipients";
@@ -58,6 +57,18 @@ function StateRow({
   );
 }
 
+/** Wrap read-only content shown to non-Finance-Admin roles with a clear notice. */
+function ReadOnlyNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="space-y-3">
+      <div className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-muted">
+        <ShieldCheck className="h-3.5 w-3.5" /> Finance Admin access required to edit
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default async function InvoiceSettingsPage() {
   const [ctx, dbStatus] = await Promise.all([getInvoiceContext(), getInvoiceDbStatus()]);
   const flags = getInvoiceFeatureFlags();
@@ -78,6 +89,9 @@ export default async function InvoiceSettingsPage() {
         listGmailAccounts(ctx!.organizationId!).then((a) => a.map((m) => ({ id: m.id, email: m.email }))),
       ])
     : [[], [], [], []];
+  // Multi-org: the organizations this user belongs to (for the management list
+  // + switcher). Finance Admins manage; others get a read-only view.
+  const userOrgs = ctx?.user && ctx.organizationId ? await listUserOrganizations(ctx.user) : [];
   // Shown during setup so an admin can see existing orgs and avoid duplicates.
   const existingOrgs = ctx && !ctx.organizationId && ctx.canSetup ? await listOrganizationsBrief() : [];
   // Live state of the GSTIN unique index (migration 009 may have skipped it).
@@ -130,18 +144,34 @@ export default async function InvoiceSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Organization / setup */}
+      {/* Organizations (multi-org management + switcher) */}
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Organization</CardTitle>
-          <CardDescription>Finance tenant that owns all invoice data.</CardDescription>
+          <CardTitle>Organizations</CardTitle>
+          <CardDescription>
+            Each organization is an isolated tenant with its own GST/company profile, team, forwarding destinations, CC
+            recipients, rules and document categories — reusable across every email-forwarding workflow, not only
+            invoices. Finance Admins can create and manage multiple organizations and switch the active one.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {!dbStatus.migrated ? (
             <p className="text-sm text-muted">Initialize the database first, then reload this page.</p>
           ) : ctx?.organizationId && ctx.organization ? (
             canManageOrg ? (
-              <OrgProfileForm org={ctx.organization} />
+              <OrganizationsManager
+                organizations={userOrgs}
+                activeOrgId={ctx.organizationId}
+                activeProfile={{
+                  id: ctx.organization.id,
+                  name: ctx.organization.name,
+                  legal_name: ctx.organization.legal_name,
+                  gstin: ctx.organization.gstin,
+                  pan: ctx.organization.pan,
+                  base_currency: ctx.organization.base_currency,
+                  address: addressText(ctx.organization.address),
+                }}
+              />
             ) : (
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -192,9 +222,9 @@ export default async function InvoiceSettingsPage() {
                 </p>
                 <p className="mb-3 text-xs text-muted">
                   Use a distinct name and GSTIN. The person who creates it becomes its Finance Admin and can then add team
-                  members. Reusing an existing GSTIN or name is blocked to prevent duplicates.
+                  members and create further organizations. Reusing an existing GSTIN or name is blocked to prevent duplicates.
                 </p>
-                <SetupOrganizationForm />
+                <OrgForm mode="create" />
               </div>
             </div>
           ) : ctx?.orgExists ? (
@@ -233,17 +263,27 @@ export default async function InvoiceSettingsPage() {
           <CardHeader>
             <CardTitle>Default forwarding destination</CardTitle>
             <CardDescription>
-              The default destination the agent forwards invoice emails to, and the confidence needed to auto-forward.
+              The default destination the agent forwards documents to, and the confidence needed to auto-forward.
               Emails below the threshold wait for review on the Invoice Agent home. When forwarding rules are configured,
-              this is used as the fallback whenever no rule matches.
+              this is used as the fallback whenever no rule matches. Editable by Finance Admin only.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ForwardingSettingsForm
-              destination={forwarding.financeDestination ?? ""}
-              minConfidence={forwarding.minConfidence}
-              enabled={forwarding.enabled}
-            />
+            {canManageSettings ? (
+              <ForwardingSettingsForm
+                destination={forwarding.financeDestination ?? ""}
+                minConfidence={forwarding.minConfidence}
+                enabled={forwarding.enabled}
+              />
+            ) : (
+              <ReadOnlyNote>
+                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div><dt className="text-xs text-muted">Destination</dt><dd className="text-sm font-medium">{forwarding.financeDestination ?? "—"}</dd></div>
+                  <div><dt className="text-xs text-muted">Auto-forward at</dt><dd className="text-sm font-medium">{forwarding.minConfidence}%</dd></div>
+                  <div><dt className="text-xs text-muted">Enabled</dt><dd className="text-sm font-medium">{forwarding.enabled ? "Yes" : "No"}</dd></div>
+                </dl>
+              </ReadOnlyNote>
+            )}
           </CardContent>
         </Card>
       )}
@@ -254,12 +294,22 @@ export default async function InvoiceSettingsPage() {
           <CardHeader>
             <CardTitle>CC recipients</CardTitle>
             <CardDescription>
-              These addresses are CC&apos;d on every forwarded invoice, in addition to the Finance &amp; Accounts
-              destination (which stays the primary recipient).
+              These addresses are CC&apos;d on every forwarded document, in addition to the destination (which stays the
+              primary recipient). Editable by Finance Admin only.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <CcRecipients recipients={ccRecipients} />
+            {canManageSettings ? (
+              <CcRecipients recipients={ccRecipients} />
+            ) : (
+              <ReadOnlyNote>
+                {ccRecipients.length === 0 ? (
+                  <p className="text-sm text-muted">No CC recipients configured.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">{ccRecipients.map((r) => <li key={r.id}>{r.email}</li>)}</ul>
+                )}
+              </ReadOnlyNote>
+            )}
           </CardContent>
         </Card>
       )}

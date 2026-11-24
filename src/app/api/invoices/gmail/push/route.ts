@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { enqueueJob } from "@/lib/invoice/jobs";
-import { findConnectedIntegrationByEmail } from "@/lib/invoice/services/gmail";
+import { findConnectedIntegrationsByEmail } from "@/lib/invoice/services/gmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,17 +46,23 @@ export async function POST(req: Request): Promise<Response> {
     const email = payload.emailAddress?.toLowerCase();
     if (!email) return NextResponse.json({ ok: true, ignored: "no email" });
 
-    const integration = await findConnectedIntegrationByEmail(email);
-    if (!integration) return NextResponse.json({ ok: true, ignored: "unknown account" });
+    // The same inbox may be connected in several organizations; the push carries
+    // only the address, so sync EVERY active org's copy in its own org context
+    // (each job is per (org, integration) and idempotent). Deactivated orgs are
+    // excluded by the lookup, so a paused org enqueues nothing.
+    const integrations = await findConnectedIntegrationsByEmail(email);
+    if (integrations.length === 0) return NextResponse.json({ ok: true, ignored: "unknown or inactive account" });
 
-    await enqueueJob({
-      type: "gmail_sync",
-      organizationId: integration.organization_id,
-      payload: { organizationId: integration.organization_id, integrationId: integration.id },
-      idempotencyKey: `gmailpush:${integration.id}:${payload.historyId ?? "x"}`,
-      priority: 50,
-    });
-    return NextResponse.json({ ok: true, enqueued: true });
+    for (const integration of integrations) {
+      await enqueueJob({
+        type: "gmail_sync",
+        organizationId: integration.organization_id,
+        payload: { organizationId: integration.organization_id, integrationId: integration.id },
+        idempotencyKey: `gmailpush:${integration.id}:${payload.historyId ?? "x"}`,
+        priority: 50,
+      });
+    }
+    return NextResponse.json({ ok: true, enqueued: integrations.length });
   } catch (e) {
     // Transient — let Pub/Sub retry.
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "error" }, { status: 500 });

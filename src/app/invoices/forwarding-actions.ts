@@ -95,9 +95,9 @@ export async function updateCcRecipientAction(input: { id: string; email: string
 export async function removeCcRecipientAction(input: { id: string }): Promise<{ ok: boolean; message: string }> {
   try {
     const ctx = await requireCapability("settings.manage");
-    await removeCcRecipient(ctx.organizationId, input.id);
-    revalidatePath("/invoices/settings");
-    return { ok: true, message: "CC recipient removed." };
+    const res = await removeCcRecipient(ctx.organizationId, input.id);
+    if (res.ok) revalidatePath("/invoices/settings");
+    return res;
   } catch (e) {
     return { ok: false, message: isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed." };
   }
