@@ -45,6 +45,34 @@ export async function anyActiveOrganizationExists(): Promise<boolean> {
   return Boolean(row);
 }
 
+/**
+ * Whether a specific organization is active. The processing services call this
+ * so a DEACTIVATED org pauses ALL work — including jobs already queued before it
+ * was deactivated — at the point of execution (not only at enqueue time). A
+ * missing org returns false (treated as paused), never throwing the worker.
+ */
+export async function isOrganizationActive(organizationId: string): Promise<boolean> {
+  const row = await iQueryOne<{ status: string }>(
+    "SELECT `status` FROM `organizations` WHERE `id`=?",
+    [organizationId],
+  );
+  return row?.status === "active";
+}
+
+/**
+ * Whether the user is a Finance Admin of at least one active organization.
+ * Finance Admins may create ADDITIONAL organizations (the very first org still
+ * needs an app admin, since no Finance Admin exists yet).
+ */
+export async function isFinanceAdminAnywhere(userId: string, email: string): Promise<boolean> {
+  const row = await iQueryOne<{ id: string }>(
+    "SELECT m.`id` FROM `organization_members` m JOIN `organizations` o ON o.`id`=m.`organization_id` " +
+      "WHERE (m.`user_id`=? OR m.`user_email`=?) AND m.`status`='active' AND m.`role`='FINANCE_ADMIN' AND o.`status`='active' LIMIT 1",
+    [userId, email.toLowerCase()],
+  );
+  return Boolean(row);
+}
+
 export interface OrgBrief {
   id: string;
   name: string;
@@ -168,14 +196,10 @@ export async function addMemberByEmail(
   if (orgs.includes(organizationId)) {
     return { ok: false, message: "That employee is already a member of this organization." };
   }
-  if (orgs.length > 0) {
-    // Isolation: never move/merge automatically.
-    return {
-      ok: false,
-      message:
-        "That employee already belongs to a different organization. Organizations are kept isolated — moving them requires an explicit migration, not an automatic merge.",
-    };
-  }
+  // MULTI-ORG: a user may be a member of several organizations (each isolated,
+  // with its own per-org role). We no longer refuse someone who already belongs
+  // to a different org — we only add them to THIS org. Their membership and role
+  // in any other org are untouched (no automatic merge/move across orgs).
 
   // Upsert on the (organization_id, user_id) unique key so re-adding a
   // previously-removed member reactivates their row instead of erroring.
@@ -279,6 +303,51 @@ export interface OrgProfileInput {
   gstin: string | null;
   pan: string | null;
   baseCurrency: string;
+  address?: string | null;
+}
+
+export const BASE_CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED", "SGD"] as const;
+
+/** Serialize a free-text address to the organizations.address JSON column. */
+export function addressToJson(raw: string | null | undefined): string | null {
+  const text = normalizeOptionalText(raw);
+  return text ? JSON.stringify({ text }) : null;
+}
+
+/** Read the free-text address back from the JSON column (object or string). */
+export function addressText(value: unknown): string {
+  if (!value) return "";
+  try {
+    const obj = typeof value === "string" ? JSON.parse(value) : value;
+    return obj && typeof obj === "object" && typeof (obj as { text?: unknown }).text === "string"
+      ? (obj as { text: string }).text
+      : "";
+  } catch {
+    return typeof value === "string" ? value : "";
+  }
+}
+
+/**
+ * Validate an organization profile for create/edit (shared rules). GSTIN and PAN
+ * are OPTIONAL (future orgs may be non-Indian entities); when present they must
+ * be well-formed. Returns normalized fields or an error message.
+ */
+export function validateOrgProfile(
+  input: OrgProfileInput,
+): { ok: true; name: string; legalName: string | null; gstin: string | null; pan: string | null; currency: string; address: string | null }
+  | { ok: false; message: string } {
+  const name = input.name.trim();
+  if (name.length < 2) return { ok: false, message: "Organization name is required." };
+  const gstin = normalizeGstin(input.gstin); // empty/whitespace -> NULL (optional)
+  if (gstin && !/^[0-9A-Z]{15}$/.test(gstin)) {
+    return { ok: false, message: "GSTIN must be 15 alphanumeric characters (or leave it blank)." };
+  }
+  const pan = normalizeGstin(input.pan); // reuse: trim/upper, empty -> NULL (optional)
+  if (pan && !/^[0-9A-Z]{10}$/.test(pan)) {
+    return { ok: false, message: "PAN must be 10 alphanumeric characters (or leave it blank)." };
+  }
+  const currency = (BASE_CURRENCIES as readonly string[]).includes(input.baseCurrency) ? input.baseCurrency : "INR";
+  return { ok: true, name, legalName: normalizeOptionalText(input.legalName), gstin, pan, currency, address: addressToJson(input.address) };
 }
 
 /** Edit the shared organization (GST/company) profile. One profile per org. */
@@ -287,21 +356,12 @@ export async function updateOrganizationProfile(
   actor: { id: string; email: string },
   input: OrgProfileInput,
 ): Promise<{ ok: boolean; message: string }> {
-  const name = input.name.trim();
-  if (name.length < 2) return { ok: false, message: "Organization name is required." };
-  const gstin = normalizeGstin(input.gstin); // empty/whitespace -> NULL
-  if (gstin && !/^[0-9A-Z]{15}$/.test(gstin)) {
-    return { ok: false, message: "GSTIN must be 15 alphanumeric characters." };
-  }
-  const pan = normalizeGstin(input.pan); // reuse: trim/upper, empty -> NULL
-  if (pan && !/^[0-9A-Z]{10}$/.test(pan)) {
-    return { ok: false, message: "PAN must be 10 alphanumeric characters." };
-  }
-  const currency = ["INR", "USD", "EUR", "GBP"].includes(input.baseCurrency) ? input.baseCurrency : "INR";
+  const v = validateOrgProfile(input);
+  if (!v.ok) return v;
 
   const res = await iExecute(
-    "UPDATE `organizations` SET `name`=?, `legal_name`=?, `gstin`=?, `pan`=?, `base_currency`=? WHERE `id`=?",
-    [name, normalizeOptionalText(input.legalName), gstin, pan, currency, organizationId],
+    "UPDATE `organizations` SET `name`=?, `legal_name`=?, `gstin`=?, `pan`=?, `base_currency`=?, `address`=? WHERE `id`=?",
+    [v.name, v.legalName, v.gstin, v.pan, v.currency, v.address, organizationId],
   );
   if (res.affectedRows === 0) return { ok: false, message: "Organization not found." };
   await logInvoiceAudit({
@@ -312,7 +372,61 @@ export async function updateOrganizationProfile(
     action: "organization.profile_updated",
     entityType: "organization",
     entityId: organizationId,
-    after: { name, gstin, pan, baseCurrency: currency },
+    after: { name: v.name, gstin: v.gstin, pan: v.pan, baseCurrency: v.currency },
   }).catch(() => undefined);
   return { ok: true, message: "Organization profile updated." };
+}
+
+/** Count the ACTIVE organizations this user is an active member of. */
+async function activeOrgCountForUser(userId: string, email: string): Promise<number> {
+  const row = await iQueryOne<{ c: number }>(
+    "SELECT COUNT(*) c FROM `organization_members` m JOIN `organizations` o ON o.`id`=m.`organization_id` " +
+      "WHERE (m.`user_id`=? OR m.`user_email`=?) AND m.`status`='active' AND o.`status`='active'",
+    [userId, email.toLowerCase()],
+  );
+  return Number(row?.c ?? 0);
+}
+
+/**
+ * Activate or deactivate an organization. Deactivating hides it from all
+ * processing and from the active-org context (getInvoiceContext resolves only
+ * active orgs); its data is preserved and reactivation restores it. Safeguard:
+ * a Finance Admin cannot deactivate their ONLY remaining active organization
+ * (which would lock them out of the module). Caller must already hold org.manage
+ * for THIS organization (enforced by the server action).
+ */
+export async function setOrganizationActive(
+  organizationId: string,
+  actor: { id: string; email: string },
+  active: boolean,
+): Promise<{ ok: boolean; message: string }> {
+  const org = await iQueryOne<{ id: string; status: string; name: string }>(
+    "SELECT `id`,`status`,`name` FROM `organizations` WHERE `id`=?",
+    [organizationId],
+  );
+  if (!org) return { ok: false, message: "Organization not found." };
+
+  if (!active) {
+    if (org.status !== "active") return { ok: true, message: "Organization is already inactive." };
+    if ((await activeOrgCountForUser(actor.id, actor.email)) <= 1) {
+      return {
+        ok: false,
+        message: "This is your only active organization — create or switch to another before deactivating this one.",
+      };
+    }
+    await iExecute("UPDATE `organizations` SET `status`='inactive' WHERE `id`=?", [organizationId]);
+    await logInvoiceAudit({
+      organizationId, actorType: "user", actorUserId: actor.id, actorLabel: actor.email,
+      action: "organization.deactivated", entityType: "organization", entityId: organizationId, after: { status: "inactive" },
+    }).catch(() => undefined);
+    return { ok: true, message: `Deactivated "${org.name}". Its data is preserved; reactivate it anytime.` };
+  }
+
+  if (org.status === "active") return { ok: true, message: "Organization is already active." };
+  await iExecute("UPDATE `organizations` SET `status`='active' WHERE `id`=?", [organizationId]);
+  await logInvoiceAudit({
+    organizationId, actorType: "user", actorUserId: actor.id, actorLabel: actor.email,
+    action: "organization.activated", entityType: "organization", entityId: organizationId, after: { status: "active" },
+  }).catch(() => undefined);
+  return { ok: true, message: `Activated "${org.name}".` };
 }

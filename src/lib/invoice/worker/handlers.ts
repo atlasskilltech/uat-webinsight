@@ -39,6 +39,9 @@ export async function runDueGmailSyncs(): Promise<TaskSummary> {
   const intervalMin = gmailPollFallbackMinutes();
   const due = await iQuery<{ id: string; organization_id: string }>(
     "SELECT g.id, g.organization_id FROM `gmail_integrations` g " +
+      // Only sync accounts of ACTIVE organizations — a deactivated org pauses all
+      // of its email processing until it is reactivated (its data is preserved).
+      "JOIN `organizations` o ON o.id=g.organization_id AND o.status='active' " +
       "LEFT JOIN `gmail_sync_states` s ON s.gmail_integration_id=g.id " +
       "WHERE g.status='connected' AND (s.backoff_until IS NULL OR s.backoff_until < NOW(3)) " +
       "AND (s.last_incremental_sync_at IS NULL OR s.last_incremental_sync_at < DATE_SUB(NOW(3), INTERVAL ? MINUTE)) LIMIT 20",

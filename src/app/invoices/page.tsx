@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { getInvoiceContext } from "@/lib/invoice/org";
+import { getInvoiceContext, listUserOrganizations } from "@/lib/invoice/org";
 import { getInvoiceDbStatus } from "@/lib/invoice/status";
 import { listGmailAccounts } from "@/lib/invoice/services/gmail";
 import { listForwards, forwardCounts } from "@/lib/invoice/services/forwarding";
@@ -15,6 +15,7 @@ import { iQueryOne } from "@/lib/invoice/db";
 import { ForwardingReview, type ForwardView } from "./forwarding-review";
 import { SampleInvoiceDemo } from "./sample-demo";
 import { AutoRefresh } from "./auto-refresh";
+import { OrgSwitcher } from "./org-switcher";
 
 export const metadata: Metadata = { title: "Invoice Agent" };
 export const dynamic = "force-dynamic";
@@ -67,13 +68,16 @@ export default async function InvoiceAgentHome() {
 
   const org = ctx.organizationId;
   // All counts are INVOICE-only — ordinary emails never increase them.
-  const [accounts, candidates, counts, allForwards, canApprove] = await Promise.all([
+  const [accounts, candidates, counts, allForwards, canApprove, userOrgs] = await Promise.all([
     listGmailAccounts(org),
     count("SELECT COUNT(*) c FROM `email_messages` WHERE organization_id=? AND is_invoice_candidate=1", [org]),
     forwardCounts(org),
     listForwards(org, { limit: 100 }),
     hasCapability("email.send"),
+    ctx.user ? listUserOrganizations(ctx.user) : Promise.resolve([]),
   ]);
+  // Only ACTIVE orgs are switch targets; the current one is always included.
+  const switcherOrgs = userOrgs.filter((o) => o.status === "active").map((o) => ({ id: o.id, name: o.name }));
   const connected = accounts.filter((a) => a.status === "connected").length;
   const forwarded = counts.forwarded ?? 0;
   const pendingApprovals = counts.pending ?? 0;
@@ -97,7 +101,8 @@ export default async function InvoiceAgentHome() {
       <AutoRefresh seconds={60} />
       <PageHeader
         title="Invoice Agent"
-        description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding supplier invoices to Finance & Accounts. All figures are invoice-only.`}
+        description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding supplier invoices to Finance & Accounts. All figures are invoice-only and scoped to this organization.`}
+        actions={<OrgSwitcher organizations={switcherOrgs} activeOrgId={org} />}
       />
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">

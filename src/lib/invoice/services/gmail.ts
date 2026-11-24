@@ -25,11 +25,12 @@ import { processUploadedDocument } from "./processing";
 import { enqueueJob } from "../jobs";
 import {
   resolveForwardingPlan,
-  categoryKeyForClassification,
   listRules,
   listDestinations,
+  listCategories,
 } from "./routing";
 import { listCcRecipients } from "./forwarding";
+import { isOrganizationActive } from "./org-admin";
 
 export interface GmailIntegrationRow {
   id: string;
@@ -221,13 +222,71 @@ const INVOICE_FILENAME = /invoice|tax[-_ ]?invoice|e[-_ ]?invoice|proforma|\binv
  * attachment itself is named like an invoice (e.g. "Invoice-123.pdf") — many
  * real invoices arrive with a generic subject and the word only inside the PDF.
  */
+/**
+ * A document-category key the routing rules match on. The classifier produces
+ * the four SYSTEM categories; organization-specific CUSTOM categories are
+ * detected separately in the sync loop (which has the org's category list).
+ */
+export type DocumentCategoryKey = "invoice" | "purchase_order" | "statement" | "other";
+
+/**
+ * The forward GATE (general-purpose). An email is forwarded only when it has a
+ * resolved destination AND either it is an invoice candidate (existing behaviour
+ * — a matching rule, or the legacy default destination), or it matches an
+ * explicitly configured RULE. A non-invoice email never forwards via the legacy
+ * default, so ordinary mail is not sent unless an admin configured a rule.
+ */
+export function shouldForwardEmail(
+  plan: { destination: string | null; source: "rule" | "rule_fallback" | "legacy" | "none" },
+  isInvoiceCandidate: boolean,
+): boolean {
+  if (!plan.destination) return false;
+  if (isInvoiceCandidate) return true;
+  return plan.source === "rule" || plan.source === "rule_fallback";
+}
+
+/**
+ * Resolve the routing category for an email: the system category from the
+ * classifier, overridden by an organization CUSTOM category whose label appears
+ * in the email text (so an admin's custom document type routes). Custom matches
+ * require a label of at least 4 chars to avoid noise. Never changes invoice
+ * detection — only the category key used for rule matching.
+ */
+export function resolveCategoryKey(
+  systemCategory: string,
+  text: string,
+  customCategories: { categoryKey: string; label: string }[],
+): string {
+  const hay = text.toLowerCase();
+  for (const cc of customCategories) {
+    const label = cc.label.trim().toLowerCase();
+    if (label.length >= 4 && hay.includes(label)) return cc.categoryKey;
+  }
+  return systemCategory;
+}
+
+/** Map the fine-grained classification to a routing category (all emails). */
+export function classificationCategory(c: EmailClassification): DocumentCategoryKey {
+  switch (c) {
+    case "supplier_invoice":
+    case "credit_note":
+      return "invoice";
+    case "purchase_order":
+      return "purchase_order";
+    case "general_finance":
+      return "statement";
+    default:
+      return "other";
+  }
+}
+
 export function classifyEmail(input: {
   subject: string;
   from: string;
   snippet: string;
   hasAttachment: boolean;
   attachmentNames?: string[];
-}): { classification: EmailClassification; isInvoiceCandidate: boolean; confidence: number } {
+}): { classification: EmailClassification; category: DocumentCategoryKey; isInvoiceCandidate: boolean; confidence: number } {
   const t = `${input.subject} ${input.snippet}`.toLowerCase();
   const has = (...k: string[]) => k.some((w) => t.includes(w));
   const fileLooksLikeInvoice = (input.attachmentNames ?? []).some((f) => INVOICE_FILENAME.test(f));
@@ -250,20 +309,44 @@ export function classifyEmail(input: {
   // the UI and forwarding treat it consistently.
   if (isInvoiceCandidate && classification !== "supplier_invoice") classification = "supplier_invoice";
 
-  // Heuristic confidence (0..1). Stronger invoice signals score higher; the
-  // forwarding threshold decides auto vs review.
+  // Heuristic confidence (0..1). The forwarding threshold decides auto vs review,
+  // so an UNCERTAIN classification scores low and is held for review.
   let confidence: number;
   if (isInvoiceCandidate) {
+    // Invoice confidences are unchanged (preserves existing behaviour + tests).
     if (has("tax invoice", "gst invoice", "gstin")) confidence = 0.93;
     else if (subjectInvoice) confidence = 0.82;
     else if (fileLooksLikeInvoice) confidence = 0.72; // detected via attachment name only
     else confidence = 0.62;
-  } else if (subjectInvoice) {
-    confidence = 0.4;
   } else {
-    confidence = 0.1;
+    // Non-invoice categories: confidence reflects how strong the category signal
+    // is. A clear PO/statement keyword scores mid-high (and higher with an
+    // attachment); weak/none scores low so it only ever goes to review.
+    switch (classification) {
+      case "purchase_order":
+        confidence = input.hasAttachment ? 0.85 : 0.78;
+        break;
+      case "general_finance": // statement / account
+        confidence = input.hasAttachment ? 0.8 : 0.72;
+        break;
+      case "credit_note":
+        confidence = input.hasAttachment ? 0.8 : 0.7;
+        break;
+      case "remittance_advice":
+      case "payment_confirmation":
+        confidence = 0.65;
+        break;
+      case "customer_request":
+        confidence = 0.6;
+        break;
+      case "supplier_invoice":
+        confidence = 0.4; // invoice words but no attachment — not a candidate
+        break;
+      default:
+        confidence = 0.15; // generic / irrelevant
+    }
   }
-  return { classification, isInvoiceCandidate, confidence };
+  return { classification, category: classificationCategory(classification), isInvoiceCandidate, confidence };
 }
 
 export interface SyncSummary {
@@ -286,6 +369,13 @@ export async function syncGmailAccount(
   // of the incremental history anchor / default inbox query.
   opts: { maxMessages?: number; backfill?: boolean; query?: string } = {},
 ): Promise<SyncSummary> {
+  // Deactivated orgs are paused: a sync/push/polling/backfill job queued BEFORE
+  // deactivation must not run after it. All data is preserved; work resumes on
+  // reactivation. (New jobs are already blocked at enqueue time; this is the
+  // execution-time guard that also stops already-queued jobs.)
+  if (!(await isOrganizationActive(organizationId))) {
+    return { scanned: 0, newMessages: 0, invoicesCreated: 0, duplicates: 0, errors: 0, message: "Organization inactive — processing paused." };
+  }
   const integration = await iQueryOne<GmailIntegrationRow>(
     "SELECT * FROM `gmail_integrations` WHERE organization_id=? AND id=?",
     [organizationId, integrationId],
@@ -312,6 +402,9 @@ export async function syncGmailAccount(
           rules: await listRules(organizationId),
           destinations: await listDestinations(organizationId),
           orgCc: (await listCcRecipients(organizationId)).map((r) => r.email),
+          // Organization CUSTOM categories (active), used to detect a configured
+          // document type from the subject/snippet so rules can route it.
+          customCategories: (await listCategories(organizationId)).filter((c) => !c.isSystem && c.isActive),
         };
 
     for (const ref of messages) {
@@ -330,7 +423,7 @@ export async function syncGmailAccount(
         // this (with the in:inbox query) prevents the forward-loop at the root.
         if (isSelfSent(from, integration.email)) continue;
         const atts = collectAttachments(msg).filter(isSupportedAttachment);
-        const { classification, isInvoiceCandidate, confidence } = classifyEmail({
+        const { classification, category, isInvoiceCandidate, confidence } = classifyEmail({
           subject,
           from,
           snippet: msg.snippet ?? "",
@@ -338,6 +431,16 @@ export async function syncGmailAccount(
           attachmentNames: atts.map((a) => a.filename),
         });
         const confPct = Math.round(confidence * 100);
+
+        // Final routing category: the system category from the classifier, or an
+        // organization CUSTOM category detected from the subject/snippet (so an
+        // admin's custom document type can be routed). Never applied to invoice
+        // candidates, and never marks an email an invoice (general mail stays
+        // general).
+        const categoryKey =
+          routing && !isInvoiceCandidate
+            ? resolveCategoryKey(category, `${subject} ${msg.snippet ?? ""}`, routing.customCategories)
+            : category;
 
         const emailMessageId = createId();
         const receivedAt = msg.internalDate ? new Date(Number(msg.internalDate)) : null;
@@ -353,52 +456,47 @@ export async function syncGmailAccount(
         );
         summary.newMessages += 1;
 
-        // Queue a forward task for invoice candidates (review-first). The unique
-        // keys (email_message_id,destination) AND (org,source_gmail_message_id,
-        // destination) make this idempotent — the same Gmail message can never
-        // produce a second forward, even across rescans / overlapping workers.
-        // Skipped entirely in backfill mode so historical mail is never forwarded.
-        //
-        // Phase 6: the destination + automation are resolved by configurable
-        // rules; when no rule matches, the plan is the legacy org default and the
-        // decision is byte-identical to the pre-Phase-6 behaviour.
-        if (isInvoiceCandidate && routing && !opts.backfill) {
+        // GENERAL-PURPOSE forwarding (review-first). An email is forwarded when:
+        //   (a) it is an INVOICE candidate — routed by a matching rule, or (when
+        //       none matches) the legacy default destination (unchanged), OR
+        //   (b) it matches an explicitly configured, enabled RULE for its org /
+        //       mailbox / sender / document category — invoice or not.
+        // A NON-invoice email never forwards via the legacy default (so ordinary
+        // mail is not sent); only an admin-configured rule routes it. The unique
+        // keys make this idempotent. Auto-forward stays OFF by default and an
+        // uncertain (below-threshold) classification goes to review, not auto.
+        if (routing && !opts.backfill) {
           const plan = await resolveForwardingPlan(
             organizationId,
-            {
-              integrationId,
-              sender: from,
-              categoryKey: categoryKeyForClassification(classification),
-              confidencePct: confPct,
-            },
+            { integrationId, sender: from, categoryKey, confidencePct: confPct },
             routing,
           );
-          // Legacy path honours the mailbox's own auto-forward switch; a matched
-          // rule carries its own auto_forward override.
-          const effectiveAuto = plan.source === "legacy" ? integration.auto_forward : plan.autoForward;
           const destination = plan.destination;
-          if (destination) {
-          const forwardStatus = decideForwardStatus(confPct, plan.minConfidence, effectiveAuto);
-          await iExecute(
-            "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
-              "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
-              "ON DUPLICATE KEY UPDATE `id`=`id`",
-            [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
-          );
-          // Immediate forwarding: when eligible for auto-forward, enqueue a
-          // forward job so the drain worker sends it within ~10s instead of
-          // waiting for the periodic forwarding cycle.
-          if (forwardStatus === "approved") {
-            await enqueueJob({
-              type: "forward",
-              organizationId,
-              payload: { organizationId },
-              idempotencyKey: `forward:${organizationId}:${emailMessageId}`,
-              priority: 10,
-            }).catch(() => undefined);
+          if (shouldForwardEmail(plan, isInvoiceCandidate)) {
+            // Legacy path honours the mailbox's own auto-forward switch; a matched
+            // rule carries its own auto_forward override.
+            const effectiveAuto = plan.source === "legacy" ? integration.auto_forward : plan.autoForward;
+            const forwardStatus = decideForwardStatus(confPct, plan.minConfidence, effectiveAuto);
+            await iExecute(
+              "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
+                "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
+                "ON DUPLICATE KEY UPDATE `id`=`id`",
+              [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
+            );
+            // Immediate forwarding: when eligible for auto-forward, enqueue a
+            // forward job so the drain worker sends it within ~10s instead of
+            // waiting for the periodic forwarding cycle.
+            if (forwardStatus === "approved") {
+              await enqueueJob({
+                type: "forward",
+                organizationId,
+                payload: { organizationId },
+                idempotencyKey: `forward:${organizationId}:${emailMessageId}`,
+                priority: 10,
+              }).catch(() => undefined);
+            }
           }
-          } // end if (destination)
-        } // end if (isInvoiceCandidate && routing && !opts.backfill)
+        } // end general forwarding
 
         if (!isInvoiceCandidate) continue;
 
@@ -595,6 +693,25 @@ export async function findConnectedIntegrationByEmail(
 ): Promise<{ id: string; organization_id: string } | null> {
   return iQueryOne<{ id: string; organization_id: string }>(
     "SELECT id, organization_id FROM `gmail_integrations` WHERE email=? AND status='connected' LIMIT 1",
+    [email.toLowerCase()],
+  );
+}
+
+/**
+ * ALL connected integrations for an email address. The same inbox may be
+ * connected in more than one organization (the unique key is per org+email), and
+ * a Gmail push notification carries only the address — so the push handler must
+ * sync every org's copy, each in its own organization context, rather than an
+ * arbitrary single one. Only ACTIVE organizations are returned (a deactivated
+ * org is paused). Returned rows carry the correct organization_id per row.
+ */
+export async function findConnectedIntegrationsByEmail(
+  email: string,
+): Promise<{ id: string; organization_id: string }[]> {
+  return iQuery<{ id: string; organization_id: string }>(
+    "SELECT g.id, g.organization_id FROM `gmail_integrations` g " +
+      "JOIN `organizations` o ON o.id=g.organization_id AND o.status='active' " +
+      "WHERE g.email=? AND g.status='connected'",
     [email.toLowerCase()],
   );
 }
