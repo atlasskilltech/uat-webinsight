@@ -115,6 +115,7 @@ import {
   getForwardingSettings,
 } from "@/lib/invoice/services/forwarding";
 import { getInvoiceDbStatus } from "@/lib/invoice/status";
+import { getTool, type AgentContext } from "@/lib/invoice/agent/tools";
 
 // --- Test fixtures (generic, non-personal addresses) ------------------------
 const ORG = "org_itest";
@@ -123,6 +124,7 @@ const ACCOUNT_EMAIL = "invoices-inbox@example.test";
 const DESTINATION = "finance@example.test";
 const CC = ["ap1@example.test", "ap2@example.test"];
 const ACTOR = { id: "user_itest", email: "approver@example.test" };
+const AGENT_CTX: AgentContext = { organizationId: ORG, user: ACTOR, role: "FINANCE_ADMIN" };
 
 // The invoice message (detected via its ATTACHMENT name + "Tax Invoice" subject
 // → 93% confidence → auto-forward eligible). Its attachment carries real bytes.
@@ -560,6 +562,101 @@ describe.skipIf(!READY)("invoice forwarding — MySQL integration (disposable DB
     const accounts = await listGmailAccounts(ORG);
     const acct = accounts.find((a) => a.id === INT)!;
     expect(Number(acct.invoice_detected)).toBe(1); // the newsletter did NOT bump this
+  });
+
+  // --- Phase 4: immediate forwarding + backfill safety --------------------
+  it("immediate forwarding: an eligible auto-forward detection enqueues a forward job right away", async () => {
+    await iExecute("UPDATE `gmail_integrations` SET auto_forward=1 WHERE id=?", [INT]);
+    await syncGmailAccount(ORG, INT, ACTOR);
+
+    // The invoice forward is already approved (auto-forward on, conf >= threshold).
+    const f = await theForward();
+    expect(f?.status).toBe("approved");
+    // ...and an immediate 'forward' job was enqueued (drained in ~10s, not the 2-min cycle).
+    const job = await iQueryOne<{ c: number }>(
+      "SELECT COUNT(*) c FROM `processing_jobs` WHERE organization_id=? AND type='forward'",
+      [ORG],
+    );
+    expect(Number(job?.c)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("backfill mode ingests + indexes historical mail but NEVER creates a forward", async () => {
+    await iExecute("UPDATE `gmail_integrations` SET auto_forward=1 WHERE id=?", [INT]);
+    await syncGmailAccount(ORG, INT, ACTOR, { backfill: true });
+
+    // The message is ingested (searchable) ...
+    expect(await countMessages()).toBe(1);
+    // ... but NO forward task and NO forward job exist — old mail is never re-forwarded.
+    expect(await countForwards()).toBe(0);
+    const job = await iQueryOne<{ c: number }>(
+      "SELECT COUNT(*) c FROM `processing_jobs` WHERE organization_id=? AND type='forward'",
+      [ORG],
+    );
+    expect(Number(job?.c)).toBe(0);
+  });
+
+  // --- Phase 5: historical email search (assistant tools) -----------------
+  async function emailMessageId(): Promise<string> {
+    const r = await iQueryOne<{ id: string }>(
+      "SELECT id FROM `email_messages` WHERE gmail_integration_id=? AND gmail_message_id=?",
+      [INT, INVOICE_MSG_ID],
+    );
+    return r!.id;
+  }
+
+  it("search_emails (local index): filters by subject / from / attachment / invoice number with source details", async () => {
+    await syncGmailAccount(ORG, INT, ACTOR); // populate the local index
+    const emId = await emailMessageId();
+    await iExecute(
+      "INSERT INTO `invoices` (`id`,`organization_id`,`direction`,`invoice_number`,`source_email_message_id`) VALUES (?,?,?,?,?)",
+      ["inv_1", ORG, "incoming", "INV-9", emId],
+    );
+    const tool = getTool("search_emails")!;
+
+    const bySubject = await tool.run(AGENT_CTX, { subject: "Invoice" });
+    expect(bySubject.ok).toBe(true);
+    const rows = bySubject.data as Array<Record<string, unknown>>;
+    expect(rows.length).toBe(1);
+    expect(rows[0].account).toBe(ACCOUNT_EMAIL);
+    expect((rows[0].attachments as Array<{ filename: string }>).some((a) => a.filename === "Invoice-INV-9.pdf")).toBe(true);
+
+    expect(((await tool.run(AGENT_CTX, { from: "acme" })).data as unknown[]).length).toBe(1);
+    expect(((await tool.run(AGENT_CTX, { hasAttachment: true })).data as unknown[]).length).toBe(1);
+    expect(((await tool.run(AGENT_CTX, { invoiceNumber: "INV-9" })).data as unknown[]).length).toBe(1);
+    expect(((await tool.run(AGENT_CTX, { from: "nobody@nowhere.test" })).data as unknown[]).length).toBe(0);
+  });
+
+  it("search_gmail_messages (live): returns archived/historical matches with source details, org-scoped", async () => {
+    const tool = getTool("search_gmail_messages")!;
+    const res = await tool.run(AGENT_CTX, { query: "invoice", after: "2026-01-01" });
+    expect(res.ok).toBe(true);
+    const data = res.data as { matches: Array<Record<string, unknown>>; notAccessed: unknown[]; query: string };
+    expect(data.query).toContain("after:2026/1/1");
+    expect(data.matches.length).toBeGreaterThanOrEqual(1);
+    const m = data.matches[0];
+    expect(m.account).toBe(ACCOUNT_EMAIL);
+    expect(String(m.subject)).toContain("Tax Invoice");
+    expect((m.attachments as unknown[]).length).toBeGreaterThanOrEqual(1);
+    expect(data.notAccessed).toEqual([]);
+    expect(res.summary).toMatch(/Searched all 1 connected account/);
+  });
+
+  it("search_gmail_messages: reports an account it could NOT access (never claims full coverage)", async () => {
+    g.listMessages.mockRejectedValueOnce(new Error("insufficient permissions"));
+    const res = await getTool("search_gmail_messages")!.run(AGENT_CTX, { query: "invoice" });
+    const data = res.data as { matches: unknown[]; notAccessed: Array<{ account: string }> };
+    expect(data.matches.length).toBe(0);
+    expect(data.notAccessed.map((n) => n.account)).toContain(ACCOUNT_EMAIL);
+    expect(res.summary).toMatch(/could not be accessed/);
+  });
+
+  it("backfill_email_index: indexes historical mail WITHOUT creating any forward", async () => {
+    await iExecute("UPDATE `gmail_integrations` SET auto_forward=1 WHERE id=?", [INT]);
+    const res = await getTool("backfill_email_index")!.run(AGENT_CTX, { account: ACCOUNT_EMAIL, days: 365 });
+    expect(res.ok).toBe(true);
+    expect(res.summary).toMatch(/No emails were forwarded/);
+    expect(await countMessages()).toBe(1); // indexed
+    expect(await countForwards()).toBe(0); // never forwarded
   });
 
   // --- Hardening: reachable-but-unmigrated DB must not crash --------------

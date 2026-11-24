@@ -132,9 +132,19 @@ export const NAV_GROUPS: { key: NavItem["group"]; label: string }[] = [
   { key: "admin", label: "Administration" },
 ];
 
-export function activeNavItem(pathname: string): NavItem | undefined {
-  // Longest-prefix match so /work/123 maps to /work.
-  return [...NAV_ITEMS]
-    .filter((i) => (i.href === "/" ? pathname === "/" : pathname.startsWith(i.href)))
+/**
+ * The single nav item to highlight for a path. Longest-prefix match on a path
+ * SEGMENT boundary, so:
+ *  - /work/123 maps to /work,
+ *  - /invoices/settings highlights only "Agent Settings" (NOT its parent
+ *    /invoices "Invoice Agent"), and
+ *  - /invoicesX does NOT match /invoices.
+ * Returns undefined when nothing matches.
+ */
+export function activeNavItem(pathname: string, items: NavItem[] = NAV_ITEMS): NavItem | undefined {
+  return [...items]
+    .filter((i) =>
+      i.href === "/" ? pathname === "/" : pathname === i.href || pathname.startsWith(`${i.href}/`),
+    )
     .sort((a, b) => b.href.length - a.href.length)[0];
 }

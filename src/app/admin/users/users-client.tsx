@@ -15,11 +15,13 @@ import { useToast } from "@/components/ui/toast";
 import { idleState } from "@/lib/form-state";
 import { fmtDate, fmtDateTime } from "@/lib/dates";
 import { ROLE_OPTIONS } from "@/lib/auth/types";
+import { ACCESS_SCOPE_OPTIONS } from "@/lib/auth/access";
 import {
   createUserAction,
   updateUserAction,
   changeRoleAction,
   setStatusAction,
+  setAccessScopeAction,
 } from "./actions";
 import type { AdminActionState } from "./types";
 
@@ -29,6 +31,7 @@ interface Row {
   email: string;
   role: string;
   status: string;
+  accessScope: string;
   lastLoginAt: Date | string | null;
   createdAt: Date | string;
 }
@@ -93,6 +96,16 @@ export function AdminUsersClient({
     }
     start(async () => {
       const res = await changeRoleAction(row.id, role as "admin" | "user");
+      toast(res.message, res.ok ? "success" : "error");
+      if (res.ok) router.refresh();
+    });
+  };
+
+  const onAccessScope = (row: Row, scope: string) => {
+    if (scope === (row.accessScope || "full")) return;
+    if (scope === "invoice_only" && !confirm(`Restrict ${row.email} to the Invoice Agent only? They will lose access to all other modules.`)) return;
+    start(async () => {
+      const res = await setAccessScopeAction(row.id, scope as "full" | "invoice_only");
       toast(res.message, res.ok ? "success" : "error");
       if (res.ok) router.refresh();
     });
@@ -169,6 +182,7 @@ export function AdminUsersClient({
                   <TH>Name</TH>
                   <TH>Email</TH>
                   <TH>Role</TH>
+                  <TH>Access</TH>
                   <TH>Status</TH>
                   <TH>Created</TH>
                   <TH>Last login</TH>
@@ -192,6 +206,17 @@ export function AdminUsersClient({
                         aria-label={`Role for ${u.email}`}
                       >
                         <Options options={ROLE_OPTIONS} />
+                      </Select>
+                    </TD>
+                    <TD>
+                      <Select
+                        value={u.accessScope || "full"}
+                        disabled={pending}
+                        onChange={(e) => onAccessScope(u, e.target.value)}
+                        className="h-8 w-auto py-0 text-xs"
+                        aria-label={`Module access for ${u.email}`}
+                      >
+                        <Options options={ACCESS_SCOPE_OPTIONS} />
                       </Select>
                     </TD>
                     <TD>

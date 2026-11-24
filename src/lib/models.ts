@@ -326,6 +326,8 @@ export interface User {
   email: string;
   role: string;
   status: string;
+  /** Module access scope: 'full' (all modules) | 'invoice_only'. Default 'full'. */
+  accessScope: string;
   passwordHash: string | null;
   lastLoginAt: Date | null;
   createdAt: Date;

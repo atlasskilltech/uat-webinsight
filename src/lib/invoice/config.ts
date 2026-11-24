@@ -20,6 +20,18 @@ export interface InvoiceDbConfig {
   database: string;
 }
 
+/**
+ * Polling-fallback staleness window in minutes. Gmail push (Pub/Sub) is the
+ * primary detection path; this periodic sync only catches missed/expired
+ * notifications, so it is CAPPED at 2 minutes (the maximum fallback latency).
+ * An env override may lower it (min 1) but never raise it above 2.
+ */
+export function gmailPollFallbackMinutes(): number {
+  const raw = Number(process.env.GMAIL_SYNC_INTERVAL_MIN);
+  const v = Number.isFinite(raw) && raw > 0 ? raw : 2;
+  return Math.max(1, Math.min(2, v));
+}
+
 /** Resolve invoice DB connection settings (INVOICE_* → fallback to main DB_*). */
 export function getInvoiceDbConfig(): InvoiceDbConfig {
   const host = process.env.ATLAS_INVOICE_DB_HOST?.trim() || process.env.DB_HOST?.trim();

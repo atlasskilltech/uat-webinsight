@@ -1,5 +1,6 @@
 "use server";
 
+import { requireFullAccess } from "@/lib/auth/guard";
 import { revalidatePath } from "next/cache";
 import { execute, queryOne, json } from "@/lib/db";
 import { createId } from "@/lib/id";
@@ -54,6 +55,7 @@ export async function createIssue(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(issueSchema, formData);
   if (!parsed.success) return parsed.state;
   const { urls, ...data } = parsed.data;
@@ -82,6 +84,7 @@ export async function updateIssue(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const id = String(formData.get("id") ?? "");
   if (!id) return errorState("Missing issue id.");
   const parsed = parseForm(issueSchema, formData);
@@ -117,6 +120,7 @@ export async function updateIssue(
 
 /** Quick status change from the register. */
 export async function setIssueStatus(id: string, status: string): Promise<void> {
+  await requireFullAccess();
   const before = await queryOne<TechnicalIssue>(
     "SELECT * FROM `TechnicalIssue` WHERE `id` = ?",
     [id],
@@ -138,6 +142,7 @@ export async function setIssueStatus(id: string, status: string): Promise<void> 
 }
 
 export async function deleteIssue(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `TechnicalIssue` WHERE `id` = ?", [id]);
   revalidateIssues();
 }

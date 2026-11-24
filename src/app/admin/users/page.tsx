@@ -61,8 +61,8 @@ export default async function AdminUsersPage({
 
   const [users, totalRows, auditLogs] = await Promise.all([
     // Explicit column list — passwordHash is never read or sent to the client.
-    query<Pick<User, "id" | "name" | "email" | "role" | "status" | "lastLoginAt" | "createdAt">>(
-      "SELECT `id`, `name`, `email`, `role`, `status`, `lastLoginAt`, `createdAt` FROM `User` WHERE " +
+    query<Pick<User, "id" | "name" | "email" | "role" | "status" | "accessScope" | "lastLoginAt" | "createdAt">>(
+      "SELECT `id`, `name`, `email`, `role`, `status`, `accessScope`, `lastLoginAt`, `createdAt` FROM `User` WHERE " +
         whereSql +
         " ORDER BY `createdAt` DESC LIMIT ? OFFSET ?",
       [...params, PAGE_SIZE, (page - 1) * PAGE_SIZE],

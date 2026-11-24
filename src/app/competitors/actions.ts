@@ -1,5 +1,6 @@
 "use server";
 
+import { requireFullAccess } from "@/lib/auth/guard";
 import { revalidatePath } from "next/cache";
 import { execute } from "@/lib/db";
 import { createId } from "@/lib/id";
@@ -20,6 +21,7 @@ export async function createResearch(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(researchSchema, formData);
   if (!parsed.success) return parsed.state;
   try {
@@ -57,6 +59,7 @@ export async function updateResearch(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const id = String(formData.get("id") ?? "");
   if (!id) return errorState("Missing research id.");
   const parsed = parseForm(researchSchema, formData);
@@ -92,12 +95,14 @@ export async function updateResearch(
 }
 
 export async function deleteResearch(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `CompetitorResearch` WHERE `id`=?", [id]);
   revalidateResearch();
 }
 
 /** Quick status change from the card. */
 export async function setResearchStatus(id: string, status: string): Promise<void> {
+  await requireFullAccess();
   await execute("UPDATE `CompetitorResearch` SET `status`=? WHERE `id`=?", [status, id]);
   revalidateResearch();
 }

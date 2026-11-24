@@ -1,5 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { buildForwardMime, normalizeEmail } from "@/lib/invoice/services/forwarding";
+import { buildForwardMime, normalizeEmail, renderForwardBody } from "@/lib/invoice/services/forwarding";
+
+describe("forwarding: renderForwardBody (template seam)", () => {
+  it("renders the current plain-text body + Fwd subject (ready for a future template)", () => {
+    const r = renderForwardBody({
+      subject: "Tax Invoice INV-9",
+      from: "vendor@acme.com",
+      date: "Sat, 22 Nov 2026 00:00:00 +0000",
+      confidence: "90",
+      attachmentFilenames: ["Invoice-INV-9.pdf"],
+    });
+    expect(r.subject).toBe("Fwd: Tax Invoice INV-9");
+    expect(r.contentType).toBe('text/plain; charset="UTF-8"');
+    expect(r.encoding).toBe("8bit");
+    expect(r.body).toContain("Forwarded automatically by the Atlas Invoice Agent.");
+    expect(r.body).toContain("Original From: vendor@acme.com");
+    expect(r.body).toContain("Invoice confidence: 90%");
+    expect(r.body).toContain("1 invoice attachment(s) are attached directly: Invoice-INV-9.pdf.");
+    expect(r.body).toContain("original.eml");
+  });
+
+  it("falls back to a (no subject) Fwd subject and omits confidence when absent", () => {
+    const r = renderForwardBody({ subject: "", from: "v@x.com", date: "", confidence: null, attachmentFilenames: [] });
+    expect(r.subject).toBe("Fwd: (no subject)");
+    expect(r.body).not.toContain("Invoice confidence");
+  });
+});
 
 describe("forwarding: .eml MIME builder", () => {
   const original = "From: vendor@acme.com\r\nSubject: Tax Invoice INV-9\r\n\r\nPlease find attached.";

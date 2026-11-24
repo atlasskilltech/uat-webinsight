@@ -1,5 +1,6 @@
 "use server";
 
+import { requireFullAccess } from "@/lib/auth/guard";
 import { revalidatePath } from "next/cache";
 import { queryOne, execute } from "@/lib/db";
 import { createId } from "@/lib/id";
@@ -22,6 +23,7 @@ export async function createTask(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(taskSchema, formData);
   if (!parsed.success) return parsed.state;
   const data = parsed.data;
@@ -74,6 +76,7 @@ export async function updateTask(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const id = String(formData.get("id") ?? "");
   if (!id) return errorState("Missing task id.");
   const parsed = parseForm(taskSchema, formData);
@@ -146,6 +149,7 @@ export async function updateTask(
 
 /** Quick status change (board columns / detail). Not a full form. */
 export async function setTaskStatus(id: string, status: string): Promise<void> {
+  await requireFullAccess();
   const before = await queryOne<Task>("SELECT * FROM `Task` WHERE `id` = ?", [id]);
   if (!before) return;
   await execute(
@@ -173,6 +177,7 @@ export async function setTaskStatus(id: string, status: string): Promise<void> {
 }
 
 export async function deleteTask(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `Task` WHERE `id` = ?", [id]);
   revalidateWork();
 }
@@ -181,6 +186,7 @@ export async function addWorkLog(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(workLogSchema, formData);
   if (!parsed.success) return parsed.state;
   const data = parsed.data;
@@ -197,6 +203,7 @@ export async function addWorkLog(
 }
 
 export async function deleteWorkLog(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `WorkLog` WHERE `id` = ?", [id]);
   revalidateWork();
 }

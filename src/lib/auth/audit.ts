@@ -7,6 +7,7 @@ export type AuditAction =
   | "user.created"
   | "user.updated"
   | "user.role_changed"
+  | "user.access_scope_changed"
   | "user.activated"
   | "user.deactivated"
   | "invite.created"

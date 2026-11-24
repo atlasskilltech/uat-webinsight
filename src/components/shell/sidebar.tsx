@@ -2,22 +2,37 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS, NAV_GROUPS } from "@/lib/nav";
+import { NAV_ITEMS, NAV_GROUPS, activeNavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { isPathAllowedForScope, type AccessScope } from "@/lib/auth/access";
 import { Tooltip } from "@/components/ui/tooltip";
 import { BrandLogo } from "./brand-logo";
 
 export function Sidebar({
   collapsed,
   isAdmin = false,
+  accessScope = "full",
   onNavigate,
 }: {
   collapsed: boolean;
   isAdmin?: boolean;
+  accessScope?: AccessScope;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const visibleItems = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
+  // Invoice-Agent-only users see only the modules their scope allows (the server
+  // also blocks the rest — this just hides what they can't open). Within that
+  // scope the Web-Insight `adminOnly` flag doesn't hide their own module's items
+  // (e.g. Agent Settings), which stay governed by the invoice finance role on
+  // the server. Full-access users keep the existing adminOnly behaviour.
+  const visibleItems = NAV_ITEMS.filter((i) => {
+    if (!isPathAllowedForScope(accessScope, i.href)) return false;
+    if (accessScope === "invoice_only") return true;
+    return !i.adminOnly || isAdmin;
+  });
+  // Highlight exactly ONE item: the deepest (longest-prefix) match for the path,
+  // so a parent (/invoices) is never active on a child route (/invoices/settings).
+  const activeHref = activeNavItem(pathname)?.href;
 
   return (
     <aside
@@ -50,10 +65,7 @@ export function Sidebar({
               )}
               <ul className="space-y-0.5">
                 {items.map((item) => {
-                  const active =
-                    item.href === "/"
-                      ? pathname === "/"
-                      : pathname.startsWith(item.href);
+                  const active = item.href === activeHref;
                   const link = (
                     <Link
                       href={item.href}

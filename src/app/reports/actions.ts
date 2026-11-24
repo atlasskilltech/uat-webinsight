@@ -1,5 +1,6 @@
 "use server";
 
+import { requireFullAccess } from "@/lib/auth/guard";
 import { revalidatePath } from "next/cache";
 import { queryOne, execute, json } from "@/lib/db";
 import { createId } from "@/lib/id";
@@ -10,6 +11,7 @@ import { buildReportData } from "@/lib/report-data";
 import { previousPeriod } from "@/lib/dates";
 
 export async function createReport(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireFullAccess();
   const parsed = parseForm(reportSchema, formData);
   if (!parsed.success) return parsed.state;
   const d = parsed.data;
@@ -43,6 +45,7 @@ export async function createReport(_prev: FormState, formData: FormData): Promis
 }
 
 export async function updateReport(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireFullAccess();
   const id = String(formData.get("id") ?? "");
   if (!id) return errorState("Missing report id.");
   const title = String(formData.get("title") ?? "").trim();
@@ -70,6 +73,7 @@ export async function updateReport(_prev: FormState, formData: FormData): Promis
 
 /** Rebuild the frozen snapshot from the stored period (refresh figures). */
 export async function regenerateReport(id: string): Promise<FormState> {
+  await requireFullAccess();
   const report = await queryOne<Report>("SELECT * FROM `Report` WHERE `id`=?", [id]);
   if (!report) return errorState("Report not found.");
   try {
@@ -83,6 +87,7 @@ export async function regenerateReport(id: string): Promise<FormState> {
 }
 
 export async function deleteReport(id: string): Promise<void> {
+  await requireFullAccess();
   await execute("DELETE FROM `Report` WHERE `id`=?", [id]);
   revalidatePath("/reports");
 }

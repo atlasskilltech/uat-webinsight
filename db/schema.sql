@@ -362,6 +362,7 @@ CREATE TABLE IF NOT EXISTS `User` (
     `email` VARCHAR(191) NOT NULL,
     `role` VARCHAR(191) NOT NULL DEFAULT 'user',
     `status` VARCHAR(191) NOT NULL DEFAULT 'active',
+    `accessScope` VARCHAR(16) NOT NULL DEFAULT 'full',
     `passwordHash` VARCHAR(191) NULL,
     `lastLoginAt` DATETIME(3) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -371,6 +372,11 @@ CREATE TABLE IF NOT EXISTS `User` (
     INDEX `User_status_idx`(`status`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- Backward-compatible migration for EXISTING databases: add the accessScope
+-- column if it is not present yet. Every existing user defaults to 'full', so
+-- nobody loses access. Idempotent / safe to re-run (ADD COLUMN IF NOT EXISTS).
+ALTER TABLE `User` ADD COLUMN IF NOT EXISTS `accessScope` VARCHAR(16) NOT NULL DEFAULT 'full' AFTER `status`;
 
 CREATE TABLE IF NOT EXISTS `Session` (
     `id` VARCHAR(191) NOT NULL,

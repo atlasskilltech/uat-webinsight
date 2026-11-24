@@ -20,6 +20,7 @@ export const getCurrentUser = cache(async (): Promise<SafeUser | null> => {
     email: u.email,
     role: u.role === "admin" ? "admin" : "user",
     status: "active",
+    accessScope: u.accessScope === "invoice_only" ? "invoice_only" : "full",
     lastLoginAt: null,
     createdAt: new Date(0),
   };
