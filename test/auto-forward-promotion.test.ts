@@ -80,6 +80,17 @@ vi.mock("@/lib/invoice/db", () => ({
       }
       return { affectedRows: 1 };
     }
+    // Demotion (disable authoritative): approved(auto) -> pending when the mailbox
+    // now has auto_forward OFF. Human approvals (approved_by set) are untouched.
+    if (sql.includes("JOIN `gmail_integrations`") && sql.includes("SET f.`status`='pending'")) {
+      const org = P[0] as string;
+      for (const r of Object.values(H.forwards)) {
+        if (r.organization_id === org && r.status === "approved" && r.approved_by == null && !H.autoForward[r.gmail_integration_id]) {
+          r.status = "pending";
+        }
+      }
+      return { affectedRows: 1 };
+    }
     const last = P[P.length - 1] as string;
     if (sql.includes("SET `status`='sending'")) {
       const r = H.forwards[last];
@@ -132,6 +143,25 @@ describe("runForwarding — auto-approve for auto-forward mailboxes", () => {
     expect(api.gmailSend).not.toHaveBeenCalled();
     expect(r.forwarded).toBe(0);
     expect(H.forwards["P2"].status).toBe("pending");
+  });
+
+  it("disable is authoritative: demotes an auto-approved-but-unsent row back to 'pending' when auto-forward is OFF", async () => {
+    H.autoForward["gi-off"] = false; // mailbox auto-forward turned OFF
+    // Row was auto-created 'approved' while ON (approved_by null), not yet sent.
+    seedForward({ id: "P4", organization_id: "ORG", status: "approved", gmail_integration_id: "gi-off", approved_by: null });
+    const r = await runForwarding("ORG");
+    expect(api.gmailSend).not.toHaveBeenCalled();
+    expect(r.forwarded).toBe(0);
+    expect(H.forwards["P4"].status).toBe("pending");
+  });
+
+  it("disable does NOT cancel a human/agent approval (approved_by set still sends when auto-forward is OFF)", async () => {
+    H.autoForward["gi-off"] = false;
+    seedForward({ id: "P5", organization_id: "ORG", status: "approved", gmail_integration_id: "gi-off", approved_by: "user-1" });
+    const r = await runForwarding("ORG");
+    expect(api.gmailSend).toHaveBeenCalledTimes(1);
+    expect(r.forwarded).toBe(1);
+    expect(H.forwards["P5"].status).toBe("forwarded");
   });
 
   it("never promotes a 'review' item even with auto-forward ON (still needs a human)", async () => {
