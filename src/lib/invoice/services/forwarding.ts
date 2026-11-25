@@ -792,9 +792,14 @@ async function gstinAutoForwardGate(
     );
     buyerGstin = normalizeGstin(inv?.buyer_gstin ?? null);
   } catch (e) {
-    if (isMissingColumnError(e) || isMissingTableError(e)) {
-      return { pass: false, reason: "the buyer GSTIN could not be read (invoice extraction not available on this environment yet)" };
-    }
+    // The GSTIN column/table is not migrated on this environment yet (012 not
+    // applied). The feature is DORMANT until then — do NOT gate, so auto-forward
+    // keeps working exactly as before the GSTIN feature was deployed. Enforcement
+    // begins only once migration 012 adds `invoices.buyer_gstin` (mirrors how the
+    // sender-filter gate is dormant until 011). This is distinct from a NULL
+    // value in an existing column, which IS a per-invoice "unreadable" and goes
+    // to review below.
+    if (isMissingColumnError(e) || isMissingTableError(e)) return { pass: true };
     throw e;
   }
   if (!buyerGstin) return { pass: false, reason: "the invoice's buyer GSTIN is missing or unreadable" };
