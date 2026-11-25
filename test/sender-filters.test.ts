@@ -36,6 +36,31 @@ describe("extractSenderEmail", () => {
     expect(extractSenderEmail("not an email")).toBeNull();
     expect(extractSenderEmail("")).toBeNull();
   });
+
+  // Regression: unusual but RFC-legal From headers must not be mis-parsed into a
+  // wrong/unparseable address (which, with gating active, would wrongly drop a
+  // legitimate allowed sender).
+  it("ignores a quoted display name containing angle brackets and an @", () => {
+    expect(extractSenderEmail('"Weird <tag> x@evil.com" <real@acme.com>')).toBe("real@acme.com");
+  });
+  it("handles a comma inside a quoted display name", () => {
+    expect(extractSenderEmail('"Doe, John" <john@x.com>')).toBe("john@x.com");
+  });
+  it("handles a backslash-escaped quote in the display name", () => {
+    expect(extractSenderEmail('"a\\"b" <c@d.com>')).toBe("c@d.com");
+  });
+  it("takes the real addr-spec when stray brackets precede it", () => {
+    expect(extractSenderEmail("Name <not-an-addr> <real@acme.com>")).toBe("real@acme.com");
+  });
+  it("handles the address-in-comment form billing@acme.com (Acme)", () => {
+    expect(extractSenderEmail("billing@acme.com (Acme Billing)")).toBe("billing@acme.com");
+  });
+  it("returns null for the null-sender <>", () => {
+    expect(extractSenderEmail("<>")).toBeNull();
+  });
+  it("still parses a normal display-name address", () => {
+    expect(extractSenderEmail("John Doe <john@x.com>")).toBe("john@x.com");
+  });
 });
 
 describe("normalizeSenderPattern", () => {

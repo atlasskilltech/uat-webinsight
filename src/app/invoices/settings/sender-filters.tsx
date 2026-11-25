@@ -91,7 +91,9 @@ export function SenderFilters({
 
         {allow.length === 0 && (
           <p className="rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning">
-            No allowed senders yet — this organisation will NOT forward any mail until you add at least one.
+            <strong>No allowed senders configured.</strong> This organisation will <strong>not forward any mail</strong> until
+            you add at least one allowed sender. Adding only excluded senders is not enough — the allowed list must have at
+            least one entry for forwarding to happen.
           </p>
         )}
 

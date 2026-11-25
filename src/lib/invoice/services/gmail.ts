@@ -475,41 +475,61 @@ export async function syncGmailAccount(
         // forwarded. Auto-forward stays OFF by default and an uncertain
         // (below-threshold) document goes to review, not auto. Ordinary mail /
         // newsletters are not documents and are never forwarded.
-        // Per-org sender gate: skip forwarding entirely unless this sender is
-        // allowed and not excluded. The email is still ingested/recorded above —
-        // only the FORWARD is gated. When the feature isn't configured (table not
-        // migrated), evaluateSenderForward returns forward:true (no gating).
-        const senderDecision = routing
-          ? evaluateSenderForward(routing.senderFilters, from)
-          : { forward: false as const };
-        if (routing && !opts.backfill && senderDecision.forward) {
-          const plan = await resolveForwardingPlan(
-            organizationId,
-            { integrationId, sender: from, categoryKey, confidencePct: confPct },
-            routing,
-          );
-          const destination = plan.destination;
-          if (shouldForwardEmail(plan, isDocumentCandidate)) {
-            // Legacy path honours the mailbox's own auto-forward switch; a matched
-            // rule carries its own auto_forward override.
-            const effectiveAuto = plan.source === "legacy" ? integration.auto_forward : plan.autoForward;
-            const forwardStatus = decideForwardStatus(confPct, plan.minConfidence, effectiveAuto);
-            await iExecute(
-              "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
-                "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
-                "ON DUPLICATE KEY UPDATE `id`=`id`",
-              [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
+        // Per-org sender gate (cheap, in-memory): a forward only happens when the
+        // sender is allowed and not excluded. The email is still ingested/recorded
+        // above — only the FORWARD is gated. When the feature isn't configured
+        // (table not migrated), evaluateSenderForward returns forward:true.
+        if (routing && !opts.backfill) {
+          const senderDecision = evaluateSenderForward(routing.senderFilters, from);
+          if (senderDecision.forward) {
+            const plan = await resolveForwardingPlan(
+              organizationId,
+              { integrationId, sender: from, categoryKey, confidencePct: confPct },
+              routing,
             );
-            // Immediate forwarding: when eligible for auto-forward, enqueue a
-            // forward job so the drain worker sends it within ~10s instead of
-            // waiting for the periodic forwarding cycle.
-            if (forwardStatus === "approved") {
-              await enqueueJob({
-                type: "forward",
+            const destination = plan.destination;
+            if (shouldForwardEmail(plan, isDocumentCandidate)) {
+              // Legacy path honours the mailbox's own auto-forward switch; a matched
+              // rule carries its own auto_forward override.
+              const effectiveAuto = plan.source === "legacy" ? integration.auto_forward : plan.autoForward;
+              const forwardStatus = decideForwardStatus(confPct, plan.minConfidence, effectiveAuto);
+              await iExecute(
+                "INSERT INTO `invoice_forwards` (`id`,`organization_id`,`gmail_integration_id`,`email_message_id`," +
+                  "`source_gmail_message_id`,`destination`,`status`,`confidence`) VALUES (?,?,?,?,?,?,?,?) " +
+                  "ON DUPLICATE KEY UPDATE `id`=`id`",
+                [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
+              );
+              // Immediate forwarding: when eligible for auto-forward, enqueue a
+              // forward job so the drain worker sends it within ~10s instead of
+              // waiting for the periodic forwarding cycle.
+              if (forwardStatus === "approved") {
+                await enqueueJob({
+                  type: "forward",
+                  organizationId,
+                  payload: { organizationId },
+                  idempotencyKey: `forward:${organizationId}:${emailMessageId}`,
+                  priority: 10,
+                }).catch(() => undefined);
+              }
+            }
+          } else if (isDocumentCandidate && routing.senderFilters.configured) {
+            // Visibility: this was a genuine business document that WOULD have been
+            // forwarded, but the sender is excluded / not in the allowed list. No
+            // forward task is created (so it is never sent); record WHY in the audit
+            // log so a Finance Admin can see it was withheld by the sender filters.
+            const plan = await resolveForwardingPlan(
+              organizationId,
+              { integrationId, sender: from, categoryKey, confidencePct: confPct },
+              routing,
+            );
+            if (shouldForwardEmail(plan, isDocumentCandidate)) {
+              await logInvoiceAudit({
                 organizationId,
-                payload: { organizationId },
-                idempotencyKey: `forward:${organizationId}:${emailMessageId}`,
-                priority: 10,
+                actorType: "agent",
+                action: "forwarding.withheld_sender",
+                entityType: "email_message",
+                entityId: emailMessageId,
+                metadata: { reason: senderDecision.reason, from: from.slice(0, 320), destination: plan.destination },
               }).catch(() => undefined);
             }
           }

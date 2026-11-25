@@ -239,8 +239,16 @@ const DOMAIN_RE = /^(?=.{1,255}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{
  */
 export function extractSenderEmail(fromHeader: string): string | null {
   if (!fromHeader) return null;
-  const angle = fromHeader.match(/<([^<>]+)>/);
-  const base = (angle ? angle[1] : fromHeader).toLowerCase();
+  // 1) Remove quoted display-name strings first — they can legally contain '<',
+  //    '>' and '@' (e.g. `"Weird <tag> x@evil.com" <real@acme.com>`), which would
+  //    otherwise be mistaken for the address. Backslash-escaped quotes honoured.
+  const unquoted = fromHeader.replace(/"(?:[^"\\]|\\.)*"/g, " ");
+  // 2) Prefer the angle-addr <addr>. When several remain, the LAST is the real
+  //    addr-spec (earlier ones are leftover display-name fragments).
+  const angles = [...unquoted.matchAll(/<([^<>]*)>/g)];
+  const base = (angles.length ? angles[angles.length - 1][1] : unquoted).toLowerCase();
+  // 3) Pull the first email-looking token out of the chosen segment (handles the
+  //    comment form `billing@acme.com (Acme)` and stray surrounding text).
   const token = base.match(/[^\s"'<>(),;:]+@[^\s"'<>(),;:]+/);
   const email = (token ? token[0] : base).trim();
   return EMAIL_RE.test(email) ? email : null;
@@ -313,6 +321,27 @@ export function evaluateSenderForward(
 }
 
 /**
+ * Human-readable explanation for WHY a forward was withheld by sender filters —
+ * used in the task's `last_error` (shown in "Recent forwards") and in approval
+ * messages so a Finance Admin can see whether it was the exclusion list or the
+ * allowed-senders list that stopped it.
+ */
+export function senderBlockReason(reason: SenderForwardReason): string {
+  switch (reason) {
+    case "blocked":
+      return "the sender is on this organisation's excluded list";
+    case "empty_allowlist":
+      return "this organisation has no allowed senders configured";
+    case "not_in_allowlist":
+      return "the sender is not in this organisation's allowed senders";
+    case "unparseable_sender":
+      return "the sender address could not be parsed and the allowed-senders list is active";
+    default:
+      return "it was blocked by this organisation's sender filters";
+  }
+}
+
+/**
  * Load an org's sender filters. Missing-table-safe: when the
  * forwarding_sender_filters table isn't migrated yet, returns configured:false
  * so the caller applies NO gating (pre-migration behaviour is unchanged).
@@ -346,21 +375,24 @@ export async function addSenderFilter(
   const k: SenderFilterKind = kind === "block" ? "block" : "allow";
   const norm = normalizeSenderPattern(rawPattern);
   if (!norm.ok) return { ok: false, message: norm.message };
+  const id = createId();
   const res = await iExecute(
     "INSERT INTO `forwarding_sender_filters` (`id`,`organization_id`,`kind`,`pattern`) VALUES (?,?,?,?) " +
       "ON DUPLICATE KEY UPDATE `id`=`id`",
-    [createId(), organizationId, k, norm.value],
+    [id, organizationId, k, norm.value],
   );
   if (res.affectedRows === 0) {
     return { ok: false, message: k === "block" ? "That sender is already excluded." : "That sender is already allowed." };
   }
+  // Audit uses entityId = row id (consistent with removeSenderFilter), with the
+  // kind/pattern carried in the before/after payload.
   await logInvoiceAudit({
     organizationId,
     actorUserId: actor.id,
     actorLabel: actor.email,
     action: k === "block" ? "forwarding.sender_excluded" : "forwarding.sender_allowed",
     entityType: "forwarding_sender_filter",
-    entityId: norm.value,
+    entityId: id,
     after: { kind: k, pattern: norm.value },
   });
   return {
@@ -375,18 +407,24 @@ export async function removeSenderFilter(
   actor: { id: string; email: string },
   id: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const res = await iExecute("DELETE FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?", [
-    organizationId,
-    id,
-  ]);
-  if (res.affectedRows === 0) return { ok: false, message: "Entry not found." };
+  // Fetch first (org-scoped) so the audit record carries the same shape as add
+  // (entityId = row id, with the removed kind/pattern in the payload). A stale or
+  // cross-org id resolves to no row here → "Entry not found" (never a cross-org
+  // delete, never a false success).
+  const existing = await iQueryOne<{ id: string; kind: string; pattern: string }>(
+    "SELECT `id`, `kind`, `pattern` FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?",
+    [organizationId, id],
+  );
+  if (!existing) return { ok: false, message: "Entry not found." };
+  await iExecute("DELETE FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?", [organizationId, id]);
   await logInvoiceAudit({
     organizationId,
     actorUserId: actor.id,
     actorLabel: actor.email,
     action: "forwarding.sender_filter_removed",
     entityType: "forwarding_sender_filter",
-    entityId: id,
+    entityId: existing.id,
+    before: { kind: existing.kind === "block" ? "block" : "allow", pattern: existing.pattern },
   });
   return { ok: true, message: "Removed." };
 }
@@ -702,8 +740,26 @@ export function buildForwardMime(input: {
 async function sendForward(
   organizationId: string,
   forward: ForwardRow,
-): Promise<"forwarded" | "failed" | "skipped" | "unknown"> {
+): Promise<"forwarded" | "failed" | "skipped" | "unknown" | "blocked"> {
   if (forward.status === "forwarded") return "forwarded";
+
+  // SEND-TIME sender gate (authoritative). This is the single choke point every
+  // send path funnels through — the drain worker (runForwarding), manual approval
+  // (approveAndForward) and the AI-agent forward (forwardEmailById → approve) —
+  // so no path can bypass the restriction. Re-checked HERE, at send time, so a
+  // sender excluded (or an allowed-senders list changed) AFTER the task was
+  // queued or approved is never forwarded. It runs BEFORE the atomic claim, so no
+  // message is sent; the task is moved out of the queue to 'skipped' with an
+  // explanatory last_error (surfaced in "Recent forwards"). Every runner runs
+  // this same check, so a race cannot slip a blocked send through.
+  const gate = evaluateSenderForward(await listSenderFilters(organizationId), forward.from_address ?? "");
+  if (!gate.forward) {
+    await iExecute(
+      "UPDATE `invoice_forwards` SET `status`='skipped', `last_error`=? WHERE id=? AND `status`='approved'",
+      [`Not forwarded: ${senderBlockReason(gate.reason)}.`, forward.id],
+    );
+    return "blocked";
+  }
 
   // Atomic claim — only the runner whose UPDATE flips 'approved' -> 'sending' proceeds.
   const claim = await iExecute(
@@ -863,6 +919,20 @@ export async function approveAndForward(
   const row = await getForward(organizationId, forwardId);
   if (!row) return { ok: false, message: "Forward task not found." };
   if (row.status === "forwarded") return { ok: true, message: "Already forwarded." };
+
+  // Sender gate at approval time: if the sender has since been excluded, or the
+  // allowed-senders list no longer admits it, do NOT forward. Move the task to
+  // 'skipped' with an explanatory reason and tell the approver which list stopped
+  // it. (sendForward re-checks this too, as the final backstop.)
+  const gate = evaluateSenderForward(await listSenderFilters(organizationId), row.from_address ?? "");
+  if (!gate.forward) {
+    await iExecute(
+      "UPDATE `invoice_forwards` SET `status`='skipped', `last_error`=? WHERE organization_id=? AND id=? AND `status` IN ('pending','review','failed','approved')",
+      [`Not forwarded: ${senderBlockReason(gate.reason)}.`, organizationId, forwardId],
+    );
+    return { ok: false, message: `Not forwarded — ${senderBlockReason(gate.reason)}. Update Allowed senders / Excluded senders in Settings.` };
+  }
+
   // Only move to 'approved' from a non-terminal state (never re-open a forwarded one).
   await iExecute(
     "UPDATE `invoice_forwards` SET `status`='approved', `approved_by`=? WHERE id=? AND `status` IN ('pending','review','failed','approved')",
@@ -870,6 +940,12 @@ export async function approveAndForward(
   );
   const result = await sendForward(organizationId, { ...row, status: "approved" });
   if (result === "forwarded") return { ok: true, message: "Forwarded to Finance & Accounts." };
+  if (result === "blocked") {
+    return {
+      ok: false,
+      message: "Not forwarded — the sender is excluded or not in this organisation's allowed senders. Update Allowed senders / Excluded senders in Settings.",
+    };
+  }
   if (result === "unknown") {
     return {
       ok: false,
@@ -911,13 +987,10 @@ export async function forwardEmailById(
   // sender may be forwarded. Keeps the allow-list / exclusions authoritative.
   const senderDecision = evaluateSenderForward(await listSenderFilters(organizationId), email.from_address ?? "");
   if (!senderDecision.forward) {
-    const message =
-      senderDecision.reason === "blocked"
-        ? "This sender is on the organisation's excluded list, so it is not forwarded. Remove it from Excluded senders to forward."
-        : senderDecision.reason === "empty_allowlist"
-          ? "No allowed senders are configured for this organisation — add the sender under Allowed senders to forward."
-          : "This sender is not in the organisation's allowed senders — add it under Allowed senders to forward.";
-    return { ok: false, message };
+    return {
+      ok: false,
+      message: `Not forwarded — ${senderBlockReason(senderDecision.reason)}. Update Allowed senders / Excluded senders in Settings.`,
+    };
   }
 
   // Idempotent create: both unique keys ((email_message_id,destination) and
