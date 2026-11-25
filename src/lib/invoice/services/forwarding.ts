@@ -22,25 +22,91 @@ export interface ForwardingSettings {
   financeDestination: string | null;
   minConfidence: number;
   enabled: boolean;
+  /**
+   * OPT-IN GSTIN match validation for auto-forwarding GST invoices (migration
+   * 013). FALSE by default so auto-forward works out of the box; when TRUE, a GST
+   * invoice is auto-forwarded only if its extracted buyer GSTIN matches the org's
+   * GSTIN (otherwise it is held for manual review). A human/agent approval always
+   * bypasses the gate.
+   */
+  gstinValidation: boolean;
 }
 
 export async function getForwardingSettings(organizationId: string): Promise<ForwardingSettings> {
-  const defaults: ForwardingSettings = { financeDestination: null, minConfidence: 70, enabled: true };
+  const defaults: ForwardingSettings = { financeDestination: null, minConfidence: 70, enabled: true, gstinValidation: false };
+  const map = (row: { finance_destination: string | null; min_confidence: string; enabled: boolean; gstin_validation?: boolean } | null): ForwardingSettings => ({
+    financeDestination: row?.finance_destination ?? null,
+    minConfidence: Number(row?.min_confidence ?? 70),
+    enabled: row?.enabled ?? true,
+    gstinValidation: Boolean(row?.gstin_validation ?? false),
+  });
   try {
-    const row = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
-      "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
+    const row = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean; gstin_validation: boolean }>(
+      "SELECT finance_destination, min_confidence, enabled, gstin_validation FROM `forwarding_settings` WHERE organization_id=?",
       [organizationId],
     );
-    return {
-      financeDestination: row?.finance_destination ?? null,
-      minConfidence: Number(row?.min_confidence ?? 70),
-      enabled: row?.enabled ?? true,
-    };
+    return map(row);
   } catch (e) {
     // DB reachable but not migrated to this table yet → safe defaults, no crash.
     if (isMissingTableError(e)) return defaults;
+    // The gstin_validation column is added by migration 013. Until it is applied,
+    // re-read the pre-013 columns (the gate stays OFF — its safe default).
+    if (isMissingColumnError(e)) {
+      try {
+        const row = await iQueryOne<{ finance_destination: string | null; min_confidence: string; enabled: boolean }>(
+          "SELECT finance_destination, min_confidence, enabled FROM `forwarding_settings` WHERE organization_id=?",
+          [organizationId],
+        );
+        return map(row);
+      } catch (e2) {
+        if (isMissingTableError(e2)) return defaults;
+        throw e2;
+      }
+    }
     throw e;
   }
+}
+
+/** Shown when the GSTIN opt-in is toggled before migration 013 has run. */
+const GSTIN_VALIDATION_NOT_ACTIVE =
+  "GSTIN validation isn't activated on this environment yet. Apply migration 013 (npm run invoice:db:init) to enable it.";
+
+/**
+ * Turn the opt-in GSTIN match validation on/off for an organization (migration
+ * 013). Upsert-safe (the forwarding_settings row's other columns keep their DB
+ * defaults when it is created here) and missing-column-safe (a clear message
+ * before 013 is applied). Returns the outcome for the Settings UI.
+ */
+export async function setGstinValidation(
+  organizationId: string,
+  actor: { id: string; email: string },
+  enabled: boolean,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    await iExecute(
+      "INSERT INTO `forwarding_settings` (`organization_id`,`gstin_validation`) VALUES (?,?) " +
+        "ON DUPLICATE KEY UPDATE `gstin_validation`=VALUES(`gstin_validation`)",
+      [organizationId, enabled],
+    );
+  } catch (e) {
+    if (isMissingColumnError(e) || isMissingTableError(e)) return { ok: false, message: GSTIN_VALIDATION_NOT_ACTIVE };
+    throw e;
+  }
+  await logInvoiceAudit({
+    organizationId,
+    actorUserId: actor.id,
+    actorLabel: actor.email,
+    action: "forwarding.gstin_validation_changed",
+    entityType: "forwarding_settings",
+    entityId: organizationId,
+    after: { gstinValidation: enabled },
+  });
+  return {
+    ok: true,
+    message: enabled
+      ? "GSTIN match validation enabled — GST invoices auto-forward only when the buyer GSTIN matches this organisation's."
+      : "GSTIN match validation disabled — invoices auto-forward without GSTIN matching.",
+  };
 }
 
 export async function saveForwardingSettings(
@@ -780,6 +846,12 @@ async function gstinAutoForwardGate(
     forward.classification === "credit_note";
   if (!isGstInvoice) return { pass: true };
 
+  // OPT-IN (migration 013): the GSTIN match gate only runs for organizations that
+  // explicitly enabled it. Off by default so auto-forward works without AI
+  // extraction / a readable buyer GSTIN on every invoice.
+  const settings = await getForwardingSettings(organizationId);
+  if (!settings.gstinValidation) return { pass: true };
+
   const orgRow = await iQueryOne<{ gstin: string | null }>("SELECT `gstin` FROM `organizations` WHERE id=?", [organizationId]);
   const orgGstin = normalizeGstin(orgRow?.gstin ?? null);
   if (!orgGstin) return { pass: false, reason: "the organisation has no GSTIN configured to validate against" };
@@ -992,6 +1064,21 @@ export async function runForwarding(
     "UPDATE `invoice_forwards` f JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
       "SET f.`status`='approved' " +
       "WHERE f.`organization_id`=? AND f.`status`='pending' AND g.`auto_forward`=1",
+    [organizationId],
+  );
+
+  // Disable is authoritative (symmetric to the promotion above): turning a
+  // mailbox's auto-forward OFF must stop auto-forwards that were queued while it
+  // was ON but not yet sent. Demote any AUTO-created 'approved' row (approved_by
+  // IS NULL) back to 'pending' when its mailbox now has auto-forward OFF, so it
+  // is held — never auto-sent — until auto-forward is re-enabled (which re-
+  // promotes it) or a human approves it. A human/agent approval carries
+  // approved_by and is deliberately untouched here, so an explicit approval still
+  // sends regardless of the mailbox switch.
+  await iExecute(
+    "UPDATE `invoice_forwards` f JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
+      "SET f.`status`='pending' " +
+      "WHERE f.`organization_id`=? AND f.`status`='approved' AND f.`approved_by` IS NULL AND g.`auto_forward`=0",
     [organizationId],
   );
 

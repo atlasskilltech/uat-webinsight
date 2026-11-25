@@ -7,6 +7,7 @@ import { isAuthError } from "@/lib/auth/guard";
 import { requireCapability } from "@/lib/invoice/permissions";
 import {
   saveForwardingSettings,
+  setGstinValidation,
   approveAndForward,
   rejectForward,
   addCcRecipient,
@@ -52,6 +53,20 @@ export async function saveForwardingSettingsAction(_prev: FormState, formData: F
     return successState(parsed.data.financeDestination ? "Destination email saved." : "Destination cleared.");
   } catch (e) {
     return fail(e);
+  }
+}
+
+export async function setGstinValidationAction(input: { enabled: boolean }): Promise<{ ok: boolean; message: string }> {
+  try {
+    const ctx = await requireCapability("settings.manage");
+    const res = await setGstinValidation(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, input.enabled);
+    if (res.ok) {
+      revalidatePath("/invoices/settings");
+      revalidatePath("/invoices");
+    }
+    return res;
+  } catch (e) {
+    return { ok: false, message: isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed." };
   }
 }
 

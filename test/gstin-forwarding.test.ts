@@ -19,6 +19,7 @@ const H = vi.hoisted(() => ({
   buyerGstin: {} as Record<string, string | null>, // keyed by email_message_id
   forwards: {} as Record<string, Row>,
   columnMissing: false, // simulate invoices.buyer_gstin not migrated (012 pending)
+  gstinValidation: true, // opt-in (migration 013); these tests exercise the gate ON
 }));
 
 const api = vi.hoisted(() => ({
@@ -86,7 +87,7 @@ vi.mock("@/lib/invoice/db", () => ({
       const emId = params[1] as string;
       return { buyer_gstin: H.buyerGstin[emId] ?? null };
     }
-    if (sql.includes("FROM `forwarding_settings`")) return { finance_destination: "fin@x.com", min_confidence: "70.00", enabled: 1 };
+    if (sql.includes("FROM `forwarding_settings`")) return { finance_destination: "fin@x.com", min_confidence: "70.00", enabled: 1, gstin_validation: H.gstinValidation ? 1 : 0 };
     if (sql.includes("FROM `invoice_forwards` f")) {
       const [org, id] = params as string[];
       const r = H.forwards[id];
@@ -155,6 +156,7 @@ beforeEach(() => {
   H.buyerGstin = {};
   H.forwards = {};
   H.columnMissing = false;
+  H.gstinValidation = true;
   api.gmailSend.mockClear();
 });
 
@@ -213,6 +215,18 @@ describe("GSTIN auto-forward gate", () => {
     expect(api.gmailSend).toHaveBeenCalledTimes(1);
     expect(r.forwarded).toBe(1);
     expect(H.forwards["F7"].status).toBe("forwarded");
+  });
+
+  it("is OPT-IN: when GSTIN validation is OFF, a mismatched/absent buyer GSTIN still auto-forwards", async () => {
+    // Default for an organisation (migration 013): the gate is off, so an invoice
+    // auto-forwards without requiring a readable/matching buyer GSTIN.
+    H.gstinValidation = false;
+    seedForward({ id: "F8", organization_id: "ORG", status: "approved", from_address: "<ap@vendor.com>" });
+    H.buyerGstin["em-F8"] = "29BBBBB1111B2Z6"; // mismatch — but validation is off
+    const r = await runForwarding("ORG");
+    expect(api.gmailSend).toHaveBeenCalledTimes(1);
+    expect(r.forwarded).toBe(1);
+    expect(H.forwards["F8"].status).toBe("forwarded");
   });
 
   it("a human approval bypasses the GSTIN gate (approver has reviewed)", async () => {
