@@ -980,6 +980,21 @@ export async function runForwarding(
   if (!(await isOrganizationActive(organizationId))) {
     return { forwarded: 0, failed: 0, unknown: 0, pending: 0 };
   }
+
+  // Auto-approve for auto-forward mailboxes: promote any 'pending' forward whose
+  // mailbox currently has auto-forward ON to 'approved', so enabling auto-forward
+  // also sends invoices that were queued BEFORE it was turned on — not only ones
+  // that arrive afterward. A 'pending' row already passed the confidence
+  // threshold (a below-threshold document is 'review', which is NOT promoted and
+  // still needs a human). The sender + GSTIN gates still run at send time in
+  // sendForward, so this cannot bypass any check.
+  await iExecute(
+    "UPDATE `invoice_forwards` f JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
+      "SET f.`status`='approved' " +
+      "WHERE f.`organization_id`=? AND f.`status`='pending' AND g.`auto_forward`=1",
+    [organizationId],
+  );
+
   const approved = await listForwards(organizationId, { status: "approved", limit: 100 });
   let forwarded = 0;
   let failed = 0;
