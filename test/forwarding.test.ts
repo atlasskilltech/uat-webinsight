@@ -1,29 +1,67 @@
 import { describe, it, expect } from "vitest";
 import { buildForwardMime, normalizeEmail, renderForwardBody } from "@/lib/invoice/services/forwarding";
 
-describe("forwarding: renderForwardBody (template seam)", () => {
-  it("renders the current plain-text body + Fwd subject (ready for a future template)", () => {
+describe("forwarding: renderForwardBody (professional HTML template)", () => {
+  it("renders a professional HTML body with org name + original From/To/Date/Subject", () => {
     const r = renderForwardBody({
+      organisationName: "Atlas ISME",
       subject: "Tax Invoice INV-9",
       from: "vendor@acme.com",
+      to: "ap@atlas.edu",
       date: "Sat, 22 Nov 2026 00:00:00 +0000",
       confidence: "90",
       attachmentFilenames: ["Invoice-INV-9.pdf"],
     });
     expect(r.subject).toBe("Fwd: Tax Invoice INV-9");
-    expect(r.contentType).toBe('text/plain; charset="UTF-8"');
+    expect(r.contentType).toBe('text/html; charset="UTF-8"'); // HTML, not plain text
     expect(r.encoding).toBe("8bit");
-    expect(r.body).toContain("Forwarded automatically by the Atlas Invoice Agent.");
-    expect(r.body).toContain("Original From: vendor@acme.com");
-    expect(r.body).toContain("Invoice confidence: 90%");
-    expect(r.body).toContain("1 invoice attachment(s) are attached directly: Invoice-INV-9.pdf.");
-    expect(r.body).toContain("original.eml");
+    expect(r.body).toContain("<!doctype html>");
+    expect(r.body).toContain("Atlas ISME"); // organisation name shown prominently
+    expect(r.body).toContain("email assistant"); // clearly a forward by the org
+    expect(r.body).toContain("vendor@acme.com"); // original sender
+    expect(r.body).toContain("ap@atlas.edu"); // original recipient
+    expect(r.body).toContain("Tax Invoice INV-9"); // subject
+    expect(r.body).toContain("Invoice-INV-9.pdf"); // attachment listed
+    expect(r.body).toContain("original.eml"); // full original preserved
+    expect(r.body).not.toContain("Invoice confidence"); // internal metric not shown to recipients
   });
 
-  it("falls back to a (no subject) Fwd subject and omits confidence when absent", () => {
-    const r = renderForwardBody({ subject: "", from: "v@x.com", date: "", confidence: null, attachmentFilenames: [] });
+  it("escapes untrusted header values (no HTML injection from the sender/subject)", () => {
+    const r = renderForwardBody({
+      organisationName: "Org",
+      subject: "<script>alert(1)</script>",
+      from: "a@b.com",
+      to: "c@d.com",
+      date: "",
+      confidence: null,
+      attachmentFilenames: ['<img src=x onerror="evil()">.pdf'],
+    });
+    expect(r.body).not.toContain("<script>alert(1)</script>");
+    expect(r.body).toContain("&lt;script&gt;");
+    expect(r.body).not.toContain('onerror="evil()"');
+  });
+
+  it("falls back to a (no subject) Fwd subject and a default organisation label", () => {
+    const r = renderForwardBody({ organisationName: "", subject: "", from: "v@x.com", to: "", date: "", confidence: null, attachmentFilenames: [] });
     expect(r.subject).toBe("Fwd: (no subject)");
-    expect(r.body).not.toContain("Invoice confidence");
+    expect(r.body).toContain("Your organization");
+  });
+
+  it("inlines the sanitized original body under an 'Original message' section", () => {
+    const r = renderForwardBody({
+      organisationName: "Org", subject: "s", from: "a@b.com", to: "c@d.com", date: "", confidence: null,
+      attachmentFilenames: [], originalBodyHtml: "<p>Hello the full body is here</p>",
+    });
+    expect(r.body).toContain("Original message");
+    expect(r.body).toContain("<p>Hello the full body is here</p>"); // readable inline, no original.eml needed
+  });
+
+  it("shows an original.eml note when no inline body could be produced", () => {
+    const r = renderForwardBody({
+      organisationName: "Org", subject: "s", from: "a@b.com", to: "c@d.com", date: "", confidence: null,
+      attachmentFilenames: [],
+    });
+    expect(r.body).toContain("attached as <b>original.eml</b>");
   });
 });
 
@@ -34,8 +72,10 @@ describe("forwarding: .eml MIME builder", () => {
   it("addresses the Finance destination and uses a Fwd: subject", () => {
     const mime = buildForwardMime({
       destination: "finance.accounts@uni.edu",
+      organisationName: "Atlas ISME",
       subject: "Tax Invoice INV-9",
       from: "vendor@acme.com",
+      to: "ap@atlas.edu",
       date: "Sat, 22 Nov 2026 00:00:00 +0000",
       confidence: "90",
       rawOriginalBase64Url: rawB64Url,
@@ -44,7 +84,9 @@ describe("forwarding: .eml MIME builder", () => {
     expect(mime).toContain("Subject: Fwd: Tax Invoice INV-9");
     expect(mime).toContain("Content-Type: message/rfc822");
     expect(mime).toContain('filename="original.eml"');
-    expect(mime).toContain("Invoice confidence: 90%");
+    // The body part is the redesigned HTML with the org name + metadata.
+    expect(mime).toContain('Content-Type: text/html; charset="UTF-8"');
+    expect(mime).toContain("Atlas ISME");
   });
 
   it("embeds the full original as a decodable .eml attachment", () => {

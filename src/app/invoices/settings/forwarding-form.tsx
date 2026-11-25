@@ -2,21 +2,18 @@
 
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Field, Input, Select } from "@/components/ui/form";
+import { Field, Input } from "@/components/ui/form";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { useToast } from "@/components/ui/toast";
 import { idleState } from "@/lib/form-state";
 import { saveForwardingSettingsAction } from "../forwarding-actions";
 
-export function ForwardingSettingsForm({
-  destination,
-  minConfidence,
-  enabled,
-}: {
-  destination: string;
-  minConfidence: number;
-  enabled: boolean;
-}) {
+/**
+ * Per-organization destination email. Simple by design: the single address this
+ * organization's documents are forwarded to. CC recipients are managed in their
+ * own card. These settings are independent for every organization.
+ */
+export function ForwardingSettingsForm({ destination }: { destination: string }) {
   const [state, action] = useActionState(saveForwardingSettingsAction, idleState);
   const router = useRouter();
   const toast = useToast();
@@ -32,27 +29,17 @@ export function ForwardingSettingsForm({
   }, [state]);
 
   return (
-    <form action={action} className="grid max-w-xl grid-cols-1 gap-4 sm:grid-cols-2">
+    <form action={action} className="grid max-w-xl grid-cols-1 gap-4">
       <Field
-        label="Finance & Accounts destination"
+        label="Destination email"
         htmlFor="financeDestination"
-        className="sm:col-span-2"
-        hint="Invoice emails are forwarded here."
+        hint="Documents detected for this organization are forwarded to this address."
         error={state.fieldErrors?.financeDestination}
       >
-        <Input id="financeDestination" name="financeDestination" type="email" defaultValue={destination} placeholder="finance.accounts@university-domain.com" />
+        <Input id="financeDestination" name="financeDestination" type="email" defaultValue={destination} placeholder="accounts@your-company.com" />
       </Field>
-      <Field label="Minimum confidence (%)" htmlFor="minConfidence" hint="Below this, emails wait for review." error={state.fieldErrors?.minConfidence}>
-        <Input id="minConfidence" name="minConfidence" type="number" min={0} max={100} defaultValue={minConfidence} />
-      </Field>
-      <Field label="Forwarding" htmlFor="enabled">
-        <Select id="enabled" name="enabled" defaultValue={enabled ? "true" : "false"}>
-          <option value="true">Enabled</option>
-          <option value="false">Paused</option>
-        </Select>
-      </Field>
-      <div className="sm:col-span-2">
-        <SubmitButton>Save forwarding settings</SubmitButton>
+      <div>
+        <SubmitButton>Save destination</SubmitButton>
       </div>
     </form>
   );

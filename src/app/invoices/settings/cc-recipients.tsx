@@ -59,7 +59,7 @@ export function CcRecipients({ recipients }: { recipients: CcRecipientView[] }) 
   return (
     <div className="space-y-3">
       {recipients.length === 0 ? (
-        <p className="text-sm text-muted">No CC recipients yet. Add one below — they&apos;ll be CC&apos;d on every forwarded invoice.</p>
+        <p className="text-sm text-muted">No CC recipients yet. Add one below — they&apos;ll be CC&apos;d on every forwarded document.</p>
       ) : (
         <ul className="space-y-2">
           {recipients.map((r) => (

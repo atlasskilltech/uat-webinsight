@@ -19,6 +19,10 @@ function fail(e: unknown): FormState {
   return errorState(isAuthError(e) ? e.message : e instanceof Error ? e.message : "Something went wrong.");
 }
 
+// Simplified: the user only sets the destination email. Confidence threshold and
+// the enabled flag are kept in the backend with sensible defaults (review-first:
+// documents queue for approval rather than auto-sending), but are no longer
+// surfaced as configuration controls.
 const settingsSchema = z.object({
   financeDestination: z
     .string()
@@ -26,8 +30,8 @@ const settingsSchema = z.object({
     .email("Enter a valid email.")
     .optional()
     .or(z.literal("").transform(() => undefined)),
-  minConfidence: z.coerce.number().min(0).max(100),
-  enabled: z.enum(["true", "false"]).default("true"),
+  minConfidence: z.coerce.number().min(0).max(100).optional(),
+  enabled: z.enum(["true", "false"]).optional(),
 });
 
 export async function saveForwardingSettingsAction(_prev: FormState, formData: FormData): Promise<FormState> {
@@ -37,12 +41,12 @@ export async function saveForwardingSettingsAction(_prev: FormState, formData: F
     if (!parsed.success) return parsed.state;
     await saveForwardingSettings(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, {
       financeDestination: parsed.data.financeDestination ?? null,
-      minConfidence: parsed.data.minConfidence,
-      enabled: parsed.data.enabled === "true",
+      minConfidence: parsed.data.minConfidence ?? 70,
+      enabled: parsed.data.enabled ? parsed.data.enabled === "true" : true,
     });
     revalidatePath("/invoices/settings");
     revalidatePath("/invoices");
-    return successState("Forwarding settings saved.");
+    return successState(parsed.data.financeDestination ? "Destination email saved." : "Destination cleared.");
   } catch (e) {
     return fail(e);
   }
