@@ -78,6 +78,9 @@ export function ForwardingReview({
                   </Badge>
                 </div>
                 <p className="mt-1 flex items-center gap-1 text-xs text-muted-2"><Mail className="h-3 w-3" /> → {f.destination}</p>
+                {f.error && (
+                  <p className="mt-1 rounded bg-warning-soft px-2 py-1 text-xs text-warning">{f.error}</p>
+                )}
                 {canApprove && (
                   <div className="mt-2 flex gap-2">
                     <Button size="sm" disabled={pending} onClick={() => act("approve", f.id)}>

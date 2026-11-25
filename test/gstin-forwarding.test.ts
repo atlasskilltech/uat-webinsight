@@ -18,6 +18,7 @@ const H = vi.hoisted(() => ({
   orgGstin: {} as Record<string, string | null>,
   buyerGstin: {} as Record<string, string | null>, // keyed by email_message_id
   forwards: {} as Record<string, Row>,
+  columnMissing: false, // simulate invoices.buyer_gstin not migrated (012 pending)
 }));
 
 const api = vi.hoisted(() => ({
@@ -54,7 +55,10 @@ const clone = (r: Row) => ({ ...r });
 
 vi.mock("@/lib/invoice/db", () => ({
   isMissingTableError: () => false,
-  isMissingColumnError: () => false,
+  isMissingColumnError: (e: unknown) => {
+    const err = e as { code?: string; errno?: number } | null;
+    return Boolean(err && (err.code === "ER_BAD_FIELD_ERROR" || err.errno === 1054));
+  },
   ijson: (v: unknown) => (v == null ? null : JSON.stringify(v)),
   iQuery: vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.includes("`forwarding_sender_filters`")) {
@@ -74,6 +78,11 @@ vi.mock("@/lib/invoice/db", () => ({
       return { gstin: H.orgGstin[params[0] as string] ?? null };
     }
     if (sql.includes("FROM `invoices`")) {
+      if (H.columnMissing) {
+        const err = new Error("Unknown column 'buyer_gstin'") as Error & { code?: string };
+        err.code = "ER_BAD_FIELD_ERROR";
+        throw err;
+      }
       const emId = params[1] as string;
       return { buyer_gstin: H.buyerGstin[emId] ?? null };
     }
@@ -145,6 +154,7 @@ beforeEach(() => {
   H.orgGstin = { ORG: "27AAAAA0000A1Z5" };
   H.buyerGstin = {};
   H.forwards = {};
+  H.columnMissing = false;
   api.gmailSend.mockClear();
 });
 
@@ -191,6 +201,18 @@ describe("GSTIN auto-forward gate", () => {
     const r = await runForwarding("ORG");
     expect(api.gmailSend).toHaveBeenCalledTimes(1);
     expect(r.forwarded).toBe(1);
+  });
+
+  it("is DORMANT when invoices.buyer_gstin is not migrated yet (auto-forwards as before)", async () => {
+    // Deploy-safety: the GSTIN code is live but migration 012 has not been
+    // applied, so the column read throws ER_BAD_FIELD_ERROR. The gate must NOT
+    // block — it stays dormant until 012, exactly like the sender-filter gate.
+    H.columnMissing = true;
+    seedForward({ id: "F7", organization_id: "ORG", status: "approved", from_address: "<ap@vendor.com>" });
+    const r = await runForwarding("ORG");
+    expect(api.gmailSend).toHaveBeenCalledTimes(1);
+    expect(r.forwarded).toBe(1);
+    expect(H.forwards["F7"].status).toBe("forwarded");
   });
 
   it("a human approval bypasses the GSTIN gate (approver has reviewed)", async () => {
