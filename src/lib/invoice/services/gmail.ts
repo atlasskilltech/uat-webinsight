@@ -1,5 +1,5 @@
 import "server-only";
-import { iQuery, iQueryOne, iExecute } from "../db";
+import { iQuery, iQueryOne, iExecute, isMissingTableError } from "../db";
 import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
 import { encryptSecret, decryptSecret } from "../crypto";
@@ -358,6 +358,37 @@ export interface SyncSummary {
   message: string;
 }
 
+/**
+ * Strict per-account sync lock (migration 012 `gmail_sync_locks`). Returns true
+ * when acquired, false when another runner holds it, or null when the lock table
+ * is not migrated yet (the caller then proceeds without a lock — prior
+ * behaviour). The lock auto-expires via `locked_until`, so a crashed run can
+ * never wedge an account permanently.
+ */
+async function acquireSyncLock(integrationId: string): Promise<boolean | null> {
+  try {
+    const r = await iExecute(
+      "INSERT INTO `gmail_sync_locks` (`gmail_integration_id`,`locked_until`) VALUES (?, DATE_ADD(NOW(3), INTERVAL 10 MINUTE)) " +
+        "ON DUPLICATE KEY UPDATE `locked_until` = IF(`locked_until` < NOW(3), VALUES(`locked_until`), `locked_until`)",
+      [integrationId],
+    );
+    // affectedRows: 1 = inserted (acquired), 2 = replaced an expired lock
+    // (acquired), 0 = a live lock was kept (not acquired).
+    return r.affectedRows === 1 || r.affectedRows === 2;
+  } catch (e) {
+    if (isMissingTableError(e)) return null; // feature not migrated → no locking
+    throw e;
+  }
+}
+
+async function releaseSyncLock(integrationId: string): Promise<void> {
+  try {
+    await iExecute("DELETE FROM `gmail_sync_locks` WHERE `gmail_integration_id`=?", [integrationId]);
+  } catch {
+    /* best-effort; the lock self-expires via locked_until */
+  }
+}
+
 /** Pull-based sync for one account: list → dedupe → classify → download → pipeline. */
 export async function syncGmailAccount(
   organizationId: string,
@@ -384,6 +415,16 @@ export async function syncGmailAccount(
   if (integration.status === "disconnected") throw new Error("Account is disconnected.");
 
   const summary: SyncSummary = { scanned: 0, newMessages: 0, invoicesCreated: 0, duplicates: 0, errors: 0, message: "" };
+
+  // Strict per-account lock: never let two runners (in-process scheduler, external
+  // cron, Pub/Sub push, manual "Sync now") sync the same account at once. When
+  // the lock table is not migrated yet, acquireSyncLock returns null and we
+  // proceed without a lock (prior behaviour).
+  const lock = await acquireSyncLock(integrationId);
+  if (lock === false) {
+    summary.message = "A sync is already running for this account — skipped to avoid overlap.";
+    return summary;
+  }
 
   try {
     const token = await getValidAccessToken(integration);
@@ -596,6 +637,8 @@ export async function syncGmailAccount(
       [msg.slice(0, 1000), integrationId],
     );
     throw e;
+  } finally {
+    if (lock) await releaseSyncLock(integrationId);
   }
 }
 

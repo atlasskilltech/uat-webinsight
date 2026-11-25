@@ -14,6 +14,8 @@ import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
 import { CcRecipients } from "./cc-recipients";
 import { SenderFilters } from "./sender-filters";
+import { DocumentFilters } from "./document-filters";
+import { listCategories } from "@/lib/invoice/services/routing";
 
 export const metadata: Metadata = { title: "Invoice Settings" };
 export const dynamic = "force-dynamic";
@@ -75,6 +77,9 @@ export default async function InvoiceSettingsPage() {
   const senderFilters = ctx?.organizationId
     ? await listSenderFilters(ctx.organizationId)
     : { configured: false, allow: [], block: [] };
+  const docCategories = ctx?.organizationId ? await listCategories(ctx.organizationId) : [];
+  const systemDocTypes = docCategories.filter((c) => c.isSystem).map((c) => ({ id: c.id, key: c.categoryKey, label: c.label }));
+  const customDocTypes = docCategories.filter((c) => !c.isSystem).map((c) => ({ id: c.id, key: c.categoryKey, label: c.label }));
   const canManageOrg = ctx?.organizationId ? await hasCapability("org.manage") : false;
   const canManageSettings = ctx?.organizationId ? await hasCapability("settings.manage") : false;
   const members = ctx?.organizationId && canManageOrg ? await listMembers(ctx.organizationId) : [];
@@ -322,6 +327,45 @@ export default async function InvoiceSettingsPage() {
                       <ul className="space-y-1 text-sm">{senderFilters.block.map((f) => <li key={f.id}>{f.pattern}</li>)}</ul>
                     )}
                   </div>
+                </div>
+              </ReadOnlyNote>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Configurable document types & keywords (per organisation) */}
+      {ctx?.organizationId && forwarding && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Document types &amp; keywords</CardTitle>
+            <CardDescription>
+              The business document types this organization recognizes. Built-in types (invoice, purchase order,
+              statement, other) are always detected; add organization-specific types whose label also acts as a keyword
+              matched in incoming emails. No vendor or category is hardcoded, and this list applies to this organization
+              only. Editable by Finance Admin only.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {docCategories.length === 0 ? (
+              <div className="rounded-lg border border-warning/40 bg-warning-soft px-4 py-3 text-xs text-muted">
+                Document-type configuration becomes available once the invoice routing tables are migrated
+                (<code>npm run invoice:db:init</code>). Until then the built-in classifier still detects invoices and
+                business documents.
+              </div>
+            ) : canManageSettings ? (
+              <DocumentFilters system={systemDocTypes} custom={customDocTypes} />
+            ) : (
+              <ReadOnlyNote>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted">Built-in types</p>
+                  <p className="text-sm">{systemDocTypes.map((s) => s.label).join(", ") || "—"}</p>
+                  <p className="text-xs font-medium text-muted">Custom types</p>
+                  {customDocTypes.length === 0 ? (
+                    <p className="text-sm text-muted">None.</p>
+                  ) : (
+                    <ul className="space-y-1 text-sm">{customDocTypes.map((c) => <li key={c.id}>{c.label}</li>)}</ul>
+                  )}
                 </div>
               </ReadOnlyNote>
             )}

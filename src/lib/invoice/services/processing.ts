@@ -1,5 +1,6 @@
 import "server-only";
-import { iQueryOne, iTransaction, ijson } from "../db";
+import { iQueryOne, iExecute, iTransaction, ijson, isMissingColumnError, isMissingTableError } from "../db";
+import { normalizeGstin } from "./org-admin";
 import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
 import { validateUpload, newStorageKey, getStorage } from "../storage";
@@ -262,6 +263,21 @@ export async function processUploadedDocument(input: ProcessInput): Promise<Proc
         conn,
       );
     });
+
+    // Persist the extracted BUYER GSTIN (best-effort, migration 012) so the
+    // forwarding layer can validate it against the organisation's GSTIN at send
+    // time. Done as a separate, missing-column-safe UPDATE so the invoice INSERT
+    // keeps working on environments where 012 has not been applied yet (there the
+    // GSTIN is simply absent, and a GST invoice falls through to manual review).
+    if (extracted?.buyerGstin) {
+      try {
+        await iExecute("UPDATE `invoices` SET `buyer_gstin`=? WHERE id=?", [normalizeGstin(extracted.buyerGstin), invoiceId]);
+      } catch (e) {
+        if (!isMissingColumnError(e) && !isMissingTableError(e)) {
+          /* non-schema error: ignore — GSTIN capture must never fail processing */
+        }
+      }
+    }
 
     // 9) Duplicate detection (records matches; high score forces review/flag).
     const dupes = await detectDuplicates(organizationId, {

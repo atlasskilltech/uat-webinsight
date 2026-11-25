@@ -46,7 +46,9 @@ if (!secret) {
 }
 
 const DRAIN_MS = Math.max(5, Number(env.INVOICE_WORKER_DRAIN_SECONDS) || 10) * 1000;
-const SYNC_MS = Math.max(1, Number(env.INVOICE_WORKER_SYNC_MINUTES) || 5) * 60 * 1000;
+// Default to 2 minutes and cap at 2 so the standalone worker matches the
+// in-process scheduler's 2-minute fallback cadence (no env can push it higher).
+const SYNC_MS = Math.max(1, Math.min(2, Number(env.INVOICE_WORKER_SYNC_MINUTES) || 2)) * 60 * 1000;
 const PERIODIC_MS = Math.max(5, Number(env.INVOICE_WORKER_PERIODIC_MINUTES) || 60) * 60 * 1000;
 
 let running = true;

@@ -64,7 +64,7 @@ export default async function EmailAccountsPage({
           <div className="mb-6 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
-              Connected accounts sync automatically in the background (about every 5 minutes), so the counts below
+              Connected accounts sync automatically in the background (about every 2 minutes), so the counts below
               update on their own. Each sync scans recent emails with attachments, skips already-processed messages,
               classifies them, and sends invoice attachments to the pipeline. Use <strong>Sync now</strong> to run it
               immediately, or <strong>Rescan inbox</strong> to re-check recent mail with the latest detection. Real-time
