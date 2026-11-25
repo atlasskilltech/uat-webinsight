@@ -365,6 +365,10 @@ export async function listSenderFilters(organizationId: string): Promise<SenderF
   }
 }
 
+/** Shown when a write is attempted before migration 011 has created the table. */
+const SENDER_FILTERS_NOT_ACTIVE =
+  "Sender filtering isn't activated on this environment yet. Apply migration 011 (npm run invoice:db:init) to enable it, then add senders here.";
+
 /** Add an allowed or excluded sender (idempotent). */
 export async function addSenderFilter(
   organizationId: string,
@@ -376,11 +380,17 @@ export async function addSenderFilter(
   const norm = normalizeSenderPattern(rawPattern);
   if (!norm.ok) return { ok: false, message: norm.message };
   const id = createId();
-  const res = await iExecute(
-    "INSERT INTO `forwarding_sender_filters` (`id`,`organization_id`,`kind`,`pattern`) VALUES (?,?,?,?) " +
-      "ON DUPLICATE KEY UPDATE `id`=`id`",
-    [id, organizationId, k, norm.value],
-  );
+  let res: { affectedRows: number };
+  try {
+    res = await iExecute(
+      "INSERT INTO `forwarding_sender_filters` (`id`,`organization_id`,`kind`,`pattern`) VALUES (?,?,?,?) " +
+        "ON DUPLICATE KEY UPDATE `id`=`id`",
+      [id, organizationId, k, norm.value],
+    );
+  } catch (e) {
+    if (isMissingTableError(e)) return { ok: false, message: SENDER_FILTERS_NOT_ACTIVE };
+    throw e;
+  }
   if (res.affectedRows === 0) {
     return { ok: false, message: k === "block" ? "That sender is already excluded." : "That sender is already allowed." };
   }
@@ -411,10 +421,16 @@ export async function removeSenderFilter(
   // (entityId = row id, with the removed kind/pattern in the payload). A stale or
   // cross-org id resolves to no row here → "Entry not found" (never a cross-org
   // delete, never a false success).
-  const existing = await iQueryOne<{ id: string; kind: string; pattern: string }>(
-    "SELECT `id`, `kind`, `pattern` FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?",
-    [organizationId, id],
-  );
+  let existing: { id: string; kind: string; pattern: string } | null;
+  try {
+    existing = await iQueryOne<{ id: string; kind: string; pattern: string }>(
+      "SELECT `id`, `kind`, `pattern` FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?",
+      [organizationId, id],
+    );
+  } catch (e) {
+    if (isMissingTableError(e)) return { ok: false, message: SENDER_FILTERS_NOT_ACTIVE };
+    throw e;
+  }
   if (!existing) return { ok: false, message: "Entry not found." };
   await iExecute("DELETE FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?", [organizationId, id]);
   await logInvoiceAudit({
