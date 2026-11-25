@@ -24,9 +24,17 @@ const TONE: Record<string, "neutral" | "warning" | "success" | "danger" | "info"
   pending: "warning",
   review: "warning",
   approved: "info",
+  sending: "info",
   forwarded: "success",
   failed: "danger",
   skipped: "neutral",
+};
+
+// Friendlier labels for the in-flight auto-forward states so they read clearly in
+// "Recent forwards" (an auto-forward passes through approved → sending → forwarded).
+const STATUS_LABEL: Record<string, string> = {
+  approved: "queued to send",
+  sending: "sending…",
 };
 
 export function ForwardingReview({
@@ -113,7 +121,7 @@ export function ForwardingReview({
                 </div>
                 <Badge tone={TONE[f.status] ?? "neutral"}>
                   {f.status === "forwarded" ? <Check className="mr-1 h-3 w-3" /> : null}
-                  {f.status}
+                  {STATUS_LABEL[f.status] ?? f.status}
                 </Badge>
               </div>
             ))

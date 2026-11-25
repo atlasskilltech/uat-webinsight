@@ -15,7 +15,7 @@ export interface SenderFilterView {
 /**
  * Manage the per-organisation sender gating for forwarding:
  *   - Allowed senders: only mail from these senders is forwarded. With none
- *     added, nothing is forwarded for this organisation.
+ *     added there is no restriction — every sender is forwarded.
  *   - Excluded senders: mail from these is never forwarded (e.g. a vendor such
  *     as Razorpay), even if it would otherwise be allowed.
  * Each entry is a full email (billing@acme.com) or a domain (acme.com).
@@ -84,16 +84,16 @@ export function SenderFilters({
           <div>
             <p className="text-sm font-medium text-foreground">Allowed senders</p>
             <p className="text-xs text-muted">
-              Only mail from these senders is forwarded. Add a full address (billing@acme.com) or a whole domain (acme.com).
+              Optional. Leave empty to forward mail from any sender (the default). Add entries only to restrict forwarding to
+              a specific set — a full address (billing@acme.com) or a whole domain (acme.com). Excluded senders always win.
             </p>
           </div>
         </div>
 
         {allow.length === 0 && (
-          <p className="rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning">
-            <strong>No allowed senders configured.</strong> This organisation will <strong>not forward any mail</strong> until
-            you add at least one allowed sender. Adding only excluded senders is not enough — the allowed list must have at
-            least one entry for forwarding to happen.
+          <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+            No allowed senders configured — mail from <strong>any</strong> sender is forwarded (except excluded senders below).
+            Add an entry here only if you want to limit forwarding to specific senders.
           </p>
         )}
 

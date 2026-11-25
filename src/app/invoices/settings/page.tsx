@@ -12,7 +12,6 @@ import { listMembers, listOrganizationsBrief, addressText } from "@/lib/invoice/
 import { OrganizationsManager, OrgForm } from "./organizations-client";
 import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
-import { GstinValidationToggle } from "./gstin-validation-toggle";
 import { CcRecipients } from "./cc-recipients";
 import { SenderFilters } from "./sender-filters";
 import { DocumentFilters } from "./document-filters";
@@ -271,15 +270,11 @@ export default async function InvoiceSettingsPage() {
                     No destination set yet — documents for this organization will NOT be forwarded until you add one.
                   </p>
                 )}
-                <div className="mt-5 border-t border-border pt-4">
-                  <GstinValidationToggle enabled={forwarding.gstinValidation} />
-                </div>
               </>
             ) : (
               <ReadOnlyNote>
                 <dl className="grid grid-cols-1 gap-3">
                   <div><dt className="text-xs text-muted">Destination email</dt><dd className="text-sm font-medium">{forwarding.financeDestination ?? "Not configured"}</dd></div>
-                  <div><dt className="text-xs text-muted">GSTIN match validation</dt><dd className="text-sm font-medium">{forwarding.gstinValidation ? "On" : "Off"}</dd></div>
                 </dl>
               </ReadOnlyNote>
             )}

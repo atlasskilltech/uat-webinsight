@@ -540,6 +540,14 @@ export async function syncGmailAccount(
                   "ON DUPLICATE KEY UPDATE `id`=`id`",
                 [createId(), organizationId, integrationId, emailMessageId, ref.id, destination, forwardStatus, confPct.toFixed(2)],
               );
+              // Diagnostic (server logs): exactly what happened to this document —
+              // where it is routed, whether auto-forward applied, and the resulting
+              // queue status. `grep "[invoice-forward]"` to trace the pipeline.
+              console.log(
+                `[invoice-forward] org=${organizationId} acct=${integration.email} subject=${JSON.stringify((subject || "").slice(0, 60))} ` +
+                  `conf=${confPct}% min=${plan.minConfidence}% auto=${effectiveAuto ? "on" : "off"} dest=${destination} status=${forwardStatus} ` +
+                  `(${forwardStatus === "approved" ? "AUTO-FORWARDING" : forwardStatus === "pending" ? "queued for approval" : "held for review"})`,
+              );
               // Immediate forwarding: when eligible for auto-forward, enqueue a
               // forward job so the drain worker sends it within ~10s instead of
               // waiting for the periodic forwarding cycle.
@@ -552,6 +560,15 @@ export async function syncGmailAccount(
                   priority: 10,
                 }).catch(() => undefined);
               }
+            } else if (isDocumentCandidate) {
+              // A real business document that will NOT be forwarded because no
+              // destination resolved (no Destination email set, or a rule routed it
+              // nowhere). This is the most common "detected but nothing happens"
+              // cause — make it loud in the logs instead of a silent no-op.
+              console.warn(
+                `[invoice-forward] org=${organizationId} acct=${integration.email} subject=${JSON.stringify((subject || "").slice(0, 60))} ` +
+                  `NOT FORWARDED — no destination resolved (${plan.explanation}). Set a Destination email in Invoice Settings.`,
+              );
             }
           } else if (isDocumentCandidate && routing.senderFilters.configured) {
             // Visibility: this was a genuine business document that WOULD have been
@@ -564,6 +581,9 @@ export async function syncGmailAccount(
               routing,
             );
             if (shouldForwardEmail(plan, isDocumentCandidate)) {
+              console.warn(
+                `[invoice-forward] org=${organizationId} acct=${integration.email} NOT FORWARDED — sender withheld (${senderDecision.reason}) from=${from.slice(0, 120)}. Check Excluded/Allowed senders in Settings.`,
+              );
               await logInvoiceAudit({
                 organizationId,
                 actorType: "agent",
