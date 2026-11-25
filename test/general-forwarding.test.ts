@@ -79,24 +79,37 @@ describe("resolveCategoryKey — custom category detection", () => {
   });
 });
 
-describe("shouldForwardEmail — general forward gate", () => {
+describe("shouldForwardEmail — forward gate (business documents, not just invoices)", () => {
   const dest = (source: "rule" | "rule_fallback" | "legacy" | "none") => ({ destination: "fin@x.com", source });
-  it("forwards an invoice candidate via the legacy default (unchanged)", () => {
+
+  it("forwards a BUSINESS DOCUMENT (invoice, PO, statement, …) to the org destination", () => {
+    // Any recognized document candidate forwards to the organization's own
+    // (legacy) destination — this is what makes it work for more than invoices.
     expect(shouldForwardEmail(dest("legacy"), true)).toBe(true);
   });
-  it("forwards an invoice candidate via a matching rule", () => {
-    expect(shouldForwardEmail(dest("rule"), true)).toBe(true);
+  it("does NOT forward ordinary mail (not a document) via the destination", () => {
+    expect(shouldForwardEmail(dest("legacy"), false)).toBe(false);
   });
-  it("forwards a NON-invoice email when a rule matches", () => {
+  it("still forwards when a rule matches, document or not", () => {
     expect(shouldForwardEmail(dest("rule"), false)).toBe(true);
     expect(shouldForwardEmail(dest("rule_fallback"), false)).toBe(true);
   });
-  it("does NOT forward a non-invoice email via the legacy default (ordinary mail stays)", () => {
-    expect(shouldForwardEmail(dest("legacy"), false)).toBe(false);
-  });
-  it("does NOT forward when there is no destination", () => {
+  it("does NOT forward when there is no destination configured", () => {
     expect(shouldForwardEmail({ destination: null, source: "none" }, true)).toBe(false);
     expect(shouldForwardEmail({ destination: null, source: "none" }, false)).toBe(false);
+  });
+
+  it("a PO / statement email with an attachment is a document candidate and would forward", () => {
+    // Mirror the sync's isDocumentCandidate = hasAttachment && classification !== 'irrelevant'.
+    const po = classifyEmail({ subject: "Purchase Order PO-7", from: "b@x.com", snippet: "PO attached", hasAttachment: true, attachmentNames: ["po.pdf"] });
+    const isDoc = po.classification !== "irrelevant"; // hasAttachment true
+    expect(isDoc).toBe(true);
+    expect(shouldForwardEmail(dest("legacy"), isDoc)).toBe(true);
+
+    const newsletter = classifyEmail({ subject: "Monthly newsletter", from: "n@x.com", snippet: "updates", hasAttachment: true, attachmentNames: ["news.pdf"] });
+    const isDoc2 = newsletter.classification !== "irrelevant";
+    expect(isDoc2).toBe(false); // newsletter -> irrelevant -> not a document
+    expect(shouldForwardEmail(dest("legacy"), isDoc2)).toBe(false);
   });
 });
 

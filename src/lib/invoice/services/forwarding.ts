@@ -3,9 +3,10 @@ import { iQuery, iQueryOne, iExecute, isMissingTableError } from "../db";
 import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
 import { getAccountAccessToken } from "./gmail";
-import { gmailGetRaw, gmailGetAttachment, gmailSend } from "../gmail/api";
+import { gmailGetRaw, gmailGetAttachment, gmailGetMessage, gmailSend } from "../gmail/api";
 import { GmailApiError } from "../gmail/oauth";
 import { isOrganizationActive } from "./org-admin";
+import { buildOriginalBodyHtml } from "./original-body";
 
 /**
  * Invoice email forwarding to the Finance & Accounts destination.
@@ -214,8 +215,10 @@ export interface ForwardRow {
   // joined
   subject: string | null;
   from_address: string | null;
+  to_address: string | null;
   account_email: string | null;
   received_at: Date | string | null;
+  organisation_name: string | null;
 }
 
 export async function listForwards(
@@ -230,10 +233,11 @@ export async function listForwards(
   }
   params.push(opts.limit ?? 200);
   return iQuery<ForwardRow>(
-    "SELECT f.*, m.subject, m.from_address, m.received_at, g.email AS account_email " +
+    "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, g.email AS account_email, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
+      "LEFT JOIN `organizations` o ON o.id = f.organization_id " +
       `WHERE ${where.join(" AND ")} ORDER BY f.created_at DESC LIMIT ?`,
     params,
   );
@@ -242,10 +246,11 @@ export async function listForwards(
 /** Fetch a single forward task (with the joined fields sendForward needs). */
 async function getForward(organizationId: string, forwardId: string): Promise<ForwardRow | null> {
   return iQueryOne<ForwardRow>(
-    "SELECT f.*, m.subject, m.from_address, m.received_at, g.email AS account_email " +
+    "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, g.email AS account_email, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
+      "LEFT JOIN `organizations` o ON o.id = f.organization_id " +
       "WHERE f.organization_id=? AND f.id=?",
     [organizationId, forwardId],
   );
@@ -290,12 +295,28 @@ export interface ForwardAttachment {
 }
 
 export interface ForwardBodyInput {
+  /** The organization that forwarded this email (shown prominently). */
+  organisationName: string;
   subject: string;
   from: string;
+  /** Original recipient (To header of the received email). */
+  to: string;
   date: string;
   confidence: string | null;
   /** Cleaned filenames of the attachments included directly on the forward. */
   attachmentFilenames: string[];
+  /** SANITIZED HTML of the original email body, inlined below the metadata so the
+   *  recipient can read it without opening original.eml. Empty = none available. */
+  originalBodyHtml?: string;
+}
+
+/** Escape a value for safe insertion into HTML (sender/subject are untrusted). */
+function htmlEscape(v: string): string {
+  return v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export interface RenderedForwardBody {
@@ -310,27 +331,101 @@ export interface RenderedForwardBody {
 }
 
 /**
- * Render the forwarded message's subject + body. This is the single seam a
- * reusable email template plugs into — an HTML reference design is pending, so
- * this currently reproduces the existing plain-text body byte-for-byte. The MIME
- * assembly (headers, attachments, original.eml) stays in buildForwardMime and is
- * unaffected when the template is swapped in.
+ * Render the forwarded message's subject + a clean, professional HTML body.
+ *
+ * This is the single presentation seam — it only produces the body part shown to
+ * the recipient. The MIME assembly (the actual attachments, the full original as
+ * original.eml, headers, CC) stays in buildForwardMime and is UNCHANGED, so
+ * delivery and attachment handling are preserved. The layout is table-based with
+ * inline styles so it renders consistently in Gmail and Outlook, works for any
+ * document type (invoices, POs, GST documents, statements, general business
+ * email), and is populated dynamically per organization.
  */
 export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody {
+  const subjectText = cleanHeader(input.subject) || "(no subject)";
+  const org = htmlEscape(cleanHeader(input.organisationName) || "Your organization");
+  const from = htmlEscape(cleanHeader(input.from) || "—");
+  const to = htmlEscape(cleanHeader(input.to) || "—");
+  const date = htmlEscape(cleanHeader(input.date) || "—");
+  const subject = htmlEscape(subjectText);
   const names = input.attachmentFilenames;
-  const body =
-    "Forwarded automatically by the Atlas Invoice Agent.\r\n\r\n" +
-    `Original From: ${cleanHeader(input.from)}\r\n` +
-    `Original Date: ${cleanHeader(input.date)}\r\n` +
-    `Original Subject: ${cleanHeader(input.subject)}\r\n` +
-    (input.confidence ? `Invoice confidence: ${Math.round(Number(input.confidence))}%\r\n` : "") +
-    (names.length
-      ? `\r\n${names.length} invoice attachment(s) are attached directly: ${names.join(", ")}.\r\n`
-      : "") +
-    "The complete original email is also attached as original.eml.\r\n";
+
+  const metaRow = (label: string, value: string, last = false) =>
+    `<tr><td style="padding:10px 14px;${last ? "" : "border-bottom:1px solid #eef2f7;"}width:84px;color:#64748b;` +
+    `font-size:12px;font-family:Arial,Helvetica,sans-serif;vertical-align:top;">${label}</td>` +
+    `<td style="padding:10px 14px;${last ? "" : "border-bottom:1px solid #eef2f7;"}color:#0f172a;font-size:13px;` +
+    `font-family:Arial,Helvetica,sans-serif;font-weight:600;word-break:break-word;">${value}</td></tr>`;
+
+  const attachmentRows = names.length
+    ? names
+        .map(
+          (n) =>
+            `<tr><td style="padding:8px 14px;border-top:1px solid #eef2f7;color:#334155;font-size:13px;` +
+            `font-family:Arial,Helvetica,sans-serif;">&#128206;&nbsp; ${htmlEscape(n)}</td></tr>`,
+        )
+        .join("")
+    : "";
+
+  // The original email body, inlined (already sanitized by the caller). When
+  // absent, a short note points to original.eml.
+  const originalBlock = input.originalBodyHtml && input.originalBodyHtml.trim()
+    ? `<tr><td style="padding:18px 24px 4px;">
+         <div style="color:#64748b;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-family:Arial,Helvetica,sans-serif;margin-bottom:8px;">Original message</div>
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;border-collapse:separate;">
+           <tr><td style="padding:16px 18px;background:#ffffff;color:#0f172a;font-size:13px;line-height:1.55;font-family:Arial,Helvetica,sans-serif;word-break:break-word;">${input.originalBodyHtml}</td></tr>
+         </table>
+       </td></tr>`
+    : `<tr><td style="padding:16px 24px 0;"><p style="color:#64748b;font-size:12px;font-family:Arial,Helvetica,sans-serif;margin:0;">The original message content is attached as <b>original.eml</b>.</p></td></tr>`;
+
+  const attachmentsBlock = names.length
+    ? `<tr><td style="padding:4px 24px 0;">
+         <div style="color:#64748b;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-family:Arial,Helvetica,sans-serif;margin-bottom:6px;">Attachments (${names.length})</div>
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;border-collapse:separate;">${attachmentRows}</table>
+       </td></tr>`
+    : "";
+
+  const body = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Forwarded document</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;">
+    <tr><td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+        <tr><td bgcolor="#0f172a" style="background:#0f172a;padding:22px 24px;">
+          <div style="color:#ffffff;font-size:19px;font-weight:700;font-family:Arial,Helvetica,sans-serif;line-height:1.2;">${org}</div>
+          <div style="color:#94a3b8;font-size:12px;font-family:Arial,Helvetica,sans-serif;margin-top:5px;">Forwarded by the ${org} email assistant</div>
+        </td></tr>
+        <tr><td style="padding:22px 24px 6px;">
+          <span style="display:inline-block;background:#ecfdf5;color:#047857;font-size:11px;font-weight:700;letter-spacing:.04em;padding:5px 12px;border-radius:999px;font-family:Arial,Helvetica,sans-serif;">FORWARDED DOCUMENT</span>
+          <p style="color:#334155;font-size:14px;line-height:1.55;font-family:Arial,Helvetica,sans-serif;margin:14px 0 0;">
+            A document was received and automatically forwarded to you by <b>${org}</b>. The details of the original message are below, with its attachments included and the complete original email attached as <b>original.eml</b>.
+          </p>
+        </td></tr>
+        <tr><td style="padding:14px 24px 2px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;border-collapse:separate;">
+            ${metaRow("From", from)}
+            ${metaRow("To", to)}
+            ${metaRow("Date", date)}
+            ${metaRow("Subject", subject, true)}
+          </table>
+        </td></tr>
+        ${originalBlock}
+        ${attachmentsBlock}
+        <tr><td style="padding:16px 24px 20px;">
+          <p style="color:#94a3b8;font-size:12px;line-height:1.5;font-family:Arial,Helvetica,sans-serif;margin:0;">
+            This is an automated forward — please reply to the original sender (${from}), not to this message.
+          </p>
+        </td></tr>
+        <tr><td bgcolor="#f8fafc" style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 24px;">
+          <p style="color:#94a3b8;font-size:11px;font-family:Arial,Helvetica,sans-serif;margin:0;">Automated message from ${org}. Forwarded securely by the organization's email assistant.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
   return {
-    subject: "Fwd: " + cleanHeader(input.subject || "(no subject)"),
-    contentType: 'text/plain; charset="UTF-8"',
+    subject: "Fwd: " + subjectText,
+    contentType: 'text/html; charset="UTF-8"',
     encoding: "8bit",
     body,
   };
@@ -345,25 +440,32 @@ export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody 
 export function buildForwardMime(input: {
   destination: string;
   cc?: string[];
+  organisationName?: string;
   subject: string;
   from: string;
+  to?: string;
   date: string;
   confidence: string | null;
   rawOriginalBase64Url: string;
   attachments?: ForwardAttachment[];
+  originalBodyHtml?: string;
 }): string {
   const boundary = `atlasinv_${createId()}`;
   const emlStandardB64 = wrap76(Buffer.from(input.rawOriginalBase64Url, "base64url").toString("base64"));
   const attachments = input.attachments ?? [];
   const cc = (input.cc ?? []).map((e) => cleanHeader(e)).filter(Boolean);
 
-  // The subject + body come from the (swappable) template renderer.
+  // The subject + (HTML) body come from the template renderer. The MIME assembly
+  // below (attachments + original.eml) is unchanged.
   const rendered = renderForwardBody({
+    organisationName: input.organisationName ?? "",
     subject: input.subject,
     from: input.from,
+    to: input.to ?? "",
     date: input.date,
     confidence: input.confidence,
     attachmentFilenames: attachments.map((a) => cleanFilename(a.filename)),
+    originalBodyHtml: input.originalBodyHtml,
   });
 
   // Each actual attachment, with its real filename + MIME type.
@@ -441,14 +543,28 @@ async function sendForward(
         /* skip an attachment that can't be fetched; original.eml still carries it */
       }
     }
+    // Inline the original body (sanitized) so the recipient can read it without
+    // opening original.eml. Best-effort: on any failure we still forward, with
+    // the complete original preserved as original.eml.
+    let originalBodyHtml = "";
+    try {
+      const parsed = await gmailGetMessage(token, forward.source_gmail_message_id);
+      originalBodyHtml = await buildOriginalBodyHtml(token, forward.source_gmail_message_id, parsed);
+    } catch {
+      originalBodyHtml = "";
+    }
+
     const cc = await resolveForwardCc(organizationId, forward.destination);
     mime = buildForwardMime({
       destination: forward.destination,
       cc,
+      organisationName: forward.organisation_name ?? "",
       subject: forward.subject ?? "",
       from: forward.from_address ?? "",
+      to: forward.to_address ?? "",
       date: forward.received_at ? new Date(forward.received_at).toUTCString() : "",
       confidence: forward.confidence,
+      originalBodyHtml,
       rawOriginalBase64Url: raw,
       attachments,
     });

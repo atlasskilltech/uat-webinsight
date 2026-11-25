@@ -230,18 +230,18 @@ const INVOICE_FILENAME = /invoice|tax[-_ ]?invoice|e[-_ ]?invoice|proforma|\binv
 export type DocumentCategoryKey = "invoice" | "purchase_order" | "statement" | "other";
 
 /**
- * The forward GATE (general-purpose). An email is forwarded only when it has a
- * resolved destination AND either it is an invoice candidate (existing behaviour
- * — a matching rule, or the legacy default destination), or it matches an
- * explicitly configured RULE. A non-invoice email never forwards via the legacy
- * default, so ordinary mail is not sent unless an admin configured a rule.
+ * The forward GATE. An email is forwarded only when it has a resolved
+ * destination (this organization's own — never another's) AND either it is a
+ * business-document candidate (forwarded to the organization destination), or it
+ * matches an explicitly configured rule (when rules are in use). Ordinary mail
+ * (not a document) is never forwarded via the destination.
  */
 export function shouldForwardEmail(
   plan: { destination: string | null; source: "rule" | "rule_fallback" | "legacy" | "none" },
-  isInvoiceCandidate: boolean,
+  isDocumentCandidate: boolean,
 ): boolean {
   if (!plan.destination) return false;
-  if (isInvoiceCandidate) return true;
+  if (isDocumentCandidate) return true;
   return plan.source === "rule" || plan.source === "rule_fallback";
 }
 
@@ -432,6 +432,14 @@ export async function syncGmailAccount(
         });
         const confPct = Math.round(confidence * 100);
 
+        // A forwardable BUSINESS DOCUMENT: carries a supported attachment AND was
+        // recognized as some business/finance document (invoice, purchase order,
+        // statement, credit note, …) — NOT ordinary mail / newsletters
+        // ("irrelevant"). This is what gets forwarded to the organization's
+        // destination, so the agent supports different document types, not only
+        // invoices. Invoice candidates remain a subset (they additionally run OCR).
+        const isDocumentCandidate = atts.length > 0 && classification !== "irrelevant";
+
         // Final routing category: the system category from the classifier, or an
         // organization CUSTOM category detected from the subject/snippet (so an
         // admin's custom document type can be routed). Never applied to invoice
@@ -456,15 +464,13 @@ export async function syncGmailAccount(
         );
         summary.newMessages += 1;
 
-        // GENERAL-PURPOSE forwarding (review-first). An email is forwarded when:
-        //   (a) it is an INVOICE candidate — routed by a matching rule, or (when
-        //       none matches) the legacy default destination (unchanged), OR
-        //   (b) it matches an explicitly configured, enabled RULE for its org /
-        //       mailbox / sender / document category — invoice or not.
-        // A NON-invoice email never forwards via the legacy default (so ordinary
-        // mail is not sent); only an admin-configured rule routes it. The unique
-        // keys make this idempotent. Auto-forward stays OFF by default and an
-        // uncertain (below-threshold) classification goes to review, not auto.
+        // Forward BUSINESS DOCUMENTS (review-first) to THIS organization's own
+        // destination email. The destination comes from this org's forwarding
+        // settings only — never another organization's (strict isolation, no
+        // cross-org fallback). When no destination is configured, nothing is
+        // forwarded. Auto-forward stays OFF by default and an uncertain
+        // (below-threshold) document goes to review, not auto. Ordinary mail /
+        // newsletters are not documents and are never forwarded.
         if (routing && !opts.backfill) {
           const plan = await resolveForwardingPlan(
             organizationId,
@@ -472,7 +478,7 @@ export async function syncGmailAccount(
             routing,
           );
           const destination = plan.destination;
-          if (shouldForwardEmail(plan, isInvoiceCandidate)) {
+          if (shouldForwardEmail(plan, isDocumentCandidate)) {
             // Legacy path honours the mailbox's own auto-forward switch; a matched
             // rule carries its own auto_forward override.
             const effectiveAuto = plan.source === "legacy" ? integration.auto_forward : plan.autoForward;

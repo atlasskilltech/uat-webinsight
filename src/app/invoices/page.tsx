@@ -13,7 +13,6 @@ import { listForwards, forwardCounts } from "@/lib/invoice/services/forwarding";
 import { hasCapability } from "@/lib/invoice/permissions";
 import { iQueryOne } from "@/lib/invoice/db";
 import { ForwardingReview, type ForwardView } from "./forwarding-review";
-import { SampleInvoiceDemo } from "./sample-demo";
 import { AutoRefresh } from "./auto-refresh";
 import { OrgSwitcher } from "./org-switcher";
 
@@ -101,7 +100,7 @@ export default async function InvoiceAgentHome() {
       <AutoRefresh seconds={60} />
       <PageHeader
         title="Invoice Agent"
-        description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding supplier invoices to Finance & Accounts. All figures are invoice-only and scoped to this organization.`}
+        description={`Monitoring Gmail for ${ctx.organization?.name ?? "your organization"} and forwarding business documents to this organization's destination email. All figures are scoped to this organization.`}
         actions={<OrgSwitcher organizations={switcherOrgs} activeOrgId={org} />}
       />
 
@@ -126,17 +125,11 @@ export default async function InvoiceAgentHome() {
           <CardContent>
             <p className="text-sm font-medium text-foreground">The agent monitors your connected inboxes automatically.</p>
             <p className="text-sm text-muted">
-              Supplier invoices are detected and forwarded to Finance &amp; Accounts; anything uncertain waits in the
-              approval queue below. Connect or manage mailboxes under Email Accounts.
+              Business documents are detected and forwarded to this organization&apos;s destination email; anything
+              uncertain waits in the approval queue below. Connect or manage mailboxes under Email Accounts.
             </p>
           </CardContent>
         </Card>
-      )}
-
-      {canApprove && (
-        <div className="mt-6">
-          <SampleInvoiceDemo />
-        </div>
       )}
 
       {accounts.length > 0 && (

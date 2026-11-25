@@ -9,13 +9,10 @@ import { getInvoiceDbStatus, getGstinUniquenessStatus } from "@/lib/invoice/stat
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
 import { getForwardingSettings, listCcRecipients } from "@/lib/invoice/services/forwarding";
 import { listMembers, listOrganizationsBrief, addressText } from "@/lib/invoice/services/org-admin";
-import { listCategories, listDestinations, listRules } from "@/lib/invoice/services/routing";
-import { listGmailAccounts } from "@/lib/invoice/services/gmail";
 import { OrganizationsManager, OrgForm } from "./organizations-client";
 import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
 import { CcRecipients } from "./cc-recipients";
-import { DestinationsManager, CategoriesManager, RulesManager } from "./routing-client";
 
 export const metadata: Metadata = { title: "Invoice Settings" };
 export const dynamic = "force-dynamic";
@@ -77,18 +74,6 @@ export default async function InvoiceSettingsPage() {
   const canManageOrg = ctx?.organizationId ? await hasCapability("org.manage") : false;
   const canManageSettings = ctx?.organizationId ? await hasCapability("settings.manage") : false;
   const members = ctx?.organizationId && canManageOrg ? await listMembers(ctx.organizationId) : [];
-  // Phase 6: configurable forwarding routing (hidden until migration 010 ran and
-  // only for Finance Admins who can manage settings). Falls back to the legacy
-  // single-destination form below when routing isn't ready.
-  const showRouting = Boolean(ctx?.organizationId && dbStatus.routingReady && canManageSettings);
-  const [routeDestinations, routeCategories, routeRules, routeMailboxes] = showRouting
-    ? await Promise.all([
-        listDestinations(ctx!.organizationId!),
-        listCategories(ctx!.organizationId!),
-        listRules(ctx!.organizationId!),
-        listGmailAccounts(ctx!.organizationId!).then((a) => a.map((m) => ({ id: m.id, email: m.email }))),
-      ])
-    : [[], [], [], []];
   // Multi-org: the organizations this user belongs to (for the management list
   // + switcher). Finance Admins manage; others get a read-only view.
   const userOrgs = ctx?.user && ctx.organizationId ? await listUserOrganizations(ctx.user) : [];
@@ -257,30 +242,30 @@ export default async function InvoiceSettingsPage() {
         </Card>
       )}
 
-      {/* Finance & Accounts forwarding */}
+      {/* Email forwarding — destination (per organization) */}
       {ctx?.organizationId && forwarding && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Default forwarding destination</CardTitle>
+            <CardTitle>Destination email</CardTitle>
             <CardDescription>
-              The default destination the agent forwards documents to, and the confidence needed to auto-forward.
-              Emails below the threshold wait for review on the Invoice Agent home. When forwarding rules are configured,
-              this is used as the fallback whenever no rule matches. Editable by Finance Admin only.
+              The email address this organization&apos;s documents are forwarded to. Each organization has its own
+              destination — changing it here never affects another organization. Editable by Finance Admin only.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {canManageSettings ? (
-              <ForwardingSettingsForm
-                destination={forwarding.financeDestination ?? ""}
-                minConfidence={forwarding.minConfidence}
-                enabled={forwarding.enabled}
-              />
+              <>
+                <ForwardingSettingsForm destination={forwarding.financeDestination ?? ""} />
+                {!forwarding.financeDestination && (
+                  <p className="mt-3 text-xs text-warning">
+                    No destination set yet — documents for this organization will NOT be forwarded until you add one.
+                  </p>
+                )}
+              </>
             ) : (
               <ReadOnlyNote>
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div><dt className="text-xs text-muted">Destination</dt><dd className="text-sm font-medium">{forwarding.financeDestination ?? "—"}</dd></div>
-                  <div><dt className="text-xs text-muted">Auto-forward at</dt><dd className="text-sm font-medium">{forwarding.minConfidence}%</dd></div>
-                  <div><dt className="text-xs text-muted">Enabled</dt><dd className="text-sm font-medium">{forwarding.enabled ? "Yes" : "No"}</dd></div>
+                <dl className="grid grid-cols-1 gap-3">
+                  <div><dt className="text-xs text-muted">Destination email</dt><dd className="text-sm font-medium">{forwarding.financeDestination ?? "Not configured"}</dd></div>
                 </dl>
               </ReadOnlyNote>
             )}
@@ -312,58 +297,6 @@ export default async function InvoiceSettingsPage() {
             )}
           </CardContent>
         </Card>
-      )}
-
-      {/* Phase 6 — configurable forwarding routing (Finance Admin). Hidden until
-          migration 010 has run; the legacy default destination above stays the
-          fallback when no rule matches. */}
-      {showRouting && (
-        <>
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Forwarding destinations</CardTitle>
-              <CardDescription>
-                Reusable Finance/AP mailboxes that rules forward to. Each can carry its own CC recipients (merged with the
-                organization-wide CC list on every send).
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <DestinationsManager destinations={routeDestinations} />
-            </CardContent>
-          </Card>
-
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Document categories</CardTitle>
-              <CardDescription>
-                Invoice, Purchase Order, Statement and Other are built-in. Add custom categories to route specific document
-                types with rules.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <CategoriesManager categories={routeCategories} />
-            </CardContent>
-          </Card>
-
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Forwarding rules</CardTitle>
-              <CardDescription>
-                Route by organization mailbox, sender and document category, in priority order, with a fallback destination.
-                The highest-priority enabled rule that matches wins; if none match, the default destination above is used
-                (existing behaviour). Test a rule before enabling it — nothing is sent during a test.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RulesManager
-                rules={routeRules}
-                destinations={routeDestinations}
-                categories={routeCategories}
-                mailboxes={routeMailboxes}
-              />
-            </CardContent>
-          </Card>
-        </>
       )}
 
       {/* Providers */}
