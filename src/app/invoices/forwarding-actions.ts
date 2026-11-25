@@ -12,6 +12,8 @@ import {
   addCcRecipient,
   removeCcRecipient,
   updateCcRecipient,
+  addSenderFilter,
+  removeSenderFilter,
 } from "@/lib/invoice/services/forwarding";
 import { setAccountAutoForward } from "@/lib/invoice/services/gmail";
 
@@ -100,6 +102,29 @@ export async function removeCcRecipientAction(input: { id: string }): Promise<{ 
   try {
     const ctx = await requireCapability("settings.manage");
     const res = await removeCcRecipient(ctx.organizationId, input.id);
+    if (res.ok) revalidatePath("/invoices/settings");
+    return res;
+  } catch (e) {
+    return { ok: false, message: isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed." };
+  }
+}
+
+export async function addSenderFilterAction(input: { kind: "allow" | "block"; pattern: string }): Promise<{ ok: boolean; message: string }> {
+  try {
+    const ctx = await requireCapability("settings.manage");
+    const kind = input.kind === "block" ? "block" : "allow";
+    const res = await addSenderFilter(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, kind, input.pattern);
+    if (res.ok) revalidatePath("/invoices/settings");
+    return res;
+  } catch (e) {
+    return { ok: false, message: isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed." };
+  }
+}
+
+export async function removeSenderFilterAction(input: { id: string }): Promise<{ ok: boolean; message: string }> {
+  try {
+    const ctx = await requireCapability("settings.manage");
+    const res = await removeSenderFilter(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, input.id);
     if (res.ok) revalidatePath("/invoices/settings");
     return res;
   } catch (e) {
