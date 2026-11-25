@@ -128,3 +128,13 @@ export function isMissingTableError(e: unknown): boolean {
   const err = e as { code?: string; errno?: number } | null;
   return Boolean(err && (err.code === "ER_NO_SUCH_TABLE" || err.errno === 1146));
 }
+
+/**
+ * True when an error is MySQL's "unknown column" (ER_BAD_FIELD_ERROR / errno
+ * 1054). Same purpose as isMissingTableError but for a column a newer migration
+ * adds, so a read/write that references it degrades gracefully pre-migration.
+ */
+export function isMissingColumnError(e: unknown): boolean {
+  const err = e as { code?: string; errno?: number } | null;
+  return Boolean(err && (err.code === "ER_BAD_FIELD_ERROR" || err.errno === 1054));
+}

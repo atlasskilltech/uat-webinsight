@@ -15,6 +15,7 @@ import {
   addSenderFilter,
   removeSenderFilter,
 } from "@/lib/invoice/services/forwarding";
+import { addCategory, deleteCategory } from "@/lib/invoice/services/routing";
 import { setAccountAutoForward } from "@/lib/invoice/services/gmail";
 
 function fail(e: unknown): FormState {
@@ -125,6 +126,28 @@ export async function removeSenderFilterAction(input: { id: string }): Promise<{
   try {
     const ctx = await requireCapability("settings.manage");
     const res = await removeSenderFilter(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, input.id);
+    if (res.ok) revalidatePath("/invoices/settings");
+    return res;
+  } catch (e) {
+    return { ok: false, message: isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed." };
+  }
+}
+
+export async function addDocumentTypeAction(input: { label: string }): Promise<{ ok: boolean; message: string }> {
+  try {
+    const ctx = await requireCapability("settings.manage");
+    const res = await addCategory(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, { label: input.label });
+    if (res.ok) revalidatePath("/invoices/settings");
+    return res;
+  } catch (e) {
+    return { ok: false, message: isAuthError(e) ? e.message : e instanceof Error ? e.message : "Failed." };
+  }
+}
+
+export async function removeDocumentTypeAction(input: { id: string }): Promise<{ ok: boolean; message: string }> {
+  try {
+    const ctx = await requireCapability("settings.manage");
+    const res = await deleteCategory(ctx.organizationId, { id: ctx.user.id, email: ctx.user.email }, input.id);
     if (res.ok) revalidatePath("/invoices/settings");
     return res;
   } catch (e) {

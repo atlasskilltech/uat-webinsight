@@ -1,11 +1,11 @@
 import "server-only";
-import { iQuery, iQueryOne, iExecute, isMissingTableError } from "../db";
+import { iQuery, iQueryOne, iExecute, isMissingTableError, isMissingColumnError } from "../db";
 import { createId } from "@/lib/id";
 import { logInvoiceAudit } from "../audit";
 import { getAccountAccessToken } from "./gmail";
 import { gmailGetRaw, gmailGetAttachment, gmailGetMessage, gmailSend } from "../gmail/api";
 import { GmailApiError } from "../gmail/oauth";
-import { isOrganizationActive } from "./org-admin";
+import { isOrganizationActive, normalizeGstin } from "./org-admin";
 import { buildOriginalBodyHtml } from "./original-body";
 
 /**
@@ -459,6 +459,8 @@ export interface ForwardRow {
   last_error: string | null;
   forwarded_at: Date | null;
   created_at: Date;
+  /** Set when a human/agent approved this forward (null = auto-forwarded). */
+  approved_by: string | null;
   // joined
   subject: string | null;
   from_address: string | null;
@@ -466,6 +468,9 @@ export interface ForwardRow {
   account_email: string | null;
   received_at: Date | string | null;
   organisation_name: string | null;
+  /** Joined from email_messages: used by the GSTIN gate to identify GST invoices. */
+  classification: string | null;
+  is_invoice_candidate: number | null;
 }
 
 export async function listForwards(
@@ -480,7 +485,8 @@ export async function listForwards(
   }
   params.push(opts.limit ?? 200);
   return iQuery<ForwardRow>(
-    "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, g.email AS account_email, o.name AS organisation_name " +
+    "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.is_invoice_candidate, " +
+      "g.email AS account_email, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
@@ -493,7 +499,8 @@ export async function listForwards(
 /** Fetch a single forward task (with the joined fields sendForward needs). */
 async function getForward(organizationId: string, forwardId: string): Promise<ForwardRow | null> {
   return iQueryOne<ForwardRow>(
-    "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, g.email AS account_email, o.name AS organisation_name " +
+    "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.is_invoice_candidate, " +
+      "g.email AS account_email, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
@@ -753,10 +760,54 @@ export function buildForwardMime(input: {
  * cron, sync cadence) can never send the same email twice. A task not in the
  * 'approved' state is skipped.
  */
+/**
+ * GSTIN validation for AUTO-forwarding a GST invoice. Returns pass:false (with a
+ * reason) when the invoice's buyer GSTIN cannot be confirmed to equal the
+ * organisation's GSTIN, so the task is held for manual review instead of being
+ * auto-sent — never silently forwarding an invoice addressed to a different GST
+ * entity. Applies ONLY to invoice-type documents (other business documents use
+ * their own filters). Fails SAFE to review on any uncertainty: the org has no
+ * GSTIN, or the buyer GSTIN is missing/unreadable (incl. OCR/AI unavailable or
+ * migration 012 not yet applied), or the two differ.
+ */
+async function gstinAutoForwardGate(
+  organizationId: string,
+  forward: ForwardRow,
+): Promise<{ pass: true } | { pass: false; reason: string }> {
+  const isGstInvoice =
+    Number(forward.is_invoice_candidate) === 1 ||
+    forward.classification === "supplier_invoice" ||
+    forward.classification === "credit_note";
+  if (!isGstInvoice) return { pass: true };
+
+  const orgRow = await iQueryOne<{ gstin: string | null }>("SELECT `gstin` FROM `organizations` WHERE id=?", [organizationId]);
+  const orgGstin = normalizeGstin(orgRow?.gstin ?? null);
+  if (!orgGstin) return { pass: false, reason: "the organisation has no GSTIN configured to validate against" };
+
+  let buyerGstin: string | null = null;
+  try {
+    const inv = await iQueryOne<{ buyer_gstin: string | null }>(
+      "SELECT `buyer_gstin` FROM `invoices` WHERE organization_id=? AND source_email_message_id=? ORDER BY `created_at` DESC LIMIT 1",
+      [organizationId, forward.email_message_id],
+    );
+    buyerGstin = normalizeGstin(inv?.buyer_gstin ?? null);
+  } catch (e) {
+    if (isMissingColumnError(e) || isMissingTableError(e)) {
+      return { pass: false, reason: "the buyer GSTIN could not be read (invoice extraction not available on this environment yet)" };
+    }
+    throw e;
+  }
+  if (!buyerGstin) return { pass: false, reason: "the invoice's buyer GSTIN is missing or unreadable" };
+  if (buyerGstin !== orgGstin) {
+    return { pass: false, reason: `the invoice's buyer GSTIN (${buyerGstin}) does not match this organisation's GSTIN (${orgGstin})` };
+  }
+  return { pass: true };
+}
+
 async function sendForward(
   organizationId: string,
   forward: ForwardRow,
-): Promise<"forwarded" | "failed" | "skipped" | "unknown" | "blocked"> {
+): Promise<"forwarded" | "failed" | "skipped" | "unknown" | "blocked" | "gstin_review"> {
   if (forward.status === "forwarded") return "forwarded";
 
   // SEND-TIME sender gate (authoritative). This is the single choke point every
@@ -775,6 +826,22 @@ async function sendForward(
       [`Not forwarded: ${senderBlockReason(gate.reason)}.`, forward.id],
     );
     return "blocked";
+  }
+
+  // GSTIN validation gate — ONLY on the AUTO-forward path. A human/agent approval
+  // carries `approved_by` and has already reviewed the invoice, so it is not
+  // re-gated here. A GST invoice is auto-forwarded only when its buyer GSTIN
+  // matches the organisation's; otherwise it is moved to 'review' for manual
+  // approval (never silently auto-forwarded under a different GST entity).
+  if (!forward.approved_by) {
+    const g = await gstinAutoForwardGate(organizationId, forward);
+    if (!g.pass) {
+      await iExecute(
+        "UPDATE `invoice_forwards` SET `status`='review', `last_error`=? WHERE id=? AND `status`='approved'",
+        [`Held for manual approval — ${g.reason}. GSTIN validation is required before a GST invoice is auto-forwarded.`, forward.id],
+      );
+      return "gstin_review";
+    }
   }
 
   // Atomic claim — only the runner whose UPDATE flips 'approved' -> 'sending' proceeds.
@@ -954,12 +1021,20 @@ export async function approveAndForward(
     "UPDATE `invoice_forwards` SET `status`='approved', `approved_by`=? WHERE id=? AND `status` IN ('pending','review','failed','approved')",
     [actor.id, forwardId],
   );
-  const result = await sendForward(organizationId, { ...row, status: "approved" });
+  // Carry approved_by so sendForward treats this as a human/agent approval (it
+  // bypasses the auto-only GSTIN gate — the approver has reviewed the invoice).
+  const result = await sendForward(organizationId, { ...row, status: "approved", approved_by: actor.id });
   if (result === "forwarded") return { ok: true, message: "Forwarded to Finance & Accounts." };
   if (result === "blocked") {
     return {
       ok: false,
       message: "Not forwarded — the sender is excluded or not in this organisation's allowed senders. Update Allowed senders / Excluded senders in Settings.",
+    };
+  }
+  if (result === "gstin_review") {
+    return {
+      ok: false,
+      message: "Held for review — the invoice's buyer GSTIN does not match (or could not be read for) this organisation. Verify before forwarding.",
     };
   }
   if (result === "unknown") {
