@@ -277,19 +277,31 @@ export default async function InvoiceSettingsPage() {
         </Card>
       )}
 
-      {/* Allowed senders + exclusions (hidden until the forwarding_sender_filters table exists) */}
-      {ctx?.organizationId && forwarding && senderFilters.configured && (
+      {/* Allowed senders + exclusions (always shown; a setup notice appears until migration 011 creates the table) */}
+      {ctx?.organizationId && forwarding && (
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Allowed senders &amp; exclusions</CardTitle>
             <CardDescription>
               Control which senders this organization forwards. When any allowed senders are listed, ONLY mail from them
-              is forwarded; excluded senders (e.g. a specific vendor) are never forwarded. Each entry is a full email
-              address or a whole domain, and applies to this organization only. Editable by Finance Admin only.
+              is forwarded; excluded senders (e.g. a specific vendor) are never forwarded — exclusions always override the
+              allowed list. Each entry is a full email address or a whole domain, and applies to this organization only.
+              Editable by Finance Admin only.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {canManageSettings ? (
+            {!senderFilters.configured ? (
+              <div className="rounded-lg border border-warning/40 bg-warning-soft px-4 py-3 text-sm text-foreground">
+                <p className="font-medium">Setup required to activate</p>
+                <p className="mt-1 text-xs text-muted">
+                  Per-organization sender filtering is installed but not yet activated on this environment. A one-time
+                  database migration must be applied (<code>npm run invoice:db:init</code>, which creates the{" "}
+                  <code>forwarding_sender_filters</code> table). Until then no sender gating is applied and forwarding
+                  behaves as before. Once activated, add this organization&apos;s allowed senders and vendor exclusions
+                  here — each organization keeps its own independent lists.
+                </p>
+              </div>
+            ) : canManageSettings ? (
               <SenderFilters allow={senderFilters.allow} block={senderFilters.block} />
             ) : (
               <ReadOnlyNote>
