@@ -875,6 +875,12 @@ async function sendForward(
     const status = e instanceof GmailApiError ? e.status : 0;
     const definite = e instanceof GmailApiError && DEFINITE_REJECTION.has(status);
     const msg = (e instanceof Error ? e.message : "send error").slice(0, 900);
+    // Loud server log so a send failure (esp. HTTP 403 = the connected account is
+    // missing gmail.send → reconnect it) is visible without opening the DB.
+    console.error(
+      `[invoice-forward] SEND FAILED id=${forward.id} dest=${forward.destination} http=${status || "n/a"} ` +
+        `${status === 403 ? "(403 — account likely missing gmail.send scope; RECONNECT the Gmail account) " : ""}${msg}`,
+    );
     await iExecute("UPDATE `invoice_forwards` SET `status`=?, `last_error`=? WHERE id=?", [
       definite ? "failed" : "review",
       definite

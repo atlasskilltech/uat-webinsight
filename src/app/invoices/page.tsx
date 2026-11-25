@@ -93,7 +93,13 @@ export default async function InvoiceAgentHome() {
     error: f.last_error,
   });
   const needsAttention = allForwards.filter((f) => f.status === "pending" || f.status === "review").map(toView);
-  const recent = allForwards.filter((f) => ["forwarded", "failed", "skipped"].includes(f.status)).slice(0, 10).map(toView);
+  // Include 'approved' and 'sending' (auto-forwards in flight) so a detected
+  // invoice is NEVER invisible between being queued and actually sent — otherwise
+  // an auto-forward that is stuck or slow looks like it "vanished".
+  const recent = allForwards
+    .filter((f) => ["approved", "sending", "forwarded", "failed", "skipped"].includes(f.status))
+    .slice(0, 10)
+    .map(toView);
 
   return (
     <div>
