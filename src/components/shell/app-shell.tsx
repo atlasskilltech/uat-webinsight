@@ -15,6 +15,10 @@ export function AppShell({
   user: SafeUser;
 }) {
   const isAdmin = user.role === "admin";
+  // The domain-monitor alert poll is a full-access feature. Invoice-Agent-only
+  // users have no access to it, so mounting the watcher only makes its server
+  // action throw 403 on every tick (log spam). Gate it by scope.
+  const canUseDomainAlerts = user.accessScope === "full";
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -38,8 +42,9 @@ export function AppShell({
 
   return (
     <div className="flex h-dvh overflow-hidden">
-      {/* Fires "site down" pop-ups on every dashboard page (not just Server Inventory). */}
-      <DomainAlertWatcher />
+      {/* Fires "site down" pop-ups on every dashboard page (not just Server Inventory).
+          Only for full-access users — the domain monitor is not an Invoice-Agent feature. */}
+      {canUseDomainAlerts && <DomainAlertWatcher />}
 
       {/* Desktop sidebar */}
       <div className="hidden lg:block no-print">
