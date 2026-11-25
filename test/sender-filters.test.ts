@@ -102,10 +102,15 @@ describe("evaluateSenderForward — the forward gate", () => {
     expect(r).toEqual({ forward: true, reason: "not_configured" });
   });
 
-  it("forwards NOTHING when configured but no allowed senders exist", () => {
+  it("forwards everything when configured but no allowed senders exist (allow-list restricts only when populated)", () => {
     const r = evaluateSenderForward(F([], []), from("vendor@acme.com"));
+    expect(r.forward).toBe(true);
+  });
+
+  it("still blocks an excluded sender even when the allow-list is empty", () => {
+    const r = evaluateSenderForward(F([], ["spam.com"]), from("bulk@spam.com"));
     expect(r.forward).toBe(false);
-    expect(r.reason).toBe("empty_allowlist");
+    expect(r.reason).toBe("blocked");
   });
 
   it("forwards only senders on the allow-list (exact + domain)", () => {

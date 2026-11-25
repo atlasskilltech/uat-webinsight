@@ -187,13 +187,13 @@ describe("approveAndForward — send-time sender gate", () => {
     expect(H.forwards["F2"].last_error).toMatch(/excluded/i);
   });
 
-  it("does NOT send when the organisation has an empty allow-list", async () => {
-    H.filters["ORG-A"] = []; // configured, but no allowed senders → forward nothing
+  it("sends when the organisation has an empty allow-list (no restriction, default behaviour)", async () => {
+    H.filters["ORG-A"] = []; // configured, but no allowed senders → no restriction, forward all
     seedForward({ id: "F3", organization_id: "ORG-A", status: "pending", from_address: "<x@acme.com>" });
     const res = await approveAndForward("ORG-A", actor, "F3");
-    expect(res.ok).toBe(false);
-    expect(api.gmailSend).not.toHaveBeenCalled();
-    expect(H.forwards["F3"].status).toBe("skipped");
+    expect(res.ok).toBe(true);
+    expect(api.gmailSend).toHaveBeenCalledTimes(1);
+    expect(H.forwards["F3"].status).toBe("forwarded");
   });
 
   it("a PENDING email that becomes EXCLUDED before approval is not forwarded", async () => {
