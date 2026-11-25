@@ -7,12 +7,13 @@ import { getInvoiceContext, listUserOrganizations } from "@/lib/invoice/org";
 import { hasCapability } from "@/lib/invoice/permissions";
 import { getInvoiceDbStatus, getGstinUniquenessStatus } from "@/lib/invoice/status";
 import { getInvoiceFeatureFlags } from "@/lib/invoice/config";
-import { getForwardingSettings, listCcRecipients } from "@/lib/invoice/services/forwarding";
+import { getForwardingSettings, listCcRecipients, listSenderFilters } from "@/lib/invoice/services/forwarding";
 import { listMembers, listOrganizationsBrief, addressText } from "@/lib/invoice/services/org-admin";
 import { OrganizationsManager, OrgForm } from "./organizations-client";
 import { TeamMembers } from "./team-members";
 import { ForwardingSettingsForm } from "./forwarding-form";
 import { CcRecipients } from "./cc-recipients";
+import { SenderFilters } from "./sender-filters";
 
 export const metadata: Metadata = { title: "Invoice Settings" };
 export const dynamic = "force-dynamic";
@@ -71,6 +72,9 @@ export default async function InvoiceSettingsPage() {
   const flags = getInvoiceFeatureFlags();
   const forwarding = ctx?.organizationId ? await getForwardingSettings(ctx.organizationId) : null;
   const ccRecipients = ctx?.organizationId ? await listCcRecipients(ctx.organizationId) : [];
+  const senderFilters = ctx?.organizationId
+    ? await listSenderFilters(ctx.organizationId)
+    : { configured: false, allow: [], block: [] };
   const canManageOrg = ctx?.organizationId ? await hasCapability("org.manage") : false;
   const canManageSettings = ctx?.organizationId ? await hasCapability("settings.manage") : false;
   const members = ctx?.organizationId && canManageOrg ? await listMembers(ctx.organizationId) : [];
@@ -267,6 +271,46 @@ export default async function InvoiceSettingsPage() {
                 <dl className="grid grid-cols-1 gap-3">
                   <div><dt className="text-xs text-muted">Destination email</dt><dd className="text-sm font-medium">{forwarding.financeDestination ?? "Not configured"}</dd></div>
                 </dl>
+              </ReadOnlyNote>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Allowed senders + exclusions (hidden until the forwarding_sender_filters table exists) */}
+      {ctx?.organizationId && forwarding && senderFilters.configured && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Allowed senders &amp; exclusions</CardTitle>
+            <CardDescription>
+              Control which senders this organization forwards. When any allowed senders are listed, ONLY mail from them
+              is forwarded; excluded senders (e.g. a specific vendor) are never forwarded. Each entry is a full email
+              address or a whole domain, and applies to this organization only. Editable by Finance Admin only.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {canManageSettings ? (
+              <SenderFilters allow={senderFilters.allow} block={senderFilters.block} />
+            ) : (
+              <ReadOnlyNote>
+                <div className="space-y-4">
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-muted">Allowed senders</p>
+                    {senderFilters.allow.length === 0 ? (
+                      <p className="text-sm text-muted">None — this organization will not forward any mail.</p>
+                    ) : (
+                      <ul className="space-y-1 text-sm">{senderFilters.allow.map((f) => <li key={f.id}>{f.pattern}</li>)}</ul>
+                    )}
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-muted">Excluded senders</p>
+                    {senderFilters.block.length === 0 ? (
+                      <p className="text-sm text-muted">None.</p>
+                    ) : (
+                      <ul className="space-y-1 text-sm">{senderFilters.block.map((f) => <li key={f.id}>{f.pattern}</li>)}</ul>
+                    )}
+                  </div>
+                </div>
               </ReadOnlyNote>
             )}
           </CardContent>

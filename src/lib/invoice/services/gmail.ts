@@ -29,7 +29,7 @@ import {
   listDestinations,
   listCategories,
 } from "./routing";
-import { listCcRecipients } from "./forwarding";
+import { listCcRecipients, listSenderFilters, evaluateSenderForward } from "./forwarding";
 import { isOrganizationActive } from "./org-admin";
 
 export interface GmailIntegrationRow {
@@ -405,6 +405,10 @@ export async function syncGmailAccount(
           // Organization CUSTOM categories (active), used to detect a configured
           // document type from the subject/snippet so rules can route it.
           customCategories: (await listCategories(organizationId)).filter((c) => !c.isSystem && c.isActive),
+          // Per-org sender gating: only ALLOWED senders are forwarded (when any
+          // are configured), and EXCLUDED senders are never forwarded. Loaded
+          // once here so the per-message check does no extra queries.
+          senderFilters: await listSenderFilters(organizationId),
         };
 
     for (const ref of messages) {
@@ -471,7 +475,14 @@ export async function syncGmailAccount(
         // forwarded. Auto-forward stays OFF by default and an uncertain
         // (below-threshold) document goes to review, not auto. Ordinary mail /
         // newsletters are not documents and are never forwarded.
-        if (routing && !opts.backfill) {
+        // Per-org sender gate: skip forwarding entirely unless this sender is
+        // allowed and not excluded. The email is still ingested/recorded above —
+        // only the FORWARD is gated. When the feature isn't configured (table not
+        // migrated), evaluateSenderForward returns forward:true (no gating).
+        const senderDecision = routing
+          ? evaluateSenderForward(routing.senderFilters, from)
+          : { forward: false as const };
+        if (routing && !opts.backfill && senderDecision.forward) {
           const plan = await resolveForwardingPlan(
             organizationId,
             { integrationId, sender: from, categoryKey, confidencePct: confPct },

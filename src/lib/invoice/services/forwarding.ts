@@ -198,6 +198,199 @@ export async function updateCcRecipient(
   return { ok: true, message: `Updated CC to ${email}.` };
 }
 
+// --- Sender filters (allowed senders + exclusions) --------------------------
+
+/**
+ * Per-organisation sender gating for forwarding:
+ *
+ *   - ALLOWED senders ("allow"): when an org has at least one, ONLY mail from
+ *     those senders is forwarded. With none configured, nothing is forwarded.
+ *   - EXCLUDED senders ("block", e.g. a vendor like Razorpay): mail from them is
+ *     NEVER forwarded, even if it would otherwise be allowed (block wins).
+ *
+ * A pattern is a full email (billing@razorpay.com) OR a bare domain
+ * (razorpay.com — also matches sub-domains like billing.razorpay.com). All
+ * matching is case-insensitive and strictly scoped to the organisation.
+ */
+export type SenderFilterKind = "allow" | "block";
+
+export interface SenderFilter {
+  id: string;
+  kind: SenderFilterKind;
+  pattern: string;
+}
+
+/** The org's filters, plus `configured` = whether the feature's table exists. */
+export interface SenderFilters {
+  /** False when the forwarding_sender_filters table is not migrated yet. When
+   *  false, NO gating is applied (pre-migration behaviour is unchanged). */
+  configured: boolean;
+  allow: SenderFilter[];
+  block: SenderFilter[];
+}
+
+/** A bare DNS domain (no scheme, no path), used for domain-style patterns. */
+const DOMAIN_RE = /^(?=.{1,255}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+
+/**
+ * Pull the email address out of a raw From header, which may be
+ * `"Vendor Name" <billing@acme.com>` or just `billing@acme.com`. Returns the
+ * lower-cased address, or null when none can be parsed.
+ */
+export function extractSenderEmail(fromHeader: string): string | null {
+  if (!fromHeader) return null;
+  const angle = fromHeader.match(/<([^<>]+)>/);
+  const base = (angle ? angle[1] : fromHeader).toLowerCase();
+  const token = base.match(/[^\s"'<>(),;:]+@[^\s"'<>(),;:]+/);
+  const email = (token ? token[0] : base).trim();
+  return EMAIL_RE.test(email) ? email : null;
+}
+
+/**
+ * Validate + normalize a sender-filter pattern. Accepts a full email address or
+ * a bare domain (a leading "@" is tolerated, e.g. "@acme.com"). Lower-cased.
+ */
+export function normalizeSenderPattern(
+  raw: string,
+): { ok: true; value: string } | { ok: false; message: string } {
+  let v = raw.trim().toLowerCase();
+  if (!v) return { ok: false, message: "Enter a sender email or domain." };
+  if (v.length > 320) return { ok: false, message: "That value is too long." };
+  if (v.startsWith("@")) v = v.slice(1); // "@acme.com" -> "acme.com"
+  const invalid = { ok: false as const, message: "Enter a valid email address or domain (e.g. billing@acme.com or acme.com)." };
+  if (v.includes("@")) return EMAIL_RE.test(v) ? { ok: true, value: v } : invalid;
+  return DOMAIN_RE.test(v) ? { ok: true, value: v } : invalid;
+}
+
+/**
+ * Does a sender address match a pattern? A full-email pattern matches exactly;
+ * a domain pattern matches the sender's domain exactly OR as a sub-domain
+ * (so "acme.com" matches both "a@acme.com" and "a@mail.acme.com").
+ */
+export function senderMatchesPattern(senderEmail: string, pattern: string): boolean {
+  const s = senderEmail.trim().toLowerCase();
+  const p = pattern.trim().toLowerCase().replace(/^@/, "");
+  if (!s || !p) return false;
+  if (p.includes("@")) return s === p; // exact address
+  const at = s.lastIndexOf("@");
+  if (at < 0) return false;
+  const domain = s.slice(at + 1);
+  return domain === p || domain.endsWith("." + p); // domain or sub-domain
+}
+
+export type SenderForwardReason =
+  | "not_configured" // feature table not migrated — no gating
+  | "blocked" // sender is on the exclusion list
+  | "allowed" // sender matches an allowed entry
+  | "empty_allowlist" // gating on, but org has no allowed senders → nothing forwards
+  | "not_in_allowlist" // sender is not among the allowed entries
+  | "unparseable_sender"; // gating on + allow entries exist, but sender couldn't be parsed (fail-closed)
+
+/**
+ * Decide whether an email from `fromHeader` may be forwarded, given an org's
+ * sender filters. Fail-closed when gating is active: block wins; with no allowed
+ * senders nothing forwards; an unparseable sender is not forwarded. When the
+ * feature isn't configured (table missing), forwarding is NOT gated.
+ */
+export function evaluateSenderForward(
+  filters: SenderFilters,
+  fromHeader: string,
+): { forward: boolean; reason: SenderForwardReason } {
+  if (!filters.configured) return { forward: true, reason: "not_configured" };
+  const email = extractSenderEmail(fromHeader);
+  // Exclusions win over everything else.
+  if (email && filters.block.some((f) => senderMatchesPattern(email, f.pattern))) {
+    return { forward: false, reason: "blocked" };
+  }
+  // Allow-list is REQUIRED once the feature is configured: no allowed senders
+  // means nothing is forwarded.
+  if (filters.allow.length === 0) return { forward: false, reason: "empty_allowlist" };
+  if (!email) return { forward: false, reason: "unparseable_sender" };
+  if (filters.allow.some((f) => senderMatchesPattern(email, f.pattern))) {
+    return { forward: true, reason: "allowed" };
+  }
+  return { forward: false, reason: "not_in_allowlist" };
+}
+
+/**
+ * Load an org's sender filters. Missing-table-safe: when the
+ * forwarding_sender_filters table isn't migrated yet, returns configured:false
+ * so the caller applies NO gating (pre-migration behaviour is unchanged).
+ */
+export async function listSenderFilters(organizationId: string): Promise<SenderFilters> {
+  try {
+    const rows = await iQuery<{ id: string; kind: string; pattern: string }>(
+      "SELECT `id`, `kind`, `pattern` FROM `forwarding_sender_filters` WHERE organization_id=? ORDER BY `pattern` ASC",
+      [organizationId],
+    );
+    const allow: SenderFilter[] = [];
+    const block: SenderFilter[] = [];
+    for (const r of rows) {
+      const kind: SenderFilterKind = r.kind === "block" ? "block" : "allow";
+      (kind === "block" ? block : allow).push({ id: r.id, kind, pattern: r.pattern });
+    }
+    return { configured: true, allow, block };
+  } catch (e) {
+    if (isMissingTableError(e)) return { configured: false, allow: [], block: [] };
+    throw e;
+  }
+}
+
+/** Add an allowed or excluded sender (idempotent). */
+export async function addSenderFilter(
+  organizationId: string,
+  actor: { id: string; email: string },
+  kind: SenderFilterKind,
+  rawPattern: string,
+): Promise<{ ok: boolean; message: string }> {
+  const k: SenderFilterKind = kind === "block" ? "block" : "allow";
+  const norm = normalizeSenderPattern(rawPattern);
+  if (!norm.ok) return { ok: false, message: norm.message };
+  const res = await iExecute(
+    "INSERT INTO `forwarding_sender_filters` (`id`,`organization_id`,`kind`,`pattern`) VALUES (?,?,?,?) " +
+      "ON DUPLICATE KEY UPDATE `id`=`id`",
+    [createId(), organizationId, k, norm.value],
+  );
+  if (res.affectedRows === 0) {
+    return { ok: false, message: k === "block" ? "That sender is already excluded." : "That sender is already allowed." };
+  }
+  await logInvoiceAudit({
+    organizationId,
+    actorUserId: actor.id,
+    actorLabel: actor.email,
+    action: k === "block" ? "forwarding.sender_excluded" : "forwarding.sender_allowed",
+    entityType: "forwarding_sender_filter",
+    entityId: norm.value,
+    after: { kind: k, pattern: norm.value },
+  });
+  return {
+    ok: true,
+    message: k === "block" ? `Excluded ${norm.value} from forwarding.` : `Added ${norm.value} to allowed senders.`,
+  };
+}
+
+/** Remove a sender filter by id (strictly org-scoped). */
+export async function removeSenderFilter(
+  organizationId: string,
+  actor: { id: string; email: string },
+  id: string,
+): Promise<{ ok: boolean; message: string }> {
+  const res = await iExecute("DELETE FROM `forwarding_sender_filters` WHERE organization_id=? AND id=?", [
+    organizationId,
+    id,
+  ]);
+  if (res.affectedRows === 0) return { ok: false, message: "Entry not found." };
+  await logInvoiceAudit({
+    organizationId,
+    actorUserId: actor.id,
+    actorLabel: actor.email,
+    action: "forwarding.sender_filter_removed",
+    entityType: "forwarding_sender_filter",
+    entityId: id,
+  });
+  return { ok: true, message: "Removed." };
+}
+
 export interface ForwardRow {
   id: string;
   organization_id: string;
@@ -707,11 +900,25 @@ export async function forwardEmailById(
   if (!settings.enabled || !settings.financeDestination) {
     return { ok: false, message: "No Finance & Accounts destination is configured (set it in Agent Settings)." };
   }
-  const email = await iQueryOne<{ id: string; gmail_integration_id: string; gmail_message_id: string; classification_confidence: string | null }>(
-    "SELECT id, gmail_integration_id, gmail_message_id, classification_confidence FROM `email_messages` WHERE organization_id=? AND id=?",
+  const email = await iQueryOne<{ id: string; gmail_integration_id: string; gmail_message_id: string; from_address: string | null; classification_confidence: string | null }>(
+    "SELECT id, gmail_integration_id, gmail_message_id, from_address, classification_confidence FROM `email_messages` WHERE organization_id=? AND id=?",
     [organizationId, emailMessageId],
   );
   if (!email) return { ok: false, message: "Email not found." };
+
+  // Sender gating applies even to an explicit forward: an EXCLUDED sender is
+  // never forwarded, and (once allowed senders are configured) only an allowed
+  // sender may be forwarded. Keeps the allow-list / exclusions authoritative.
+  const senderDecision = evaluateSenderForward(await listSenderFilters(organizationId), email.from_address ?? "");
+  if (!senderDecision.forward) {
+    const message =
+      senderDecision.reason === "blocked"
+        ? "This sender is on the organisation's excluded list, so it is not forwarded. Remove it from Excluded senders to forward."
+        : senderDecision.reason === "empty_allowlist"
+          ? "No allowed senders are configured for this organisation — add the sender under Allowed senders to forward."
+          : "This sender is not in the organisation's allowed senders — add it under Allowed senders to forward.";
+    return { ok: false, message };
+  }
 
   // Idempotent create: both unique keys ((email_message_id,destination) and
   // (org,source_gmail_message_id,destination)) make this a no-op if a forward
