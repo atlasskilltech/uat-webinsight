@@ -53,8 +53,10 @@ vi.mock("@/lib/db", () => ({
   json: (v: unknown) => (v == null ? null : JSON.stringify(v)),
 }));
 
-// Pull the handler in after the mock is registered.
+// Pull the handler + repo in after the mock is registered.
 const { handleAgentRequest } = await import("@/lib/agent-api/handler");
+const { ensureTables } = await import("@/lib/agent-api/repo");
+const db = await import("@/lib/db");
 
 function req(path: string, { key = KEY, user }: { key?: string | null; user?: string } = {}) {
   const headers: Record<string, string> = {};
@@ -119,6 +121,18 @@ describe("scopes + actions catalogue", () => {
     const invoice = { ...full, accessScope: "invoice_only" as const };
     expect(allowedActions(SCOPE_IDS, full).length).toBeGreaterThan(0);
     expect(allowedActions(SCOPE_IDS, invoice).length).toBe(0);
+  });
+});
+
+describe("auto-provisioning", () => {
+  it("creates both tables on first use (CREATE TABLE IF NOT EXISTS)", async () => {
+    await ensureTables();
+    const creates = vi
+      .mocked(db.execute)
+      .mock.calls.map((c) => String(c[0]))
+      .filter((sql) => /CREATE TABLE IF NOT EXISTS/i.test(sql));
+    expect(creates.some((s) => s.includes("`AgentApiKey`"))).toBe(true);
+    expect(creates.some((s) => s.includes("`AgentApiLog`"))).toBe(true);
   });
 });
 
