@@ -77,11 +77,13 @@ export function AgentApiClient({
   scopes,
   keys,
   log,
+  loadError = null,
 }: {
   agentApiUrl: string;
   scopes: ScopeDef[];
   keys: KeyView[];
   log: LogView[];
+  loadError?: string | null;
 }) {
   const toast = useToast();
   const [state, formAction] = useActionState(createKeyAction, idleKeyState);
@@ -116,6 +118,12 @@ export function AgentApiClient({
 
   return (
     <div className="space-y-6">
+      {loadError && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-soft px-3 py-2.5 text-sm text-foreground">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <span>{loadError}</span>
+        </div>
+      )}
       {/* How it works + the URL to paste into IntelligenceOS */}
       <Card>
         <CardHeader>

@@ -112,5 +112,6 @@ curl -s "https://<host>/api/agent-api/tasks?status=in_progress&limit=20" \
 | `src/app/settings/agent-api/` | Admin UI to generate/revoke keys. |
 | `db/schema.sql` | `AgentApiKey` + `AgentApiLog` tables. |
 
-Run `npm run db:init` after pulling so the two new tables are created (it is
-idempotent and safe to re-run).
+The two tables are **created automatically on first use** (`ensureTables()` in
+`repo.ts`), so no manual migration step is required after deploy. `npm run
+db:init` also creates them (idempotent) if you prefer to provision up front.

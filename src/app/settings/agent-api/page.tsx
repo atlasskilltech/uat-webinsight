@@ -42,7 +42,17 @@ export default async function AgentApiPage() {
   });
   const agentApiUrl = `${baseUrl(req)}/api/agent-api`;
 
-  const [keys, log] = await Promise.all([listKeys(), listLog({ limit: 25 })]);
+  // Never let a transient DB problem blank the whole page — show what we can,
+  // with a banner, so the URL and the generate form stay usable.
+  let keys: Awaited<ReturnType<typeof listKeys>> = [];
+  let log: Awaited<ReturnType<typeof listLog>> = [];
+  let loadError: string | null = null;
+  try {
+    [keys, log] = await Promise.all([listKeys(), listLog({ limit: 25 })]);
+  } catch {
+    loadError =
+      "Could not load existing keys right now (the key store may be unreachable). You can still copy the URL below; try generating a key, and refresh.";
+  }
 
   return (
     <div>
@@ -53,6 +63,7 @@ export default async function AgentApiPage() {
       <AgentApiClient
         agentApiUrl={agentApiUrl}
         scopes={SCOPES}
+        loadError={loadError}
         keys={keys.map((k) => ({
           ...k,
           expiresAt: k.expiresAt ? k.expiresAt.toISOString() : null,
