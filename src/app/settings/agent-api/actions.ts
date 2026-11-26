@@ -5,16 +5,11 @@ import { requireAdmin, isAuthError } from "@/lib/auth/guard";
 import { generateKey, hashKey, keyLast4 } from "@/lib/agent-api/keys";
 import { normaliseScopes } from "@/lib/agent-api/scopes";
 import { createKey, revokeKey, setKeyScopes } from "@/lib/agent-api/repo";
+import type { KeyFormState } from "./state";
 
-export interface KeyFormState {
-  status: "idle" | "success" | "error";
-  message?: string;
-  /** The plaintext key, returned exactly once right after creation. */
-  newKey?: string;
-  newKeyName?: string;
-}
-
-export const idleKeyState: KeyFormState = { status: "idle" };
+// NOTE: this is a "use server" file, so it may export ONLY async functions.
+// `KeyFormState` and `idleKeyState` live in ./state (a plain module); exporting
+// a type or constant from here throws at runtime (Next error E352).
 
 function parseExpiry(raw: string): { expiresAt: Date | null } | { error: string } {
   const s = raw.trim();
