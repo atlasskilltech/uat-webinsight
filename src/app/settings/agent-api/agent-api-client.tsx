@@ -22,7 +22,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
 import { fmtDateTime, fmtDate } from "@/lib/dates";
 import { accessLabel, PRESETS, type ScopeDef } from "@/lib/agent-api/scopes";
-import { createKeyAction, revokeKeyAction, idleKeyState } from "./actions";
+import { createKeyAction, revokeKeyAction } from "./actions";
+import { idleKeyState } from "./state";
 
 interface KeyView {
   id: string;
