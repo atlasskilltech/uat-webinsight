@@ -11,6 +11,7 @@ interface Msg { id: string; role: "user" | "assistant"; content: string }
 
 const STORAGE_KEY = "web-insight-agent-chat";
 const POS_KEY = "web-insight-agent-pos";
+const LAUNCHER_KEY = "web-insight-agent-launcher-pos";
 /** Other components (e.g. the topbar "Ask Agent" button) open the widget via this event. */
 export const OPEN_EVENT = "web-agent:open";
 
@@ -27,10 +28,13 @@ export function WebAgent() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [pending, startTransition] = useTransition();
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // top-left; null = default bottom-right
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // panel top-left; null = default bottom-right
+  const [launcherPos, setLauncherPos] = useState<{ x: number; y: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const launcherRef = useRef<HTMLButtonElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const ldrag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
   const tts = useSpeech();
   const mic = useDictation({ onFinal: (t) => send(t) });
 
@@ -48,6 +52,8 @@ export function WebAgent() {
       if (saved) setMessages(JSON.parse(saved).slice(-40));
       const p = localStorage.getItem(POS_KEY);
       if (p) setPos(JSON.parse(p));
+      const lp = localStorage.getItem(LAUNCHER_KEY);
+      if (lp) setLauncherPos(JSON.parse(lp));
     } catch {
       /* ignore */
     }
@@ -83,6 +89,37 @@ export function WebAgent() {
     window.addEventListener("pointerup", onDragEnd);
   };
 
+  // ── Dragging the floating launcher (press to move; tap to open) ──
+  const onLauncherMove = useCallback((e: PointerEvent) => {
+    if (!ldrag.current || !launcherRef.current) return;
+    const dx = e.clientX - ldrag.current.sx;
+    const dy = e.clientY - ldrag.current.sy;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) ldrag.current.moved = true;
+    const w = launcherRef.current.offsetWidth;
+    const h = launcherRef.current.offsetHeight;
+    const x = Math.min(Math.max(8, ldrag.current.ox + dx), window.innerWidth - w - 8);
+    const y = Math.min(Math.max(8, ldrag.current.oy + dy), window.innerHeight - h - 8);
+    setLauncherPos({ x, y });
+  }, []);
+  const onLauncherUp = useCallback(() => {
+    window.removeEventListener("pointermove", onLauncherMove);
+    window.removeEventListener("pointerup", onLauncherUp);
+    const moved = ldrag.current?.moved;
+    ldrag.current = null;
+    if (!moved) {
+      setOpen(true); // it was a tap, not a drag
+    } else {
+      setLauncherPos((p) => { try { if (p) localStorage.setItem(LAUNCHER_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
+    }
+  }, [onLauncherMove]);
+  const onLauncherDown = (e: React.PointerEvent) => {
+    if (!launcherRef.current) return;
+    const r = launcherRef.current.getBoundingClientRect();
+    ldrag.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false };
+    window.addEventListener("pointermove", onLauncherMove);
+    window.addEventListener("pointerup", onLauncherUp);
+  };
+
   function toggleVoice() {
     const turningOn = !mic.listening;
     mic.toggle();
@@ -110,12 +147,14 @@ export function WebAgent() {
     <>
       {!open && (
         <button
-          onClick={() => setOpen(true)}
-          className="group fixed bottom-5 right-5 z-[95] flex h-14 items-center gap-2 rounded-full bg-gradient-to-br from-accent to-accent-hover px-4 text-accent-foreground shadow-xl transition-transform hover:scale-105 focus-ring"
-          aria-label="Open Web Insight Agent"
+          ref={launcherRef}
+          onPointerDown={onLauncherDown}
+          style={launcherPos ? { left: launcherPos.x, top: launcherPos.y, right: "auto", bottom: "auto" } : undefined}
+          className="fixed bottom-5 right-5 z-[95] flex h-14 w-14 touch-none items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-xl transition-transform hover:scale-105 focus-ring"
+          aria-label="Web Insight Agent — tap to open, drag to move"
+          title="Tap to ask · drag to move"
         >
-          <Bot className="h-5 w-5" />
-          <span className="hidden text-sm font-semibold sm:inline">Ask Agent</span>
+          <Bot className="h-6 w-6" />
         </button>
       )}
 
