@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, PanelLeftClose, PanelLeft, Search, ChevronRight, Settings, LogOut } from "lucide-react";
+import { Menu, PanelLeftClose, PanelLeft, Search, ChevronRight, Settings, LogOut, Bot } from "lucide-react";
 import { activeNavItem } from "@/lib/nav";
 import { ThemeToggle } from "./theme-toggle";
 import { CommandPalette } from "./command-palette";
+import { OPEN_EVENT } from "./web-agent";
 import { initials, cn } from "@/lib/utils";
 import { logout } from "@/app/login/actions";
 import { roleLabel, type SafeUser } from "@/lib/auth/types";
@@ -90,6 +91,14 @@ export function Topbar({
       </nav>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <button
+          onClick={() => window.dispatchEvent(new Event(OPEN_EVENT))}
+          className="flex items-center gap-2 rounded-lg bg-gradient-to-br from-accent to-accent-hover px-3 py-1.5 text-sm font-medium text-accent-foreground shadow-sm hover:opacity-90 focus-ring"
+          title="Ask the Web Insight Agent"
+        >
+          <Bot className="h-4 w-4" />
+          <span className="hidden sm:inline">Ask Agent</span>
+        </button>
         <button
           onClick={() => setPaletteOpen(true)}
           className="hidden items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm text-muted-2 hover:bg-surface-hover sm:flex focus-ring"
