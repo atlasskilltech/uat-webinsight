@@ -34,6 +34,7 @@ import {
   addDays,
 } from "./common";
 import { SCOPE_MAP } from "./scopes";
+import { INVOICE_ACTIONS } from "./invoice-actions";
 
 /**
  * Catalogue of READ-ONLY actions this project exposes to IntelligenceOS.
@@ -578,25 +579,30 @@ export const ACTIONS: Action[] = [
       };
     },
   },
+
+  // ─── Invoice Agent (finance) ─────────────────────────────────────
+  ...INVOICE_ACTIONS,
 ];
 
 // ─── Access + manifest helpers ───────────────────────────────────
 
 /**
- * Whether a delegated user may use the read actions at all. All actions here
- * are full-workspace reads, so an Invoice-Agent-only user (or an unknown /
- * inactive one) is refused; any active full-access user is allowed.
+ * Whether a delegated user may use `action`.
+ *  - No user (the admin connecting with the key): everything the key allows.
+ *  - Invoice Agent reads (`invoices.read`): any active user — a full-access user
+ *    OR an Invoice-Agent-only user (matching the app's own access model).
+ *  - All other (website) reads: full-access users only.
  */
-export function userCanRead(user: AgentUser | null): boolean {
-  if (!user) return true; // key-only call (the admin connecting)
+export function userCanUse(user: AgentUser | null, action: Action): boolean {
+  if (!user) return true;
+  if (action.scope === "invoices.read") return true;
   return user.accessScope === "full";
 }
 
 /** The actions a key's scopes allow, narrowed to the acting user when delegated. */
 export function allowedActions(keyScopes: string[], user: AgentUser | null = null): Action[] {
   const scopes = new Set((keyScopes || []).filter((s) => SCOPE_MAP[s]));
-  if (user && !userCanRead(user)) return [];
-  return ACTIONS.filter((a) => scopes.has(a.scope));
+  return ACTIONS.filter((a) => scopes.has(a.scope) && userCanUse(user, a));
 }
 
 /** The public (manifest) view of an action — everything except the handler and scope. */

@@ -53,6 +53,17 @@ vi.mock("@/lib/db", () => ({
   json: (v: unknown) => (v == null ? null : JSON.stringify(v)),
 }));
 
+// Minimal invoice-DB mock so invoice actions can run in routing tests.
+vi.mock("@/lib/invoice/db", () => ({
+  iQuery: vi.fn(async (sql: string) => {
+    if (sql.includes("organization_members")) return [];
+    if (sql.includes("agent_runs")) return [{ id: "r1", status: "succeeded", instruction: "x", started_at: new Date(), finished_at: null, organisation: "Org" }];
+    if (sql.includes("agent_activity_logs")) return [{ event: "e", summary: "s", organisation: "Org", created_at: new Date() }];
+    return []; // `invoices` etc. → empty (get_invoice → 404)
+  }),
+  isMissingTableError: () => false,
+}));
+
 // Pull the handler + repo in after the mock is registered.
 const { handleAgentRequest } = await import("@/lib/agent-api/handler");
 const { ensureTables } = await import("@/lib/agent-api/repo");
@@ -116,11 +127,16 @@ describe("scopes + actions catalogue", () => {
     expect(publicAction(ACTIONS[0])).not.toHaveProperty("run");
     expect(publicAction(ACTIONS[0])).not.toHaveProperty("scope");
   });
-  it("delegated invoice-only users get no actions", () => {
+  it("delegation: full user gets all areas; invoice-only user gets only invoice actions", () => {
     const full = { email: "a@x.com", name: "A", role: "user" as const, accessScope: "full" as const };
     const invoice = { ...full, accessScope: "invoice_only" as const };
-    expect(allowedActions(SCOPE_IDS, full).length).toBeGreaterThan(0);
-    expect(allowedActions(SCOPE_IDS, invoice).length).toBe(0);
+    const fullActions = allowedActions(SCOPE_IDS, full);
+    const invoiceActions = allowedActions(SCOPE_IDS, invoice);
+    expect(fullActions.length).toBeGreaterThan(invoiceActions.length);
+    expect(invoiceActions.length).toBeGreaterThan(0);
+    expect(invoiceActions.every((a) => a.scope === "invoices.read")).toBe(true);
+    // The admin (no user) sees everything the key allows, invoices included.
+    expect(allowedActions(SCOPE_IDS, null).some((a) => a.scope === "invoices.read")).toBe(true);
   });
 });
 
@@ -168,6 +184,17 @@ describe("handler", () => {
   it("revoked key is rejected", async () => {
     state.keyRow.revoked = true;
     expect((await handleAgentRequest(req("/manifest"), ["manifest"], "GET")).status).toBe(401);
+  });
+
+  it("routes a literal path over a parameterised one (/invoices/agent-activity not /invoices/{id})", async () => {
+    state.keyRow.scopes = ["invoices.read"];
+    const act = await handleAgentRequest(req("/invoices/agent-activity"), ["invoices", "agent-activity"], "GET");
+    expect(act.status).toBe(200);
+    expect(act.body).toHaveProperty("runs"); // invoice_agent_activity, not get_invoice's "Invoice not found"
+    expect(act.body).not.toHaveProperty("error");
+    // A real id still reaches get_invoice (which 404s on the empty mock).
+    const one = await handleAgentRequest(req("/invoices/INV-9"), ["invoices", "INV-9"], "GET");
+    expect(one.status).toBe(404);
   });
 
   it("acts-as-user: unknown user 403, active full-access user allowed", async () => {
