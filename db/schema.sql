@@ -493,3 +493,57 @@ ALTER TABLE `AppSettings` ADD COLUMN IF NOT EXISTS `dailyReportSentOn` VARCHAR(1
 -- adds are monitored now. Remove any previously auto-discovered entries. Safe
 -- and idempotent: user-added domains have autoDiscovered = 0 and are kept.
 DELETE FROM `ServerAsset` WHERE `autoDiscovered` = 1;
+
+-- ===========================================================================
+-- IntelligenceOS Agent API (added 2026-11)
+-- ---------------------------------------------------------------------------
+-- Lets the ATLAS IntelligenceOS "super agent" read this project's data with a
+-- key, following docs/AGENT-API.md (ATLAS Agent API spec, `atlas-agent-api/1`).
+-- A project admin creates a key in Settings → Agent API (IntelligenceOS); only
+-- its SHA-256 hash is stored, the key itself is shown once. Every request
+-- re-checks the key and its scopes. See src/lib/agent-api/*.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS `AgentApiKey` (
+    `id` VARCHAR(191) NOT NULL,
+    `name` VARCHAR(191) NOT NULL,
+    `keyHash` CHAR(64) NOT NULL,
+    `keyLast4` VARCHAR(8) NOT NULL,
+    -- JSON array of scope ids, e.g. ["work.read","seo.read"].
+    `scopes` JSON NOT NULL,
+    -- 1 = every request must name a Web Insight user (X-IntelligenceOS-User)
+    -- and is limited to what that user may see ("acts as the signed-in user").
+    `requireUser` BOOLEAN NOT NULL DEFAULT false,
+    -- Comma-separated client IPs allowed to use this key; NULL/empty = any.
+    `allowedIps` VARCHAR(500) NULL,
+    `expiresAt` DATETIME(3) NULL,
+    `revoked` BOOLEAN NOT NULL DEFAULT false,
+    `revokedAt` DATETIME(3) NULL,
+    `revokedBy` VARCHAR(191) NULL,
+    `lastUsedAt` DATETIME(3) NULL,
+    `createdBy` VARCHAR(191) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE INDEX `AgentApiKey_keyHash_key`(`keyHash`),
+    INDEX `AgentApiKey_revoked_idx`(`revoked`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `AgentApiLog` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `keyId` VARCHAR(191) NULL,
+    `userEmail` VARCHAR(191) NULL,
+    `action` VARCHAR(80) NULL,
+    `path` VARCHAR(255) NULL,
+    `method` VARCHAR(8) NULL,
+    `agent` VARCHAR(191) NULL,
+    `runId` VARCHAR(120) NULL,
+    `status` SMALLINT NOT NULL,
+    `ms` INTEGER NULL,
+    `ip` VARCHAR(64) NULL,
+    `error` VARCHAR(255) NULL,
+    INDEX `AgentApiLog_at_idx`(`at`),
+    INDEX `AgentApiLog_keyId_idx`(`keyId`, `at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

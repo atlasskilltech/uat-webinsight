@@ -24,6 +24,7 @@ Nine modules, all backed by a real persistent database:
 | **Competitor Intelligence** | `/competitors` | Structured research, with public **observations** explicitly separated from **assumptions**. |
 | **Reports & History** | `/reports` | Generate weekly/monthly reports (12 sections), period comparison, editable executive summary, **Print/PDF** and **CSV** export, saved history. |
 | **Settings & Integrations** | `/settings` | Website property, Google connection status, **CSV import**, import history, and demo-data management. |
+| **Agent API (IntelligenceOS)** | `/settings/agent-api` | Generate read-only API keys so the ATLAS **IntelligenceOS** super agent / voice assistant can read this workspace (tasks, SEO, audits, issues, ops, reports). Implements the ATLAS Agent API contract. See [`docs/AGENT-API.md`](docs/AGENT-API.md). |
 
 ### Honesty guarantees (by design)
 - Every figure comes from stored/imported data. Missing data shows **"No data"** or
