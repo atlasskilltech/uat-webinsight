@@ -50,6 +50,7 @@ only*. Individual areas:
 | `competitors.read` | Competitors | Structured competitor research (observations vs assumptions). |
 | `reports.read` | Reports | Generated weekly/monthly reports and their snapshots. |
 | `settings.read` | Site & integrations | Website property and integration connection status (no secrets). |
+| `invoices.read` | Invoice Agent (finance) | Invoice counts & outstanding totals, invoices (supplier/customer, amounts, due dates, status), what the Invoice Agent has done, and connected inboxes. No bank details or tokens. Reads the separate `atlas_invoice` database; a delegated key is limited to the organisations the acting user belongs to. |
 
 The API never exposes passwords, OAuth tokens, or other users' personal
 contact details, and it performs **no writes or deletes**.

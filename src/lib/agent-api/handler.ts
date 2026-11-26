@@ -165,10 +165,24 @@ export async function handleAgentRequest(req: Request, segs: string[], method: s
   }
 
   const allowed = new Set(allowedActions(key.scopes, user).map((a) => a.id));
-  for (const action of ACTIONS) {
-    if (action.method !== method) continue;
-    const m = pathMatcher(action.path).exec(path);
-    if (!m) continue;
+
+  // Match the path to an action, preferring the MOST specific route: a literal
+  // path (e.g. /invoices/agent-activity) beats a parameterised one
+  // (/invoices/{id}) that would otherwise swallow it. Rank by fewest path
+  // params, then longest literal prefix.
+  const paramCount = (p: string) => (p.match(/\{/g) ?? []).length;
+  const literalLen = (p: string) => p.split("{")[0].length;
+  const matches = ACTIONS.filter((a) => a.method === method && pathMatcher(a.path).test(path)).sort(
+    (a, b) => paramCount(a.path) - paramCount(b.path) || literalLen(b.path) - literalLen(a.path),
+  );
+
+  {
+    const action = matches[0];
+    if (!action) {
+      await log(404, { keyId: key.id, userEmail, error: "Unknown action" });
+      return { status: 404, body: { error: `No action for ${method} ${path}.` } };
+    }
+    const m = pathMatcher(action.path).exec(path)!;
 
     if (!allowed.has(action.id)) {
       await log(403, { keyId: key.id, userEmail, action: action.id, error: "Scope/user not allowed" });
@@ -192,7 +206,4 @@ export async function handleAgentRequest(req: Request, segs: string[], method: s
       return { status, body: { error: message } };
     }
   }
-
-  await log(404, { keyId: key.id, userEmail, error: "Unknown action" });
-  return { status: 404, body: { error: `No action for ${method} ${path}.` } };
 }

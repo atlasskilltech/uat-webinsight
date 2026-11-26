@@ -62,6 +62,12 @@ export const SCOPES: ScopeDef[] = [
     label: "Site & integrations",
     description: "Website property, timezone and which Google integrations are connected (no secrets or tokens).",
   },
+  {
+    id: "invoices.read",
+    label: "Invoice Agent (finance)",
+    description:
+      "The Invoice Agent: invoice counts and outstanding totals, invoices (supplier/customer, amounts, due dates, status), what the agent has done, and connected inboxes (no bank details or tokens).",
+  },
 ];
 
 export const SCOPE_IDS: string[] = SCOPES.map((s) => s.id);
