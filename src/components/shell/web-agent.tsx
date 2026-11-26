@@ -15,6 +15,7 @@ import {
   isNegation,
   type PendingConfirm,
 } from "@/lib/web-agent/svap-config";
+import { applyTtsLexicon } from "@/lib/web-agent/vocabulary";
 
 interface Msg { id: string; role: "user" | "assistant"; content: string }
 
@@ -57,7 +58,7 @@ export function WebAgent() {
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   const ldrag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
 
-  const tts = useSpeech({ locale, rate: 1 });
+  const tts = useSpeech({ locale, rate: 1, transform: applyTtsLexicon });
   // Refs so the voice callbacks (registered once) always see current state.
   const speakingRef = useRef(false);
   speakingRef.current = tts.speaking;

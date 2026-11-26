@@ -29,6 +29,7 @@ vi.mock("@/app/inspector/actions", () => ({ runAudit: vi.fn(async () => ({ statu
 const { toolsFor, routeCatalogText } = await import("@/lib/web-agent/tools");
 const { runWebAgent, executeConfirmedAction } = await import("@/lib/web-agent/orchestrator");
 const { isAffirmation, isNegation, isSupportedLocale, SVAP, SVAP_DEFAULT_LOCALE } = await import("@/lib/web-agent/svap-config");
+const { buildCustomVocabulary, applyTtsLexicon, CUSTOM_VOCABULARY_SEED } = await import("@/lib/web-agent/vocabulary");
 
 const fullAdmin: AgentUser = { email: "a@x.com", name: "Admin", role: "admin", accessScope: "full" };
 const fullUser: AgentUser = { email: "u@x.com", name: "User", role: "user", accessScope: "full" };
@@ -188,5 +189,36 @@ describe("SVAP config (§21) + confirm parsing (§8)", () => {
     expect(isSupportedLocale("en-IN")).toBe(true);
     expect(isSupportedLocale("fr-FR")).toBe(false);
     expect(isSupportedLocale(null)).toBe(false);
+  });
+});
+
+describe("SVAP §6 custom vocabulary + §9 lexicon", () => {
+  it("the seed carries brand + domain terms and is de-duplicated", () => {
+    expect(CUSTOM_VOCABULARY_SEED).toContain("ATLAS");
+    expect(CUSTOM_VOCABULARY_SEED).toContain("IntelligenceOS");
+    expect(CUSTOM_VOCABULARY_SEED).toContain("GSTIN");
+    expect(CUSTOM_VOCABULARY_SEED).toContain("Core Web Vitals");
+    // no case-insensitive duplicates
+    const lower = CUSTOM_VOCABULARY_SEED.map((t) => t.toLowerCase());
+    expect(new Set(lower).size).toBe(lower.length);
+  });
+
+  it("buildCustomVocabulary merges dynamic names and de-dupes", () => {
+    const list = buildCustomVocabulary({ orgNames: ["Acme Pvt Ltd", "ATLAS"], people: ["Prasun"] });
+    expect(list).toContain("Acme Pvt Ltd");
+    expect(list).toContain("Prasun");
+    // "ATLAS" was already in the seed — not duplicated
+    expect(list.filter((t) => t.toLowerCase() === "atlas").length).toBe(1);
+    // static-only when nothing passed
+    expect(buildCustomVocabulary()).toEqual(CUSTOM_VOCABULARY_SEED);
+  });
+
+  it("applyTtsLexicon respells known terms, whole-word and case-insensitively", () => {
+    expect(applyTtsLexicon("Check the SEO and GSTIN")).toBe("Check the S E O and G S T I N");
+    expect(applyTtsLexicon("open IntelligenceOS")).toBe("open Intelligence O S");
+    // substring inside another word is left alone
+    expect(applyTtsLexicon("reSEOion")).toBe("reSEOion");
+    // nothing to change
+    expect(applyTtsLexicon("no special terms here")).toBe("no special terms here");
   });
 });
