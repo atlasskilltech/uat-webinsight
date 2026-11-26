@@ -5,6 +5,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { AppShell } from "@/components/shell/app-shell";
+import { WebAgent } from "@/components/shell/web-agent";
 import { getCurrentUser } from "@/lib/auth/session";
 import { isPathAllowedForScope } from "@/lib/auth/access";
 
@@ -60,6 +61,8 @@ export default async function RootLayout({
       >
         <Providers>
           {user ? <AppShell user={user}>{children}</AppShell> : children}
+          {/* Global Web Insight Agent (answers + navigates), on every authed page. */}
+          {user && <WebAgent />}
         </Providers>
       </body>
     </html>

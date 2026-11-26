@@ -1,11 +1,8 @@
 import { redirect } from "next/navigation";
 import { requireInvoiceModuleAccess } from "@/lib/invoice/permissions";
 import { isAuthError } from "@/lib/auth/guard";
-import { roleHasCapability } from "@/lib/invoice/types";
-import { aiConfigured } from "@/lib/invoice/agent/llm";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FloatingAssistant } from "./assistant/floating";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +17,10 @@ export default async function InvoicesLayout({
 }: {
   children: React.ReactNode;
 }) {
-  let showAssistant = false;
   try {
-    const ctx = await requireInvoiceModuleAccess();
-    showAssistant = Boolean(ctx.organizationId && ctx.role && roleHasCapability(ctx.role, "agent.use") && aiConfigured());
+    // The global Web Insight Agent (root layout) now covers invoice pages too,
+    // so this module only needs to enforce access here.
+    await requireInvoiceModuleAccess();
   } catch (e) {
     if (isAuthError(e) && e.status === 401) redirect("/login");
     return (
@@ -39,10 +36,5 @@ export default async function InvoicesLayout({
       </div>
     );
   }
-  return (
-    <>
-      {children}
-      {showAssistant && <FloatingAssistant />}
-    </>
-  );
+  return <>{children}</>;
 }
