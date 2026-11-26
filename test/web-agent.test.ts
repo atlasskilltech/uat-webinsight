@@ -17,6 +17,15 @@ vi.mock("@/lib/invoice/agent/llm", () => ({
   callLlm: vi.fn(async () => H.responses.shift() ?? { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
 }));
 
+// Mock the write actions so the agent's write tools don't hit the DB.
+const W = vi.hoisted(() => ({ createTask: vi.fn(async () => ({ status: "success", message: "Task created.", id: "T9" })) }));
+vi.mock("@/app/work/actions", () => ({
+  createTask: W.createTask,
+  addWorkLog: vi.fn(async () => ({ status: "success", message: "Work log added." })),
+}));
+vi.mock("@/app/issues/actions", () => ({ createIssue: vi.fn(async () => ({ status: "success", message: "Issue recorded.", id: "I9" })) }));
+vi.mock("@/app/inspector/actions", () => ({ runAudit: vi.fn(async () => ({ status: "success", message: "Audit complete.", id: "A9" })) }));
+
 const { toolsFor, routeCatalogText } = await import("@/lib/web-agent/tools");
 const { runWebAgent } = await import("@/lib/web-agent/orchestrator");
 
@@ -49,6 +58,17 @@ describe("tool scoping", () => {
     const enumUser = ((navUser.inputSchema.properties as Record<string, { enum: string[] }>).to).enum;
     expect(enumUser).toContain("seo");
     expect(enumUser).not.toContain("agent_api"); // admin-only, non-admin excluded
+  });
+
+  it("full user gets write tools; invoice-only user does not", () => {
+    const full = toolsFor(fullUser).map((t) => t.name);
+    expect(full).toContain("create_task");
+    expect(full).toContain("add_work_log");
+    expect(full).toContain("record_issue");
+    expect(full).toContain("start_audit");
+    const inv = toolsFor(invoiceOnly).map((t) => t.name);
+    expect(inv).not.toContain("create_task");
+    expect(inv).not.toContain("start_audit");
   });
 
   it("invoice-only user gets only invoice reads + invoice routes", () => {
@@ -98,6 +118,17 @@ describe("orchestrator", () => {
     expect(r.ok).toBe(true);
     expect(r.navigate?.path).toBe("/seo");
     expect(r.assistantText).toMatch(/SEO/i);
+  });
+
+  it("performs a write action (create_task) and navigates to it", async () => {
+    H.responses = [
+      { content: [{ type: "tool_use", id: "t1", name: "create_task", input: { title: "Fix meta description" } }], stop_reason: "tool_use" },
+      { content: [{ type: "text", text: "Created the task and opened My Work." }], stop_reason: "end_turn" },
+    ];
+    const r = await runWebAgent({ user: fullUser, history: [], message: "create a task to fix the meta description" });
+    expect(r.ok).toBe(true);
+    expect(W.createTask).toHaveBeenCalled();
+    expect(r.navigate?.path).toBe("/work");
   });
 
   it("answers from a reply with no tools", async () => {
