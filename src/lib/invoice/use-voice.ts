@@ -214,7 +214,7 @@ export function useDictation(opts: {
  * the locale picker / a user rate control). Backward-compatible: called with no
  * args by the Invoice Assistant.
  */
-export function useSpeech(opts?: { locale?: string; rate?: number }): {
+export function useSpeech(opts?: { locale?: string; rate?: number; transform?: (text: string) => string }): {
   supported: boolean;
   enabled: boolean;
   speaking: boolean;
@@ -247,7 +247,9 @@ export function useSpeech(opts?: { locale?: string; rate?: number }): {
       try {
         const synth = window.speechSynthesis;
         synth.cancel();
-        const u = new SpeechSynthesisUtterance(clean.slice(0, 4000));
+        // §9: apply the pronunciation lexicon (if supplied) before speaking.
+        const spoken = (optsRef.current?.transform ? optsRef.current.transform(clean) : clean).slice(0, 4000);
+        const u = new SpeechSynthesisUtterance(spoken);
         u.lang = optsRef.current?.locale || SVAP_DEFAULT_LOCALE;
         const rate = optsRef.current?.rate ?? SVAP.ttsRate;
         u.rate = Math.min(2, Math.max(0.5, rate));
