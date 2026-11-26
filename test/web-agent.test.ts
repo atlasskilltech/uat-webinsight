@@ -27,7 +27,8 @@ vi.mock("@/app/issues/actions", () => ({ createIssue: vi.fn(async () => ({ statu
 vi.mock("@/app/inspector/actions", () => ({ runAudit: vi.fn(async () => ({ status: "success", message: "Audit complete.", id: "A9" })) }));
 
 const { toolsFor, routeCatalogText } = await import("@/lib/web-agent/tools");
-const { runWebAgent } = await import("@/lib/web-agent/orchestrator");
+const { runWebAgent, executeConfirmedAction } = await import("@/lib/web-agent/orchestrator");
+const { isAffirmation, isNegation, isSupportedLocale, SVAP, SVAP_DEFAULT_LOCALE } = await import("@/lib/web-agent/svap-config");
 
 const fullAdmin: AgentUser = { email: "a@x.com", name: "Admin", role: "admin", accessScope: "full" };
 const fullUser: AgentUser = { email: "u@x.com", name: "User", role: "user", accessScope: "full" };
@@ -120,15 +121,35 @@ describe("orchestrator", () => {
     expect(r.assistantText).toMatch(/SEO/i);
   });
 
-  it("performs a write action (create_task) and navigates to it", async () => {
+  it("SVAP §8: a write action is GATED — returns a confirm and does NOT run yet", async () => {
     H.responses = [
-      { content: [{ type: "tool_use", id: "t1", name: "create_task", input: { title: "Fix meta description" } }], stop_reason: "tool_use" },
-      { content: [{ type: "text", text: "Created the task and opened My Work." }], stop_reason: "end_turn" },
+      { content: [{ type: "tool_use", id: "t1", name: "create_task", input: { title: "Fix meta description", priority: "high" } }], stop_reason: "tool_use" },
     ];
     const r = await runWebAgent({ user: fullUser, history: [], message: "create a task to fix the meta description" });
     expect(r.ok).toBe(true);
+    expect(W.createTask).not.toHaveBeenCalled(); // held back until confirmed
+    expect(r.confirm?.tool).toBe("create_task");
+    expect(r.confirm?.args).toMatchObject({ title: "Fix meta description" });
+    expect(r.confirm?.summary).toMatch(/Fix meta description/);
+    expect(r.confirm?.summary).toMatch(/high/i); // read-back includes key params
+    expect(r.navigate).toBeUndefined();
+  });
+
+  it("SVAP §8: executeConfirmedAction runs the confirmed write and navigates", async () => {
+    const r = await executeConfirmedAction({ user: fullUser, tool: "create_task", args: { title: "Fix meta description" } });
     expect(W.createTask).toHaveBeenCalled();
+    expect(r.ok).toBe(true);
     expect(r.navigate?.path).toBe("/work");
+  });
+
+  it("SVAP §8: a non-consequential or unknown tool cannot be confirmed", async () => {
+    const bad = await executeConfirmedAction({ user: fullUser, tool: "navigate", args: { to: "seo" } });
+    expect(bad.ok).toBe(false);
+    const unknown = await executeConfirmedAction({ user: fullUser, tool: "nope", args: {} });
+    expect(unknown.ok).toBe(false);
+    // an invoice-only user cannot confirm a website write they were never offered
+    const denied = await executeConfirmedAction({ user: invoiceOnly, tool: "create_task", args: { title: "x" } });
+    expect(denied.ok).toBe(false);
   });
 
   it("answers from a reply with no tools", async () => {
@@ -137,5 +158,35 @@ describe("orchestrator", () => {
     expect(r.ok).toBe(true);
     expect(r.navigate).toBeUndefined();
     expect(r.assistantText).toBe("You have 3 open tasks.");
+  });
+});
+
+describe("SVAP config (§21) + confirm parsing (§8)", () => {
+  it("timings are within the spec's ranges", () => {
+    expect(SVAP.endOfSpeechMs).toBeGreaterThanOrEqual(800);
+    expect(SVAP.endOfSpeechMs).toBeLessThanOrEqual(2000);
+    expect(SVAP.bargeInMs).toBeLessThanOrEqual(300);
+    expect(SVAP.noSpeechMs).toBeGreaterThanOrEqual(4000);
+    expect(SVAP.noSpeechMs).toBeLessThanOrEqual(15000);
+    expect(SVAP.activationLatencyMs).toBeLessThanOrEqual(500);
+  });
+
+  it("affirmation / negation parse, and ambiguous counts as neither (treated as NO upstream)", () => {
+    expect(isAffirmation("yes")).toBe(true);
+    expect(isAffirmation("yeah go ahead")).toBe(true);
+    expect(isAffirmation("okay")).toBe(true);
+    expect(isNegation("no")).toBe(true);
+    expect(isNegation("cancel that")).toBe(true);
+    expect(isNegation("stop")).toBe(true);
+    // ambiguous: not an affirmation (so the gate will not fire)
+    expect(isAffirmation("maybe later")).toBe(false);
+    expect(isNegation("maybe later")).toBe(false);
+  });
+
+  it("locale validation accepts the supported set and rejects others", () => {
+    expect(isSupportedLocale(SVAP_DEFAULT_LOCALE)).toBe(true);
+    expect(isSupportedLocale("en-IN")).toBe(true);
+    expect(isSupportedLocale("fr-FR")).toBe(false);
+    expect(isSupportedLocale(null)).toBe(false);
   });
 });

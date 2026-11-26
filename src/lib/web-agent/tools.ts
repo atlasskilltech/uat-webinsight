@@ -41,6 +41,10 @@ export interface WebAgentTool {
   inputSchema: Record<string, unknown>;
   /** Returns either data (read) or a navigation directive. */
   run: (args: Record<string, unknown>) => Promise<{ data?: unknown; navigate?: NavigateDirective }>;
+  /** SVAP §8: a consequential action — must be confirmed before it runs. */
+  consequential?: boolean;
+  /** SVAP §8: human read-back of the action + its key parameters, for the confirm gate. */
+  readback?: (args: Record<string, unknown>) => string;
 }
 
 // ─── Pages the agent may navigate to ─────────────────────────────
@@ -171,6 +175,13 @@ function writeToolsFor(): WebAgentTool[] {
   return [
     {
       name: "create_task",
+      consequential: true,
+      readback: (args) => {
+        const title = str(args, "title") ?? "(untitled)";
+        const pri = str(args, "priority");
+        const due = str(args, "dueDate");
+        return `Create a task "${title}"${pri ? ` with ${pri} priority` : ""}${due ? `, due ${due}` : ""}.`;
+      },
       description:
         "Create a new task in My Work. Use when the user asks to add/create a task or to-do. Returns the created task; then the user is taken to My Work.",
       inputSchema: {
@@ -201,6 +212,13 @@ function writeToolsFor(): WebAgentTool[] {
     },
     {
       name: "add_work_log",
+      consequential: true,
+      readback: (args) => {
+        const summary = str(args, "summary") ?? "(no summary)";
+        const mins = str(args, "minutes");
+        const date = str(args, "date");
+        return `Log work: "${summary}"${mins ? ` (${mins} min)` : ""}${date ? ` on ${date}` : ""}.`;
+      },
       description: "Add a daily work-log entry (what was done). Use when the user wants to log work they did.",
       inputSchema: {
         type: "object",
@@ -228,6 +246,12 @@ function writeToolsFor(): WebAgentTool[] {
     },
     {
       name: "record_issue",
+      consequential: true,
+      readback: (args) => {
+        const title = str(args, "title") ?? "(untitled)";
+        const sev = str(args, "severity");
+        return `Record an issue "${title}"${sev ? ` (${sev} severity)` : ""}.`;
+      },
       description: "Record a technical SEO issue in the issue register. Use when the user wants to log/record an issue.",
       inputSchema: {
         type: "object",
@@ -261,6 +285,8 @@ function writeToolsFor(): WebAgentTool[] {
     },
     {
       name: "start_audit",
+      consequential: true,
+      readback: (args) => `Run a Page Inspector audit on ${str(args, "url") ?? "(no URL)"}.`,
       description:
         "Run a Page Inspector audit on a URL (on-page SEO / technical checks). Use when the user asks to audit, inspect or check a page. Then the user is taken to the audit result.",
       inputSchema: {
