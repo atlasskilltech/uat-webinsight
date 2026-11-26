@@ -30,6 +30,7 @@ const JSON_COLUMNS = new Set([
   "redirects",
   "structuredData",
   "rawJson",
+  "scopes",
 ]);
 
 /**

@@ -363,6 +363,41 @@ export interface AdminAuditLog {
   createdAt: Date;
 }
 
+/** A key issued to IntelligenceOS (ATLAS Agent API). Only `keyHash` is stored. */
+export interface AgentApiKey {
+  id: string;
+  name: string;
+  keyHash: string;
+  keyLast4: string;
+  scopes: string[];
+  requireUser: boolean;
+  allowedIps: string | null;
+  expiresAt: Date | null;
+  revoked: boolean;
+  revokedAt: Date | null;
+  revokedBy: string | null;
+  lastUsedAt: Date | null;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AgentApiLog {
+  id: number;
+  at: Date;
+  keyId: string | null;
+  userEmail: string | null;
+  action: string | null;
+  path: string | null;
+  method: string | null;
+  agent: string | null;
+  runId: string | null;
+  status: number;
+  ms: number | null;
+  ip: string | null;
+  error: string | null;
+}
+
 export interface AppSettings {
   id: string;
   siteUrl: string;

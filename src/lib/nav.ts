@@ -13,6 +13,7 @@ import {
   Receipt,
   SlidersHorizontal,
   Mail,
+  KeyRound,
 } from "lucide-react";
 
 export interface NavItem {
@@ -109,6 +110,14 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Settings & Integrations",
     icon: Settings,
     description: "Website property, integrations, imports and preferences.",
+    group: "system",
+    adminOnly: true,
+  },
+  {
+    href: "/settings/agent-api",
+    label: "Agent API",
+    icon: KeyRound,
+    description: "Connect IntelligenceOS: generate keys so the super agent can read this workspace.",
     group: "system",
     adminOnly: true,
   },
