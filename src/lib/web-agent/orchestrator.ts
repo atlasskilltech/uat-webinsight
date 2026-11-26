@@ -2,6 +2,7 @@ import "server-only";
 import { callLlm, aiConfigured, type LlmMessage, type LlmBlock } from "@/lib/invoice/agent/llm";
 import type { AgentUser } from "@/lib/agent-api/common";
 import { toolsFor, routeCatalogText, type NavigateDirective } from "./tools";
+import type { PendingConfirm } from "./svap-config";
 
 /**
  * The in-app Web Insight Agent: a stateless, READ + NAVIGATE tool-use loop.
@@ -21,6 +22,8 @@ export interface WebAgentResult {
   assistantText: string;
   /** When set, the client should navigate the browser here. */
   navigate?: NavigateDirective;
+  /** SVAP §8: when set, a consequential action awaits the user's explicit confirmation. */
+  confirm?: PendingConfirm;
 }
 
 const MAX_ITERATIONS = 4;
@@ -82,6 +85,23 @@ export async function runWebAgent(input: {
         break;
       }
 
+      // SVAP §8 confirm gate: if the model wants to take a consequential action,
+      // hold it back. Do NOT execute it (or anything else this turn) — return a
+      // read-back and wait for the user's explicit confirmation. The gate lives
+      // here on the server so it cannot be bypassed from the client.
+      const pendingCall = toolUses.find((c) => byName.get(c.name ?? "")?.consequential);
+      if (pendingCall) {
+        const tool = byName.get(pendingCall.name ?? "")!;
+        const args = (pendingCall.input ?? {}) as Record<string, unknown>;
+        const summary = tool.readback ? tool.readback(args) : `Perform ${tool.name}.`;
+        const modelText = textOf(resp.content);
+        return {
+          ok: true,
+          assistantText: modelText || summary,
+          confirm: { tool: tool.name, args, summary },
+        };
+      }
+
       messages.push({ role: "assistant", content: resp.content });
       const toolResultBlocks: LlmBlock[] = [];
       for (const call of toolUses) {
@@ -121,5 +141,33 @@ export async function runWebAgent(input: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "The assistant hit an error.";
     return { ok: false, error: msg, assistantText: `Sorry — I hit an error: ${msg}` };
+  }
+}
+
+/**
+ * SVAP §8: execute a consequential action the user has just explicitly
+ * confirmed. The tool + args come from the PendingConfirm the orchestrator
+ * returned; we re-resolve the tool for THIS user (so access is re-checked) and
+ * refuse anything that is not actually a consequential tool — a confirm can
+ * never run a different or non-gated action.
+ */
+export async function executeConfirmedAction(input: {
+  user: AgentUser;
+  tool: string;
+  args: Record<string, unknown>;
+}): Promise<WebAgentResult> {
+  const tool = toolsFor(input.user).find((t) => t.name === input.tool);
+  if (!tool || !tool.consequential) {
+    return { ok: false, error: "That action can't be confirmed.", assistantText: "Sorry — I couldn't run that action." };
+  }
+  try {
+    const out = await tool.run(input.args ?? {});
+    const data = out.data as { ok?: boolean; message?: string } | undefined;
+    const ok = data?.ok !== false;
+    const assistantText = data?.message || (ok ? "Done." : "That didn't go through.");
+    return { ok, assistantText, navigate: out.navigate };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "The action failed.";
+    return { ok: false, error: msg, assistantText: `Sorry — that didn't go through: ${msg}` };
   }
 }
