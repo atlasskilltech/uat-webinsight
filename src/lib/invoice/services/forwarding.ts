@@ -600,7 +600,9 @@ export interface RenderedForwardBody {
  */
 export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody {
   const subjectText = cleanHeader(input.subject) || "(no subject)";
-  const org = htmlEscape(cleanHeader(input.organisationName) || "Your organization");
+  // Forwarded emails present under a fixed "Finance & Accounts" label rather
+  // than the raw organisation name (product branding). "&" is HTML-escaped.
+  const brand = htmlEscape("Finance & Accounts");
   const from = htmlEscape(cleanHeader(input.from) || "—");
   const to = htmlEscape(cleanHeader(input.to) || "—");
   const date = htmlEscape(cleanHeader(input.date) || "—");
@@ -648,13 +650,13 @@ export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody 
     <tr><td align="center" style="padding:24px 12px;">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
         <tr><td bgcolor="#0f172a" style="background:#0f172a;padding:22px 24px;">
-          <div style="color:#ffffff;font-size:19px;font-weight:700;font-family:Arial,Helvetica,sans-serif;line-height:1.2;">${org}</div>
-          <div style="color:#94a3b8;font-size:12px;font-family:Arial,Helvetica,sans-serif;margin-top:5px;">Forwarded by the ${org} email assistant</div>
+          <div style="color:#ffffff;font-size:19px;font-weight:700;font-family:Arial,Helvetica,sans-serif;line-height:1.2;">${brand}</div>
+          <div style="color:#94a3b8;font-size:12px;font-family:Arial,Helvetica,sans-serif;margin-top:5px;">Forwarded by the ${brand} email assistant</div>
         </td></tr>
         <tr><td style="padding:22px 24px 6px;">
           <span style="display:inline-block;background:#ecfdf5;color:#047857;font-size:11px;font-weight:700;letter-spacing:.04em;padding:5px 12px;border-radius:999px;font-family:Arial,Helvetica,sans-serif;">FORWARDED DOCUMENT</span>
           <p style="color:#334155;font-size:14px;line-height:1.55;font-family:Arial,Helvetica,sans-serif;margin:14px 0 0;">
-            A document was received and automatically forwarded to you by <b>${org}</b>. The details of the original message are below, with its attachments included and the complete original email attached as <b>original.eml</b>.
+            A document was received and automatically forwarded to you by <b>${brand}</b>. The details of the original message are below, with its attachments included and the complete original email attached as <b>original.eml</b>.
           </p>
         </td></tr>
         <tr><td style="padding:14px 24px 2px;">
@@ -673,7 +675,7 @@ export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody 
           </p>
         </td></tr>
         <tr><td bgcolor="#f8fafc" style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 24px;">
-          <p style="color:#94a3b8;font-size:11px;font-family:Arial,Helvetica,sans-serif;margin:0;">Automated message from ${org}. Forwarded securely by the organization's email assistant.</p>
+          <p style="color:#94a3b8;font-size:11px;font-family:Arial,Helvetica,sans-serif;margin:0;">Automated message from ${brand}. Forwarded securely by the organization's email assistant.</p>
         </td></tr>
       </table>
     </td></tr>

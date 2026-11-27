@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildForwardMime, normalizeEmail, renderForwardBody } from "@/lib/invoice/services/forwarding";
 
 describe("forwarding: renderForwardBody (professional HTML template)", () => {
-  it("renders a professional HTML body with org name + original From/To/Date/Subject", () => {
+  it("renders a professional HTML body under the Finance & Accounts label + original From/To/Date/Subject", () => {
     const r = renderForwardBody({
       organisationName: "Atlas ISME",
       subject: "Tax Invoice INV-9",
@@ -16,8 +16,9 @@ describe("forwarding: renderForwardBody (professional HTML template)", () => {
     expect(r.contentType).toBe('text/html; charset="UTF-8"'); // HTML, not plain text
     expect(r.encoding).toBe("8bit");
     expect(r.body).toContain("<!doctype html>");
-    expect(r.body).toContain("Atlas ISME"); // organisation name shown prominently
-    expect(r.body).toContain("email assistant"); // clearly a forward by the org
+    expect(r.body).toContain("Finance &amp; Accounts"); // fixed branding label (HTML-escaped &)
+    expect(r.body).not.toContain("Atlas ISME"); // the raw organisation name is NOT shown
+    expect(r.body).toContain("email assistant"); // clearly an automated forward
     expect(r.body).toContain("vendor@acme.com"); // original sender
     expect(r.body).toContain("ap@atlas.edu"); // original recipient
     expect(r.body).toContain("Tax Invoice INV-9"); // subject
@@ -41,10 +42,10 @@ describe("forwarding: renderForwardBody (professional HTML template)", () => {
     expect(r.body).not.toContain('onerror="evil()"');
   });
 
-  it("falls back to a (no subject) Fwd subject and a default organisation label", () => {
+  it("falls back to a (no subject) Fwd subject and shows the fixed Finance & Accounts label", () => {
     const r = renderForwardBody({ organisationName: "", subject: "", from: "v@x.com", to: "", date: "", confidence: null, attachmentFilenames: [] });
     expect(r.subject).toBe("Fwd: (no subject)");
-    expect(r.body).toContain("Your organization");
+    expect(r.body).toContain("Finance &amp; Accounts"); // label is fixed regardless of org name
   });
 
   it("inlines the sanitized original body under an 'Original message' section", () => {
@@ -84,9 +85,9 @@ describe("forwarding: .eml MIME builder", () => {
     expect(mime).toContain("Subject: Fwd: Tax Invoice INV-9");
     expect(mime).toContain("Content-Type: message/rfc822");
     expect(mime).toContain('filename="original.eml"');
-    // The body part is the redesigned HTML with the org name + metadata.
+    // The body part is the redesigned HTML with the Finance & Accounts label + metadata.
     expect(mime).toContain('Content-Type: text/html; charset="UTF-8"');
-    expect(mime).toContain("Atlas ISME");
+    expect(mime).toContain("Finance &amp; Accounts");
   });
 
   it("embeds the full original as a decodable .eml attachment", () => {
