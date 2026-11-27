@@ -49,6 +49,7 @@ describe("tool scoping", () => {
     expect(names).toContain("read_seo_summary");
     expect(names).toContain("read_search_tasks");
     expect(names).toContain("read_invoice_overview");
+    expect(names).toContain("read_invoice_forwarding"); // dashboard counts (detected/forwarded)
   });
 
   it("navigate enum is access- and admin-scoped", () => {
@@ -79,6 +80,7 @@ describe("tool scoping", () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain("navigate");
     expect(names).toContain("read_invoice_overview");
+    expect(names).toContain("read_invoice_forwarding"); // invoice-only users get it too
     expect(names).not.toContain("read_seo_summary"); // website reads not allowed
     const nav = tools.find((t) => t.name === "navigate")!;
     const routes = ((nav.inputSchema.properties as Record<string, { enum: string[] }>).to).enum;

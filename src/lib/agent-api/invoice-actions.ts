@@ -73,7 +73,7 @@ export const INVOICE_ACTIONS: Action[] = [
     id: "invoice_overview",
     name: "Invoice overview",
     description:
-      "Finance snapshot from the Invoice Agent: how many invoices there are by direction (incoming = bills from suppliers, outgoing = invoices to customers) and status, the total amount still outstanding, how many are overdue, and a per-organisation breakdown. Use for 'how many invoices / how much do we owe / what's overdue'.",
+      "Finance snapshot of EXTRACTED invoice RECORDS in the Invoice Agent: how many invoices there are by direction (incoming = bills from suppliers, outgoing = invoices to customers) and status, the total amount still outstanding, how many are overdue, and a per-organisation breakdown. Use for 'how much do we owe / what's overdue / invoices by amount'. For the dashboard counts of emails detected or forwarded, use invoice_forwarding instead.",
     method: "GET",
     path: "/invoices/overview",
     risk: "read",
@@ -135,6 +135,77 @@ export const INVOICE_ACTIONS: Action[] = [
           })),
           overdue: overdue.map((r) => ({ direction: r.direction, invoices: Number(r.n), amount: money(r.total) })),
           byOrganisation: byOrg.map((r) => ({ organisation: r.name, direction: r.direction, invoices: Number(r.c) })),
+        };
+      }),
+  },
+  {
+    id: "invoice_forwarding",
+    name: "Invoice forwarding status",
+    description:
+      "The figures shown on the Invoice Agent dashboard: how many invoice emails were DETECTED, how many were FORWARDED to the Finance destination, how many are PENDING APPROVAL and how many NEED REVIEW — with a per-organisation breakdown and the most recent forwards. Use this for 'how many invoices were forwarded / detected', 'what's pending approval', or any question about the counts on the Invoice Agent page. (For extracted invoice RECORDS with amounts and due dates, use invoice_overview or search_invoices instead.)",
+    method: "GET",
+    path: "/invoices/forwarding",
+    risk: "read",
+    scope: "invoices.read",
+    params: [],
+    run: ({ user }) =>
+      withOrgScope(user, async (orgIds) => {
+        // Detected = invoice-candidate emails (the "Invoice emails detected" tile).
+        const detParams: unknown[] = [];
+        const detected = await iQuery<{ name: string; c: number }>(
+          `SELECT \`o\`.\`name\`, COUNT(*) AS c FROM \`email_messages\` \`m\` JOIN \`organizations\` \`o\` ON \`o\`.\`id\` = \`m\`.\`organization_id\` WHERE \`m\`.\`is_invoice_candidate\` = 1${orgClause(orgIds, detParams, "m")} GROUP BY \`o\`.\`name\``,
+          detParams,
+        );
+        // Forwards grouped by status ("Invoices forwarded", "Pending approvals", "Needs review").
+        const fwdParams: unknown[] = [];
+        const forwards = await iQuery<{ name: string; status: string; c: number }>(
+          `SELECT \`o\`.\`name\`, \`f\`.\`status\`, COUNT(*) AS c FROM \`invoice_forwards\` \`f\` JOIN \`organizations\` \`o\` ON \`o\`.\`id\` = \`f\`.\`organization_id\` WHERE 1=1${orgClause(orgIds, fwdParams, "f")} GROUP BY \`o\`.\`name\`, \`f\`.\`status\``,
+          fwdParams,
+        );
+        const recParams: unknown[] = [];
+        const recent = await iQuery<Record<string, unknown>>(
+          `SELECT \`f\`.\`status\`, \`f\`.\`destination\`, \`f\`.\`confidence\`, \`m\`.\`subject\`, \`m\`.\`from_address\`, \`g\`.\`email\` AS account_email, \`o\`.\`name\` AS organisation FROM \`invoice_forwards\` \`f\` LEFT JOIN \`email_messages\` \`m\` ON \`m\`.\`id\` = \`f\`.\`email_message_id\` LEFT JOIN \`gmail_integrations\` \`g\` ON \`g\`.\`id\` = \`f\`.\`gmail_integration_id\` LEFT JOIN \`organizations\` \`o\` ON \`o\`.\`id\` = \`f\`.\`organization_id\` WHERE 1=1${orgClause(orgIds, recParams, "f")} ORDER BY \`f\`.\`created_at\` DESC LIMIT 10`,
+          recParams,
+        );
+
+        const statusTotal = (s: string) => forwards.filter((r) => r.status === s).reduce((n, r) => n + Number(r.c), 0);
+        const byStatus = forwards.reduce<Record<string, number>>((m, r) => {
+          m[r.status] = (m[r.status] ?? 0) + Number(r.c);
+          return m;
+        }, {});
+
+        // Per-organisation rollup so the answer can name the organisation.
+        const orgMap = new Map<string, { organisation: string; detected: number; forwarded: number; pendingApprovals: number; needsReview: number }>();
+        const ensure = (name: string) => {
+          let e = orgMap.get(name);
+          if (!e) { e = { organisation: name, detected: 0, forwarded: 0, pendingApprovals: 0, needsReview: 0 }; orgMap.set(name, e); }
+          return e;
+        };
+        for (const r of detected) ensure(r.name).detected += Number(r.c);
+        for (const r of forwards) {
+          const e = ensure(r.name);
+          if (r.status === "forwarded") e.forwarded += Number(r.c);
+          else if (r.status === "pending") e.pendingApprovals += Number(r.c);
+          else if (r.status === "review") e.needsReview += Number(r.c);
+        }
+
+        return {
+          available: true,
+          detected: detected.reduce((n, r) => n + Number(r.c), 0),
+          forwarded: statusTotal("forwarded"),
+          pendingApprovals: statusTotal("pending"),
+          needsReview: statusTotal("review"),
+          byStatus,
+          byOrganisation: [...orgMap.values()],
+          recentForwards: recent.map((r) => ({
+            organisation: r.organisation,
+            subject: r.subject,
+            from: r.from_address,
+            account: r.account_email,
+            destination: r.destination,
+            status: r.status,
+            confidence: r.confidence == null ? null : Math.round(Number(r.confidence)),
+          })),
         };
       }),
   },
