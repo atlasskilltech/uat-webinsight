@@ -13,6 +13,7 @@ const H = vi.hoisted(() => ({
 
 vi.mock("@/lib/invoice/agent/llm", () => ({
   aiConfigured: () => H.aiOn,
+  webAgentConfigured: () => H.aiOn,
   agentModel: () => "test-model",
   callLlm: vi.fn(async () => H.responses.shift() ?? { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
 }));
@@ -107,7 +108,8 @@ describe("orchestrator", () => {
     H.aiOn = false;
     const r = await runWebAgent({ user: fullUser, history: [], message: "hi" });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/not configured/i);
+    expect(r.error).toMatch(/set up|AI_API_KEY/i);
+    expect(r.assistantText).toBeTruthy(); // user sees a helpful message, not a blank
   });
 
   it("navigates when the model calls the navigate tool", async () => {

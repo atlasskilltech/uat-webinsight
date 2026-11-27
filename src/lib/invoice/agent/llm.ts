@@ -34,6 +34,17 @@ export interface LlmResponse {
 
 export { aiConfigured };
 
+/**
+ * Whether the tool-use agent (Web Insight Agent) can run. This matches what
+ * `callLlm` actually requires — an API key — and treats the provider as
+ * optional (it defaults to anthropic). The invoice extractor's stricter
+ * `aiConfigured` (which also requires AI_PROVIDER) is unchanged; using it here
+ * would wrongly disable the agent whenever only AI_API_KEY is set.
+ */
+export function webAgentConfigured(): boolean {
+  return Boolean(process.env.AI_API_KEY?.trim());
+}
+
 export function agentModel(): string {
   return process.env.AI_MODEL?.trim() || "claude-sonnet-5-5";
 }

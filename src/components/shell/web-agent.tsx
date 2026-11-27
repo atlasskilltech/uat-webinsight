@@ -102,11 +102,12 @@ export function WebAgent() {
     return () => window.removeEventListener(OPEN_EVENT, onOpen);
   }, []);
 
-  // Restore chat, position + locale.
+  // Each page load starts a FRESH chat — the conversation is never restored, so
+  // a refresh clears it. (Only the widget position and chosen language persist.)
+  // Also clear any chat an older build saved to localStorage.
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setMessages(JSON.parse(saved).slice(-40));
+      localStorage.removeItem(STORAGE_KEY);
       const p = localStorage.getItem(POS_KEY);
       if (p) setPos(JSON.parse(p));
       const lp = localStorage.getItem(LAUNCHER_KEY);
@@ -117,9 +118,6 @@ export function WebAgent() {
       /* ignore */
     }
   }, []);
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-40))); } catch { /* ignore */ }
-  }, [messages]);
   useEffect(() => {
     try { localStorage.setItem(LOCALE_KEY, locale); } catch { /* ignore */ }
   }, [locale]);
