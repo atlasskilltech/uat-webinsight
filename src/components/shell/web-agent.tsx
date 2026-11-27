@@ -16,6 +16,7 @@ import {
   type PendingConfirm,
 } from "@/lib/web-agent/svap-config";
 import { applyTtsLexicon } from "@/lib/web-agent/vocabulary";
+import { type Anchored, DEFAULT_POS, anchoredStyle, toAnchored, clampAnchored, isAnchored } from "@/lib/web-agent/anchor";
 
 interface Msg { id: string; role: "user" | "assistant"; content: string }
 
@@ -42,14 +43,20 @@ const SUGGESTIONS = [
   "Create a task: fix homepage meta description",
 ];
 
+/** Re-clamp against the live viewport using an element's measured size. */
+function clampToView(a: Anchored, el: HTMLElement | null): Anchored {
+  if (!el) return a;
+  return clampAnchored(a, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
+}
+
 export function WebAgent() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [pending, startTransition] = useTransition();
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // panel top-left; null = default bottom-right
-  const [launcherPos, setLauncherPos] = useState<{ x: number; y: number } | null>(null);
+  const [pos, setPos] = useState<Anchored>(DEFAULT_POS); // panel, edge-anchored
+  const [launcherPos, setLauncherPos] = useState<Anchored>(DEFAULT_POS); // launcher, edge-anchored
   const [locale, setLocale] = useState<string>(SVAP_DEFAULT_LOCALE);
   const [confirmReq, setConfirmReq] = useState<PendingConfirm | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -109,9 +116,9 @@ export function WebAgent() {
     try {
       localStorage.removeItem(STORAGE_KEY);
       const p = localStorage.getItem(POS_KEY);
-      if (p) setPos(JSON.parse(p));
+      if (p) { const v = JSON.parse(p); if (isAnchored(v)) setPos(v); } // ignore old {x,y} format
       const lp = localStorage.getItem(LAUNCHER_KEY);
-      if (lp) setLauncherPos(JSON.parse(lp));
+      if (lp) { const v = JSON.parse(lp); if (isAnchored(v)) setLauncherPos(v); }
       const loc = localStorage.getItem(LOCALE_KEY);
       if (isSupportedLocale(loc)) setLocale(loc);
     } catch {
@@ -121,6 +128,25 @@ export function WebAgent() {
   useEffect(() => {
     try { localStorage.setItem(LOCALE_KEY, locale); } catch { /* ignore */ }
   }, [locale]);
+
+  // Keep the widget on-screen through window resize / minimise / maximise /
+  // rotate: re-clamp whichever element is mounted (panel when open, else launcher).
+  useEffect(() => {
+    const onResize = () => {
+      setPos((p) => clampToView(p, panelRef.current));
+      setLauncherPos((p) => clampToView(p, launcherRef.current));
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+  // When the panel opens, make sure a position saved on a larger screen still fits.
+  useEffect(() => {
+    if (open) setPos((p) => clampToView(p, panelRef.current));
+  }, [open]);
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pending, open, confirmReq]);
@@ -158,23 +184,18 @@ export function WebAgent() {
   // ── Dragging (by the header) ──
   const onDragMove = useCallback((e: PointerEvent) => {
     if (!drag.current || !panelRef.current) return;
-    const w = panelRef.current.offsetWidth;
-    const h = panelRef.current.offsetHeight;
-    const x = Math.min(Math.max(8, e.clientX - drag.current.dx), window.innerWidth - w - 8);
-    const y = Math.min(Math.max(8, e.clientY - drag.current.dy), window.innerHeight - h - 8);
-    setPos({ x, y });
+    setPos(toAnchored(e.clientX - drag.current.dx, e.clientY - drag.current.dy, panelRef.current.offsetWidth, panelRef.current.offsetHeight, window.innerWidth, window.innerHeight));
   }, []);
   const onDragEnd = useCallback(() => {
     drag.current = null;
     window.removeEventListener("pointermove", onDragMove);
     window.removeEventListener("pointerup", onDragEnd);
-    setPos((p) => { try { if (p) localStorage.setItem(POS_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
+    setPos((p) => { try { localStorage.setItem(POS_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
   }, [onDragMove]);
   const onDragStart = (e: React.PointerEvent) => {
     if (!panelRef.current) return;
     const r = panelRef.current.getBoundingClientRect();
     drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-    setPos({ x: r.left, y: r.top });
     window.addEventListener("pointermove", onDragMove);
     window.addEventListener("pointerup", onDragEnd);
   };
@@ -185,11 +206,7 @@ export function WebAgent() {
     const dx = e.clientX - ldrag.current.sx;
     const dy = e.clientY - ldrag.current.sy;
     if (Math.abs(dx) > 4 || Math.abs(dy) > 4) ldrag.current.moved = true;
-    const w = launcherRef.current.offsetWidth;
-    const h = launcherRef.current.offsetHeight;
-    const x = Math.min(Math.max(8, ldrag.current.ox + dx), window.innerWidth - w - 8);
-    const y = Math.min(Math.max(8, ldrag.current.oy + dy), window.innerHeight - h - 8);
-    setLauncherPos({ x, y });
+    setLauncherPos(toAnchored(ldrag.current.ox + dx, ldrag.current.oy + dy, launcherRef.current.offsetWidth, launcherRef.current.offsetHeight, window.innerWidth, window.innerHeight));
   }, []);
   const onLauncherUp = useCallback(() => {
     window.removeEventListener("pointermove", onLauncherMove);
@@ -199,7 +216,7 @@ export function WebAgent() {
     if (!moved) {
       setOpen(true); // it was a tap, not a drag
     } else {
-      setLauncherPos((p) => { try { if (p) localStorage.setItem(LAUNCHER_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
+      setLauncherPos((p) => { try { localStorage.setItem(LAUNCHER_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
     }
   }, [onLauncherMove]);
   const onLauncherDown = (e: React.PointerEvent) => {
@@ -263,7 +280,7 @@ export function WebAgent() {
   }
 
   const voiceState: VoiceState = pending ? "thinking" : tts.speaking ? "speaking" : mic.listening ? "listening" : "idle";
-  const panelStyle = pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : undefined;
+  const panelStyle = anchoredStyle(pos);
   const dotColor: Record<VoiceState, string> = {
     idle: "bg-white/50",
     listening: "bg-red-300",
@@ -277,8 +294,8 @@ export function WebAgent() {
         <button
           ref={launcherRef}
           onPointerDown={onLauncherDown}
-          style={launcherPos ? { left: launcherPos.x, top: launcherPos.y, right: "auto", bottom: "auto" } : undefined}
-          className="fixed bottom-5 right-5 z-[95] flex h-14 w-14 touch-none items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-xl transition-transform hover:scale-105 focus-ring"
+          style={anchoredStyle(launcherPos)}
+          className="fixed z-[95] flex h-14 w-14 touch-none items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-xl transition-transform hover:scale-105 focus-ring"
           aria-label="Web Insight Agent — tap to open, drag to move"
           title="Tap to ask · drag to move"
         >
@@ -292,7 +309,7 @@ export function WebAgent() {
           style={panelStyle}
           role="dialog"
           aria-label="Web Insight Agent"
-          className="fixed bottom-5 right-5 z-[95] flex h-[min(42rem,calc(100vh-2.5rem))] w-[26rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl sm:w-[30rem]"
+          className="fixed z-[95] flex h-[min(42rem,calc(100dvh-2.5rem))] max-h-[calc(100dvh-2.5rem)] w-[26rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl sm:w-[30rem]"
         >
           {/* Header (drag handle) */}
           <div
