@@ -21,7 +21,7 @@ What each module is for:
 - Operations (/operations): backend and server health — uptime, performance and infrastructure signals.
 - Competitor Intelligence (/competitors): tracked competitors and how Atlas compares.
 - Reports & History (/reports): generated reports and historical snapshots.
-- Invoice Agent (/invoices): supplier invoices captured from connected email inboxes, extracted and reviewed; Connected inboxes (/invoices/email-accounts) manages those mailboxes.
+- Invoice Agent (/invoices): monitors connected inboxes, DETECTS invoice emails and FORWARDS them to the Finance destination; its dashboard shows counts of emails detected, invoices forwarded, pending approvals and needs-review. Use read_invoice_forwarding for those dashboard counts, and read_invoice_overview / read_search_invoices for extracted invoice records with amounts and due dates. Connected inboxes (/invoices/email-accounts) manages those mailboxes.
 - Settings & Integrations (/settings), Agent API (/settings/agent-api, for IntelligenceOS keys) and User Management (/admin/users) are admin areas.
 
 How to help: for "what is X / how do I / what can you do" questions, explain clearly from this knowledge and offer to take the user there or do it. For anything about their actual data, call a read_* tool and answer from the result.`;
