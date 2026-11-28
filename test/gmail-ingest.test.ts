@@ -72,13 +72,27 @@ describe("gmail ingest: backfill guard (only forward mail received after connect
     expect(isWithinForwardWindow(new Date("2026-11-28T10:00:00Z"), reconnectedAt, createdAt)).toBe(true);
   });
 
-  it("clamps a FUTURE (mis-stamped) forward_since so current mail is never blocked", () => {
+  it("drops the gate for a FUTURE (mis-stamped) forward_since so current mail forwards", () => {
     const now = new Date("2026-11-28T11:00:00Z");
-    const skewed = new Date("2026-11-28T16:30:00Z"); // forward_since mis-stamped +5.5h (non-UTC skew)
-    // Just-received mail would be "before" the skewed cutoff and wrongly blocked;
-    // clamped to now it forwards — restoring auto-forward for such accounts.
-    expect(isWithinForwardWindow(new Date("2026-11-28T11:00:05Z"), skewed, null, now)).toBe(true);
-    // The clamp only removes the FUTURE skew — genuinely old mail is still held.
-    expect(isWithinForwardWindow(new Date("2026-11-02T00:00:00Z"), skewed, null, now)).toBe(false);
+    const skewed = new Date("2026-11-28T16:30:00Z"); // forward_since mis-stamped +5.5h (non-UTC/IST skew)
+    // The real-world case the earlier "clamp to now" fix missed: mail that arrived
+    // a minute or two BEFORE the sync tick. Clamping the future cutoff to `now`
+    // left it "before" the cutoff and wrongly blocked — which is why forwarding
+    // stayed dead on the IST server. A corrupt future cutoff is unreliable, so the
+    // gate is dropped and such mail forwards.
+    expect(isWithinForwardWindow(new Date("2026-11-28T10:59:00Z"), skewed, null, now)).toBe(true); // 1 min before the tick
+    expect(isWithinForwardWindow(new Date("2026-11-28T10:58:30Z"), skewed, null, now)).toBe(true); // 90s before the tick
+    expect(isWithinForwardWindow(new Date("2026-11-28T11:00:05Z"), skewed, null, now)).toBe(true); // just after
+    // A corrupt cutoff carries no reliable backfill boundary, so even older mail
+    // is allowed here; re-forwarding history is still prevented by the backfill
+    // guard at the call site (forwards are not created during the initial sync).
+    expect(isWithinForwardWindow(new Date("2026-11-02T00:00:00Z"), skewed, null, now)).toBe(true);
+  });
+
+  it("keeps blocking old mail for a CORRECT (past) forward_since", () => {
+    const now = new Date("2026-11-28T11:00:00Z");
+    const good = new Date("2026-11-28T09:00:00Z"); // connected 2h ago, correctly stamped
+    expect(isWithinForwardWindow(new Date("2026-11-28T10:00:00Z"), good, null, now)).toBe(true); // after connect → forward
+    expect(isWithinForwardWindow(new Date("2026-11-20T00:00:00Z"), good, null, now)).toBe(false); // before connect → held
   });
 });

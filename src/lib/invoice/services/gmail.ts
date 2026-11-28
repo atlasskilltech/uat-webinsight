@@ -275,13 +275,33 @@ export function isWithinForwardWindow(
 ): boolean {
   const rawCutoff = forwardSince ?? createdAt;
   if (!rawCutoff) return true; // no cutoff known (legacy) → don't block
-  // Defensive: a cutoff in the FUTURE must never block legitimate current mail.
-  // forward_since is a connection time (always in the past); a future value can
-  // only be bad data (e.g. a timezone-skewed stamp from before the UTC fix), and
-  // left as-is it would silently stop ALL auto-forwarding for that account. Clamp
-  // it to now so real incoming mail is never withheld by a mis-stamped cutoff.
-  const cutoff = Math.min(rawCutoff.getTime(), now.getTime());
+
+  // A cutoff is a CONNECTION time, so it is always in the past. A cutoff that
+  // lands in the FUTURE can only be corrupt data — almost always a forward_since
+  // (or created_at) that was written with SQL CURRENT_TIMESTAMP on a non-UTC DB
+  // server (e.g. IST, +5:30) and then read back as UTC, so it sits hours ahead
+  // of real time. Such a cutoff is UNRELIABLE and must NOT gate forwarding:
+  // comparing real (past) receive times against a future cutoff silently blocks
+  // ALL auto-forwarding for the account.
+  //
+  // Clamping the cutoff to `now` is NOT enough — that still rejects every message
+  // that arrived even seconds before this sync tick (i.e. essentially all real
+  // mail, since mail is always received before the 2-minute poll runs), which is
+  // why the earlier clamp did not restore forwarding. So when the cutoff is in
+  // the future beyond a small clock-skew tolerance, DROP the backfill gate
+  // entirely and let mail forward. This is safe: back-forwarding the inbox's
+  // history is prevented independently by the backfill guard at the call site
+  // (forwards are never created during the initial history sync), and incremental
+  // syncs only ever see genuinely new mail. Correctly-stamped (past) cutoffs are
+  // unaffected. Any real timezone skew is >= 30 min; genuine app/DB clock drift
+  // is seconds — so a 5-minute tolerance cleanly separates the two.
+  const SKEW_TOLERANCE_MS = 5 * 60_000;
+  if (rawCutoff.getTime() > now.getTime() + SKEW_TOLERANCE_MS) return true;
+
   if (!receivedAt) return false; // unknown receipt time → never back-forward
+  // Absorb a tiny forward clock skew between the app and DB so a correctly
+  // stamped cutoff never rejects mail timestamped a hair apart.
+  const cutoff = Math.min(rawCutoff.getTime(), now.getTime());
   return receivedAt.getTime() >= cutoff;
 }
 
