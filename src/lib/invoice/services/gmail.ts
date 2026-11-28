@@ -36,6 +36,10 @@ export interface GmailIntegrationRow {
   id: string;
   organization_id: string;
   email: string;
+  /** Connected Google account display name (null until captured / for old rows). */
+  display_name: string | null;
+  /** When the account was (re)connected; only mail received at/after this is auto-forwarded. */
+  forward_since: Date | null;
   google_sub: string | null;
   access_token_enc: string | null;
   refresh_token_enc: string | null;
@@ -99,9 +103,10 @@ export function decideForwardStatus(confPct: number, minConfidence: number, auto
 export async function upsertGmailIntegration(
   organizationId: string,
   actor: { id: string; email: string },
-  account: { email: string; googleSub: string },
+  account: { email: string; googleSub: string; name?: string | null },
   tokens: GmailTokens,
 ): Promise<string> {
+  const displayName = account.name && account.name.trim() ? account.name.trim().slice(0, 255) : null;
   const expiresAt = new Date(tokens.obtained_at + tokens.expires_in * 1000);
   const existing = await iQueryOne<{ id: string; refresh_token_enc: string | null }>(
     "SELECT id, refresh_token_enc FROM `gmail_integrations` WHERE organization_id=? AND email=?",
@@ -114,16 +119,20 @@ export async function upsertGmailIntegration(
 
   const id = existing?.id ?? createId();
   if (existing) {
+    // COALESCE keeps an existing display name if this (re)connect returned none
+    // (e.g. the profile scope wasn't granted). forward_since resets to now, so a
+    // reconnect also only forwards fresh mail.
     await iExecute(
-      "UPDATE `gmail_integrations` SET `google_sub`=?,`access_token_enc`=?,`refresh_token_enc`=?,`token_expires_at`=?," +
-        "`scopes`=?,`status`='connected',`last_error`=NULL,`connected_by`=? WHERE id=?",
-      [account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, id],
+      "UPDATE `gmail_integrations` SET `display_name`=COALESCE(?,`display_name`),`google_sub`=?,`access_token_enc`=?," +
+        "`refresh_token_enc`=?,`token_expires_at`=?,`scopes`=?,`status`='connected',`last_error`=NULL," +
+        "`connected_by`=?,`forward_since`=CURRENT_TIMESTAMP WHERE id=?",
+      [displayName, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, id],
     );
   } else {
     await iExecute(
-      "INSERT INTO `gmail_integrations` (`id`,`organization_id`,`email`,`google_sub`,`access_token_enc`,`refresh_token_enc`," +
-        "`token_expires_at`,`scopes`,`status`,`connected_by`) VALUES (?,?,?,?,?,?,?,?,'connected',?)",
-      [id, organizationId, account.email, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id],
+      "INSERT INTO `gmail_integrations` (`id`,`organization_id`,`email`,`display_name`,`google_sub`,`access_token_enc`,`refresh_token_enc`," +
+        "`token_expires_at`,`scopes`,`status`,`connected_by`,`forward_since`) VALUES (?,?,?,?,?,?,?,?,?,'connected',?,CURRENT_TIMESTAMP)",
+      [id, organizationId, account.email, displayName, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id],
     );
     await iExecute(
       "INSERT INTO `gmail_sync_states` (`id`,`organization_id`,`gmail_integration_id`) VALUES (?,?,?)",
@@ -243,6 +252,25 @@ export function shouldForwardEmail(
   if (!plan.destination) return false;
   if (isDocumentCandidate) return true;
   return plan.source === "rule" || plan.source === "rule_fallback";
+}
+
+/**
+ * Backfill guard. An auto-forward only fires for mail received at/after the
+ * account was connected (`forward_since`), so connecting an account never
+ * back-forwards old inbox mail picked up by the initial history sync. Falls back
+ * to `created_at` for pre-existing rows that have no `forward_since`. A message
+ * with no received date is treated as too old (not forwarded). The email is
+ * still ingested/recorded — only the forward is gated.
+ */
+export function isWithinForwardWindow(
+  receivedAt: Date | null,
+  forwardSince: Date | null,
+  createdAt: Date | null,
+): boolean {
+  const cutoff = forwardSince ?? createdAt;
+  if (!cutoff) return true; // no cutoff known (legacy) → don't block
+  if (!receivedAt) return false; // unknown receipt time → never back-forward
+  return receivedAt.getTime() >= cutoff.getTime();
 }
 
 /**
@@ -520,7 +548,11 @@ export async function syncGmailAccount(
         // sender is allowed and not excluded. The email is still ingested/recorded
         // above — only the FORWARD is gated. When the feature isn't configured
         // (table not migrated), evaluateSenderForward returns forward:true.
-        if (routing && !opts.backfill) {
+        // Only auto-forward mail received AFTER the account was connected, so a
+        // fresh connection never back-forwards the inbox's history (§ backfill
+        // guard). The email is still recorded above — only the forward is gated.
+        const withinWindow = isWithinForwardWindow(receivedAt, integration.forward_since ?? null, integration.created_at ?? null);
+        if (routing && !opts.backfill && withinWindow) {
           const senderDecision = evaluateSenderForward(routing.senderFilters, from);
           if (senderDecision.forward) {
             const plan = await resolveForwardingPlan(

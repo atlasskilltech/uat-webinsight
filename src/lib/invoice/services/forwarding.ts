@@ -469,6 +469,8 @@ export interface ForwardRow {
   from_address: string | null;
   to_address: string | null;
   account_email: string | null;
+  /** Connected Gmail account display name (null = fall back to account_email). */
+  account_display_name: string | null;
   received_at: Date | string | null;
   organisation_name: string | null;
   /** Joined from email_messages: the document classification (e.g. supplier_invoice). */
@@ -489,7 +491,7 @@ export async function listForwards(
   params.push(opts.limit ?? 200);
   return iQuery<ForwardRow>(
     "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.is_invoice_candidate, " +
-      "g.email AS account_email, o.name AS organisation_name " +
+      "g.email AS account_email, g.display_name AS account_display_name, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
@@ -503,7 +505,7 @@ export async function listForwards(
 async function getForward(organizationId: string, forwardId: string): Promise<ForwardRow | null> {
   return iQueryOne<ForwardRow>(
     "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.is_invoice_candidate, " +
-      "g.email AS account_email, o.name AS organisation_name " +
+      "g.email AS account_email, g.display_name AS account_display_name, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
@@ -554,6 +556,9 @@ export interface ForwardAttachment {
 export interface ForwardBodyInput {
   /** The organization that forwarded this email (shown prominently). */
   organisationName: string;
+  /** Connected Gmail account name (or its email) that RECEIVED the original mail;
+   *  used for the forwarded-email subject. Empty → a generic fallback. */
+  accountName?: string;
   subject: string;
   from: string;
   /** Original recipient (To header of the received email). */
@@ -600,6 +605,12 @@ export interface RenderedForwardBody {
  */
 export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody {
   const subjectText = cleanHeader(input.subject) || "(no subject)";
+  // The forwarded email's Subject names the CONNECTED mailbox that received the
+  // original mail (its display name, or its email as a fallback) — never the
+  // original sender or the Finance recipient. The original subject is still
+  // shown in the body metadata below.
+  const receivedBy = cleanHeader(input.accountName ?? "").trim() || "the connected mailbox";
+  const forwardSubject = `You have received an email from ${receivedBy}`;
   // Forwarded emails present under a fixed "Finance & Accounts" label rather
   // than the raw organisation name (product branding). "&" is HTML-escaped.
   const brand = htmlEscape("Finance & Accounts");
@@ -683,7 +694,7 @@ export function renderForwardBody(input: ForwardBodyInput): RenderedForwardBody 
 </body></html>`;
 
   return {
-    subject: "Fwd: " + subjectText,
+    subject: forwardSubject,
     contentType: 'text/html; charset="UTF-8"',
     encoding: "8bit",
     body,
@@ -700,6 +711,8 @@ export function buildForwardMime(input: {
   destination: string;
   cc?: string[];
   organisationName?: string;
+  /** Connected Gmail account name (or email) that received the original mail. */
+  accountName?: string;
   subject: string;
   from: string;
   to?: string;
@@ -718,6 +731,7 @@ export function buildForwardMime(input: {
   // below (attachments + original.eml) is unchanged.
   const rendered = renderForwardBody({
     organisationName: input.organisationName ?? "",
+    accountName: input.accountName ?? "",
     subject: input.subject,
     from: input.from,
     to: input.to ?? "",
@@ -836,6 +850,8 @@ async function sendForward(
       destination: forward.destination,
       cc,
       organisationName: forward.organisation_name ?? "",
+      // Name the mailbox that received the mail: its display name, else its email.
+      accountName: forward.account_display_name || forward.account_email || "",
       subject: forward.subject ?? "",
       from: forward.from_address ?? "",
       to: forward.to_address ?? "",
