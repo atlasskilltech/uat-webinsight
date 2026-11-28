@@ -47,6 +47,8 @@ function rowDefaults(p: Partial<Row> & Pick<Row, "id" | "organization_id" | "sta
     to_address: "ap@org.com",
     received_at: null,
     account_email: null,
+    account_display_name: null,
+    account_status: "connected", // a healthy account by default; the gate allows it
     organisation_name: "Org " + p.organization_id,
     forwarded_message_id: null,
     attempts: 0,
