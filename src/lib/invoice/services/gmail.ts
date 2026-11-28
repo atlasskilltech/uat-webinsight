@@ -107,6 +107,11 @@ export async function upsertGmailIntegration(
   tokens: GmailTokens,
 ): Promise<string> {
   const displayName = account.name && account.name.trim() ? account.name.trim().slice(0, 255) : null;
+  // Stamp forward_since in the app as a UTC instant. The pool uses timezone:"Z",
+  // so this is stored/read as UTC and compares correctly against Gmail's UTC
+  // receive time — unlike SQL CURRENT_TIMESTAMP, which MySQL evaluates in the
+  // server's timezone and would skew the backfill cutoff on a non-UTC server.
+  const connectedAt = new Date();
   const expiresAt = new Date(tokens.obtained_at + tokens.expires_in * 1000);
   const existing = await iQueryOne<{ id: string; refresh_token_enc: string | null }>(
     "SELECT id, refresh_token_enc FROM `gmail_integrations` WHERE organization_id=? AND email=?",
@@ -125,14 +130,14 @@ export async function upsertGmailIntegration(
     await iExecute(
       "UPDATE `gmail_integrations` SET `display_name`=COALESCE(?,`display_name`),`google_sub`=?,`access_token_enc`=?," +
         "`refresh_token_enc`=?,`token_expires_at`=?,`scopes`=?,`status`='connected',`last_error`=NULL," +
-        "`connected_by`=?,`forward_since`=CURRENT_TIMESTAMP WHERE id=?",
-      [displayName, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, id],
+        "`connected_by`=?,`forward_since`=? WHERE id=?",
+      [displayName, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, connectedAt, id],
     );
   } else {
     await iExecute(
       "INSERT INTO `gmail_integrations` (`id`,`organization_id`,`email`,`display_name`,`google_sub`,`access_token_enc`,`refresh_token_enc`," +
-        "`token_expires_at`,`scopes`,`status`,`connected_by`,`forward_since`) VALUES (?,?,?,?,?,?,?,?,?,'connected',?,CURRENT_TIMESTAMP)",
-      [id, organizationId, account.email, displayName, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id],
+        "`token_expires_at`,`scopes`,`status`,`connected_by`,`forward_since`) VALUES (?,?,?,?,?,?,?,?,?,'connected',?,?)",
+      [id, organizationId, account.email, displayName, account.googleSub, encryptSecret(tokens.access_token), refreshEnc, expiresAt, GMAIL_SCOPE_LABEL, actor.id, connectedAt],
     );
     await iExecute(
       "INSERT INTO `gmail_sync_states` (`id`,`organization_id`,`gmail_integration_id`) VALUES (?,?,?)",
