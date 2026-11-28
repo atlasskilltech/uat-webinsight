@@ -471,6 +471,8 @@ export interface ForwardRow {
   account_email: string | null;
   /** Connected Gmail account display name (null = fall back to account_email). */
   account_display_name: string | null;
+  /** Connected Gmail account status: only 'connected' may auto-forward. */
+  account_status: string | null;
   received_at: Date | string | null;
   organisation_name: string | null;
   /** Joined from email_messages: the document classification (e.g. supplier_invoice). */
@@ -491,7 +493,7 @@ export async function listForwards(
   params.push(opts.limit ?? 200);
   return iQuery<ForwardRow>(
     "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.is_invoice_candidate, " +
-      "g.email AS account_email, g.display_name AS account_display_name, o.name AS organisation_name " +
+      "g.email AS account_email, g.display_name AS account_display_name, g.status AS account_status, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
@@ -505,7 +507,7 @@ export async function listForwards(
 async function getForward(organizationId: string, forwardId: string): Promise<ForwardRow | null> {
   return iQueryOne<ForwardRow>(
     "SELECT f.*, m.subject, m.from_address, m.to_address, m.received_at, m.classification, m.is_invoice_candidate, " +
-      "g.email AS account_email, g.display_name AS account_display_name, o.name AS organisation_name " +
+      "g.email AS account_email, g.display_name AS account_display_name, g.status AS account_status, o.name AS organisation_name " +
       "FROM `invoice_forwards` f " +
       "LEFT JOIN `email_messages` m ON m.id = f.email_message_id " +
       "LEFT JOIN `gmail_integrations` g ON g.id = f.gmail_integration_id " +
@@ -779,6 +781,15 @@ export function buildForwardMime(input: {
  * cron, sync cadence) can never send the same email twice. A task not in the
  * 'approved' state is skipped.
  */
+/**
+ * Only a healthy, connected Gmail account may auto-forward. A disconnected /
+ * disabled / reauth-required account must stop forwarding until an admin
+ * reconnects it (requirement: no silent forwards on a broken connection).
+ */
+export function isAccountForwardable(status: string | null): boolean {
+  return (status ?? "") === "connected";
+}
+
 async function sendForward(
   organizationId: string,
   forward: ForwardRow,
@@ -799,6 +810,22 @@ async function sendForward(
     await iExecute(
       "UPDATE `invoice_forwards` SET `status`='skipped', `last_error`=? WHERE id=? AND `status`='approved'",
       [`Not forwarded: ${senderBlockReason(gate.reason)}.`, forward.id],
+    );
+    return "blocked";
+  }
+
+  // SEND-TIME account-health gate. Auto-forwarding must STOP for an account that
+  // is disconnected, disabled, or whose connection expired (needs re-auth) — it
+  // must never forward with a stale token, and never mark an unsent message as
+  // forwarded. The task is parked for admin attention ('review', not sent) and
+  // stays visible; it resumes once the account is reconnected (status back to
+  // 'connected') and the forward is approved. A healthy ('connected') account is
+  // unaffected. This runs at the single send choke point, so every path (drain,
+  // manual approval, agent) is covered.
+  if (!isAccountForwardable(forward.account_status)) {
+    await iExecute(
+      "UPDATE `invoice_forwards` SET `status`='review', `last_error`=? WHERE id=? AND `status`='approved'",
+      [`Not sent — the connected Gmail account is ${forward.account_status ?? "not connected"}. Reconnect it to resume forwarding.`, forward.id],
     );
     return "blocked";
   }
@@ -1022,9 +1049,12 @@ export async function approveAndForward(
   const result = await sendForward(organizationId, { ...row, status: "approved", approved_by: actor.id });
   if (result === "forwarded") return { ok: true, message: "Forwarded to Finance & Accounts." };
   if (result === "blocked") {
+    // sendForward withheld it (sender gate OR a non-connected account). Surface
+    // the exact reason it recorded, so the message is accurate for either case.
+    const blocked = await iQueryOne<{ last_error: string | null }>("SELECT last_error FROM `invoice_forwards` WHERE id=?", [forwardId]);
     return {
       ok: false,
-      message: "Not forwarded — the sender is on this organisation's excluded list. Remove it from Excluded senders in Settings.",
+      message: blocked?.last_error || "Not forwarded — check the account connection and the Excluded senders list in Settings.",
     };
   }
   if (result === "unknown") {

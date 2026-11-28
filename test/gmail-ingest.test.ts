@@ -71,4 +71,14 @@ describe("gmail ingest: backfill guard (only forward mail received after connect
     expect(isWithinForwardWindow(new Date("2026-06-01T00:00:00Z"), reconnectedAt, createdAt)).toBe(false); // before reconnect
     expect(isWithinForwardWindow(new Date("2026-11-28T10:00:00Z"), reconnectedAt, createdAt)).toBe(true);
   });
+
+  it("clamps a FUTURE (mis-stamped) forward_since so current mail is never blocked", () => {
+    const now = new Date("2026-11-28T11:00:00Z");
+    const skewed = new Date("2026-11-28T16:30:00Z"); // forward_since mis-stamped +5.5h (non-UTC skew)
+    // Just-received mail would be "before" the skewed cutoff and wrongly blocked;
+    // clamped to now it forwards — restoring auto-forward for such accounts.
+    expect(isWithinForwardWindow(new Date("2026-11-28T11:00:05Z"), skewed, null, now)).toBe(true);
+    // The clamp only removes the FUTURE skew — genuinely old mail is still held.
+    expect(isWithinForwardWindow(new Date("2026-11-02T00:00:00Z"), skewed, null, now)).toBe(false);
+  });
 });

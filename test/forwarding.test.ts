@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { buildForwardMime, normalizeEmail, renderForwardBody } from "@/lib/invoice/services/forwarding";
+import { buildForwardMime, normalizeEmail, renderForwardBody, isAccountForwardable } from "@/lib/invoice/services/forwarding";
+
+describe("forwarding: account-health gate (auto-forward only on a connected account)", () => {
+  it("permits a connected account and blocks disconnected / expired / disabled ones", () => {
+    expect(isAccountForwardable("connected")).toBe(true);
+    expect(isAccountForwardable("disconnected")).toBe(false);
+    expect(isAccountForwardable("reauth_required")).toBe(false);
+    expect(isAccountForwardable("error")).toBe(false);
+    expect(isAccountForwardable("")).toBe(false);
+    expect(isAccountForwardable(null)).toBe(false);
+  });
+});
 
 describe("forwarding: renderForwardBody (professional HTML template)", () => {
   it("renders a professional HTML body under the Finance & Accounts label + original From/To/Date/Subject", () => {

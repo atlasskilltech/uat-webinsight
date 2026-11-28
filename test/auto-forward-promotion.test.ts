@@ -33,6 +33,8 @@ function seedForward(p: Partial<Row> & Pick<Row, "id" | "organization_id" | "sta
     to_address: null,
     received_at: null,
     account_email: null,
+    account_display_name: null,
+    account_status: "connected", // a healthy account by default; the gate allows it
     organisation_name: "Org",
     classification: "general_finance", // non-invoice → GSTIN gate skipped
     is_invoice_candidate: 0,

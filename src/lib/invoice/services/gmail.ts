@@ -271,11 +271,18 @@ export function isWithinForwardWindow(
   receivedAt: Date | null,
   forwardSince: Date | null,
   createdAt: Date | null,
+  now: Date = new Date(),
 ): boolean {
-  const cutoff = forwardSince ?? createdAt;
-  if (!cutoff) return true; // no cutoff known (legacy) → don't block
+  const rawCutoff = forwardSince ?? createdAt;
+  if (!rawCutoff) return true; // no cutoff known (legacy) → don't block
+  // Defensive: a cutoff in the FUTURE must never block legitimate current mail.
+  // forward_since is a connection time (always in the past); a future value can
+  // only be bad data (e.g. a timezone-skewed stamp from before the UTC fix), and
+  // left as-is it would silently stop ALL auto-forwarding for that account. Clamp
+  // it to now so real incoming mail is never withheld by a mis-stamped cutoff.
+  const cutoff = Math.min(rawCutoff.getTime(), now.getTime());
   if (!receivedAt) return false; // unknown receipt time → never back-forward
-  return receivedAt.getTime() >= cutoff.getTime();
+  return receivedAt.getTime() >= cutoff;
 }
 
 /**
