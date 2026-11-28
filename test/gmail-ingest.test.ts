@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isSelfSent, decideForwardStatus } from "@/lib/invoice/services/gmail";
+import { isSelfSent, decideForwardStatus, isWithinForwardWindow } from "@/lib/invoice/services/gmail";
 
 /**
  * Guards that prevent the forwarding loop and gate auto-forwarding. These are
@@ -38,5 +38,37 @@ describe("gmail ingest: forward-status decision", () => {
   });
   it("treats exactly-at-threshold as eligible", () => {
     expect(decideForwardStatus(70, 70, true)).toBe("approved");
+  });
+});
+
+describe("gmail ingest: backfill guard (only forward mail received after connecting)", () => {
+  const connectedAt = new Date("2026-11-28T09:00:00Z"); // when the account was connected
+
+  it("forwards mail received AT/AFTER the connection time", () => {
+    expect(isWithinForwardWindow(new Date("2026-11-28T09:00:00Z"), connectedAt, null)).toBe(true); // exactly at
+    expect(isWithinForwardWindow(new Date("2026-11-28T09:05:00Z"), connectedAt, null)).toBe(true); // 5 min after
+  });
+
+  it("does NOT forward mail received BEFORE the connection time (the back-forward bug)", () => {
+    expect(isWithinForwardWindow(new Date("2026-11-02T10:00:00Z"), connectedAt, null)).toBe(false); // old mail
+    expect(isWithinForwardWindow(new Date("2026-11-28T08:59:59Z"), connectedAt, null)).toBe(false); // 1s before
+  });
+
+  it("falls back to created_at when forward_since is null (pre-existing rows)", () => {
+    const createdAt = new Date("2026-11-20T00:00:00Z");
+    expect(isWithinForwardWindow(new Date("2026-11-25T00:00:00Z"), null, createdAt)).toBe(true);
+    expect(isWithinForwardWindow(new Date("2026-11-10T00:00:00Z"), null, createdAt)).toBe(false);
+  });
+
+  it("never back-forwards a message with no received date, and does not block when no cutoff is known", () => {
+    expect(isWithinForwardWindow(null, connectedAt, null)).toBe(false); // unknown receipt time → skip
+    expect(isWithinForwardWindow(new Date("2026-11-02T00:00:00Z"), null, null)).toBe(true); // no cutoff → legacy allow
+  });
+
+  it("prefers forward_since over created_at (reconnect resets the window)", () => {
+    const createdAt = new Date("2026-01-01T00:00:00Z"); // old original connect
+    const reconnectedAt = new Date("2026-11-28T09:00:00Z"); // reconnected today
+    expect(isWithinForwardWindow(new Date("2026-06-01T00:00:00Z"), reconnectedAt, createdAt)).toBe(false); // before reconnect
+    expect(isWithinForwardWindow(new Date("2026-11-28T10:00:00Z"), reconnectedAt, createdAt)).toBe(true);
   });
 });

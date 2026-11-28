@@ -44,7 +44,7 @@ export async function GET(req: Request): Promise<Response> {
     await upsertGmailIntegration(
       ctx.organizationId,
       { id: ctx.user.id, email: ctx.user.email },
-      { email: account.email, googleSub: account.id },
+      { email: account.email, googleSub: account.id, name: account.name },
       tokens,
     );
     return back(`connected=${encodeURIComponent(account.email)}`);

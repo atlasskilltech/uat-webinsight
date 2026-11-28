@@ -5,6 +5,7 @@ describe("forwarding: renderForwardBody (professional HTML template)", () => {
   it("renders a professional HTML body under the Finance & Accounts label + original From/To/Date/Subject", () => {
     const r = renderForwardBody({
       organisationName: "Atlas ISME",
+      accountName: "Prasun Pakhira",
       subject: "Tax Invoice INV-9",
       from: "vendor@acme.com",
       to: "ap@atlas.edu",
@@ -12,7 +13,8 @@ describe("forwarding: renderForwardBody (professional HTML template)", () => {
       confidence: "90",
       attachmentFilenames: ["Invoice-INV-9.pdf"],
     });
-    expect(r.subject).toBe("Fwd: Tax Invoice INV-9");
+    // Subject names the CONNECTED mailbox that received the mail, not the sender.
+    expect(r.subject).toBe("You have received an email from Prasun Pakhira");
     expect(r.contentType).toBe('text/html; charset="UTF-8"'); // HTML, not plain text
     expect(r.encoding).toBe("8bit");
     expect(r.body).toContain("<!doctype html>");
@@ -42,10 +44,24 @@ describe("forwarding: renderForwardBody (professional HTML template)", () => {
     expect(r.body).not.toContain('onerror="evil()"');
   });
 
-  it("falls back to a (no subject) Fwd subject and shows the fixed Finance & Accounts label", () => {
+  it("subject uses the connected account's display NAME when present", () => {
+    const r1 = renderForwardBody({ organisationName: "Org", accountName: "Procurement Team", subject: "x", from: "v@x.com", to: "", date: "", confidence: null, attachmentFilenames: [] });
+    expect(r1.subject).toBe("You have received an email from Procurement Team");
+    // A different connected account produces its own name (multi-account).
+    const r2 = renderForwardBody({ organisationName: "Org", accountName: "Prasun Pakhira", subject: "x", from: "v@x.com", to: "", date: "", confidence: null, attachmentFilenames: [] });
+    expect(r2.subject).toBe("You have received an email from Prasun Pakhira");
+  });
+
+  it("subject falls back to the account EMAIL when no display name is available", () => {
+    // The caller passes the account email as accountName when display_name is null.
+    const r = renderForwardBody({ organisationName: "Org", accountName: "procurement@atlasuniversity.edu.in", subject: "x", from: "v@x.com", to: "", date: "", confidence: null, attachmentFilenames: [] });
+    expect(r.subject).toBe("You have received an email from procurement@atlasuniversity.edu.in");
+  });
+
+  it("uses a generic fallback when neither a name nor an email is given", () => {
     const r = renderForwardBody({ organisationName: "", subject: "", from: "v@x.com", to: "", date: "", confidence: null, attachmentFilenames: [] });
-    expect(r.subject).toBe("Fwd: (no subject)");
-    expect(r.body).toContain("Finance &amp; Accounts"); // label is fixed regardless of org name
+    expect(r.subject).toBe("You have received an email from the connected mailbox");
+    expect(r.body).toContain("Finance &amp; Accounts"); // body branding is still the fixed label
   });
 
   it("inlines the sanitized original body under an 'Original message' section", () => {
@@ -70,10 +86,11 @@ describe("forwarding: .eml MIME builder", () => {
   const original = "From: vendor@acme.com\r\nSubject: Tax Invoice INV-9\r\n\r\nPlease find attached.";
   const rawB64Url = Buffer.from(original, "utf8").toString("base64url");
 
-  it("addresses the Finance destination and uses a Fwd: subject", () => {
+  it("addresses the Finance destination and subjects it from the connected account", () => {
     const mime = buildForwardMime({
       destination: "finance.accounts@uni.edu",
       organisationName: "Atlas ISME",
+      accountName: "Prasun Pakhira",
       subject: "Tax Invoice INV-9",
       from: "vendor@acme.com",
       to: "ap@atlas.edu",
@@ -82,7 +99,7 @@ describe("forwarding: .eml MIME builder", () => {
       rawOriginalBase64Url: rawB64Url,
     });
     expect(mime).toContain("To: finance.accounts@uni.edu");
-    expect(mime).toContain("Subject: Fwd: Tax Invoice INV-9");
+    expect(mime).toContain("Subject: You have received an email from Prasun Pakhira");
     expect(mime).toContain("Content-Type: message/rfc822");
     expect(mime).toContain('filename="original.eml"');
     // The body part is the redesigned HTML with the Finance & Accounts label + metadata.
@@ -107,27 +124,29 @@ describe("forwarding: .eml MIME builder", () => {
     expect(Buffer.from(b64, "base64").toString("utf8")).toBe(original);
   });
 
-  it("RFC2047-encodes a non-ASCII subject and uses an 8bit body", () => {
+  it("RFC2047-encodes a non-ASCII subject (from a non-ASCII account name) and uses an 8bit body", () => {
     const mime = buildForwardMime({
       destination: "fa@uni.edu",
-      subject: "Invoice ₹1,180 — Müller & Co",
+      accountName: "Müller & Co ₹",
+      subject: "Invoice",
       from: "v@acme.com",
       date: "",
       confidence: null,
       rawOriginalBase64Url: rawB64Url,
     });
     expect(mime).toMatch(/Subject: =\?UTF-8\?B\?[A-Za-z0-9+/=]+\?=/);
-    expect(mime).not.toContain("Subject: Fwd: Invoice ₹"); // raw non-ASCII not in header
+    expect(mime).not.toContain("Subject: You have received an email from Müller"); // raw non-ASCII not in header
     expect(mime).toContain("Content-Transfer-Encoding: 8bit");
-    // The encoded subject decodes back to the original text.
+    // The encoded subject decodes back to the full subject line.
     const m = mime.match(/Subject: =\?UTF-8\?B\?([A-Za-z0-9+/=]+)\?=/);
-    expect(Buffer.from(m![1], "base64").toString("utf8")).toBe("Fwd: Invoice ₹1,180 — Müller & Co");
+    expect(Buffer.from(m![1], "base64").toString("utf8")).toBe("You have received an email from Müller & Co ₹");
   });
 
-  it("strips CR/LF from header values (no header injection)", () => {
+  it("strips CR/LF from the account name (no header injection into Subject)", () => {
     const mime = buildForwardMime({
       destination: "fa@uni.edu",
-      subject: "Invoice\r\nBcc: attacker@evil.com",
+      accountName: "Procurement\r\nBcc: attacker@evil.com",
+      subject: "Invoice",
       from: "v@acme.com",
       date: "",
       confidence: null,
@@ -136,7 +155,7 @@ describe("forwarding: .eml MIME builder", () => {
     // The CRLF is collapsed, so no injected header LINE exists…
     expect(mime).not.toContain("\r\nBcc:");
     // …and the text stays on the Subject line instead.
-    expect(mime).toContain("Subject: Fwd: Invoice Bcc: attacker@evil.com");
+    expect(mime).toContain("Subject: You have received an email from Procurement Bcc: attacker@evil.com");
   });
 
   it("attaches the ACTUAL invoice attachments directly (filename + MIME + decodable bytes), plus original.eml", () => {

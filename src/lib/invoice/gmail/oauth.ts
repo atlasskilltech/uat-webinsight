@@ -16,8 +16,10 @@ export const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   // Send (forward) eligible invoice emails to the Finance & Accounts address.
   "https://www.googleapis.com/auth/gmail.send",
-  // Identify which account was connected.
+  // Identify which account was connected (email) and its display name, so
+  // forwarded emails can be labelled "You have received an email from <name>".
   "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
   "openid",
 ];
 
@@ -159,10 +161,13 @@ export async function refreshGmailToken(refreshToken: string): Promise<GmailToke
   return { refresh_token: refreshToken, ...json, obtained_at: Date.now() };
 }
 
-export async function getGmailAccountEmail(accessToken: string): Promise<{ email: string; id: string }> {
+export async function getGmailAccountEmail(accessToken: string): Promise<{ email: string; id: string; name: string | null }> {
   const res = await fetch(USERINFO_ENDPOINT, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new GmailApiError(`Failed to read Google account: ${res.status}`, res.status);
-  const json = (await res.json()) as { email?: string; id?: string };
+  const json = (await res.json()) as { email?: string; id?: string; name?: string };
   if (!json.email) throw new GmailApiError("Google account has no email scope.", 403, true);
-  return { email: json.email.toLowerCase(), id: json.id ?? "" };
+  // `name` is present only when the profile scope was granted (older
+  // connections consented before that scope existed will not have it).
+  const name = typeof json.name === "string" && json.name.trim() ? json.name.trim() : null;
+  return { email: json.email.toLowerCase(), id: json.id ?? "", name };
 }
